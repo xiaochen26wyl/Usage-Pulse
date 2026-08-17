@@ -160,7 +160,7 @@ export class MonitorEngine extends EventEmitter {
       const reason = makeReason(changed, lowAlert);
       let notified = false;
 
-      if (changed || lowAlert || trigger === "manual") {
+      if (changed || lowAlert) {
         const key = `${snapshot.cursor.remaining}|${snapshot.cursor.total}|${snapshot.claude.remaining}|${snapshot.claude.total}|${reason}`;
         const last = notificationStore.get();
         const cooldownMs = settings.notifyCooldownMinutes * 60_000;
