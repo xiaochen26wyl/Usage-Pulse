@@ -7,7 +7,11 @@ const defaultSettings: AppSettings = {
   lineChannelToken: "",
   enableLineNotify: false,
   launchAtLogin: false,
-  notifyCooldownMinutes: 15
+  notifyCooldownMinutes: 15,
+  enableResetAlarm: true,
+  enableLowQuotaAlarm: true,
+  enableResetAlarmLine: false,
+  enableLowQuotaAlarmLine: false
 };
 
 const defaultAuth: AuthStatus = {
@@ -17,39 +21,95 @@ const defaultAuth: AuthStatus = {
 
 const serviceNames: Record<ServiceType, string> = {
   cursor: "Cursor",
-  claude: "Claude"
+  claude: "Claude Code"
 };
 
-const toDisplay = (value: number | null): string => (value === null ? "N/A" : `${value}`);
+const authHints: Record<ServiceType, string> = {
+  cursor: "請先在 Cursor Desktop 登入後再檢查。",
+  claude: "請在終端機執行 claude 登入（或設定 CLAUDE_CODE_OAUTH_TOKEN）。"
+};
+
+const formatValue = (value: number | null, unit: QuotaSnapshot["unit"]): string => {
+  if (value === null) {
+    return "N/A";
+  }
+  if (unit === "usd") {
+    return `$${value.toFixed(2)}`;
+  }
+  if (unit === "percent") {
+    return `${Math.round(value)}%`;
+  }
+  return `${value}`;
+};
+
+const formatQuotaLine = (snapshot: QuotaSnapshot): string =>
+  `${formatValue(snapshot.remaining, snapshot.unit)} / ${formatValue(snapshot.total, snapshot.unit)}`;
+
+const formatResetText = (iso: string | null): string => {
+  if (!iso) {
+    return "未知";
+  }
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) {
+    return "未知";
+  }
+  return date.toLocaleString();
+};
+
+const formatCountdown = (iso: string | null, now: number): string => {
+  if (!iso) return "未知";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "未知";
+  
+  const diff = date.getTime() - now;
+  if (diff <= 0) return "已重置";
+
+  const seconds = Math.floor(diff / 1000) % 60;
+  const minutes = Math.floor(diff / 60000) % 60;
+  const hours = Math.floor(diff / 3600000) % 24;
+  const days = Math.floor(diff / 86400000);
+
+  if (days > 0) return `${days} 天 ${hours} 小時 ${minutes} 分鐘`;
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+};
 
 const getBarPercent = (snapshot: QuotaSnapshot): number => {
   if (snapshot.percent !== null) {
     return snapshot.percent;
   }
-  if (snapshot.remaining === null) {
-    return 0;
+  if (snapshot.unit === "percent" && snapshot.remaining !== null) {
+    return Math.max(0, Math.min(100, snapshot.remaining));
   }
-  return Math.min(100, Math.max(0, snapshot.remaining * 10));
+  return 0;
 };
 
 export const App = () => {
   const [settings, setSettings] = useState<AppSettings>(defaultSettings);
   const [authStatus, setAuthStatus] = useState<AuthStatus>(defaultAuth);
   const [snapshot, setSnapshot] = useState<CombinedSnapshot | null>(null);
-  const [busyService, setBusyService] = useState<ServiceType | null>(null);
   const [savingSettings, setSavingSettings] = useState(false);
   const [checking, setChecking] = useState(false);
+  const [checkingAuth, setCheckingAuth] = useState(false);
+  const [alarmSyncStatus, setAlarmSyncStatus] = useState<string>("unknown");
   const [message, setMessage] = useState("準備就緒");
+  const [now, setNow] = useState<number>(Date.now());
+
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   const refreshBaseData = async () => {
-    const [nextSettings, nextAuthStatus, latestSnapshot] = await Promise.all([
+    const [nextSettings, nextAuthStatus, latestSnapshot, alarmStatus] = await Promise.all([
       window.usagePulse.getSettings(),
       window.usagePulse.getAuthStatus(),
-      window.usagePulse.getLatestSnapshot()
+      window.usagePulse.getLatestSnapshot(),
+      window.usagePulse.getAlarmSyncStatus()
     ]);
     setSettings(nextSettings);
     setAuthStatus(nextAuthStatus);
     setSnapshot(latestSnapshot);
+    setAlarmSyncStatus(alarmStatus);
   };
 
   useEffect(() => {
@@ -85,45 +145,16 @@ export const App = () => {
     }
   };
 
-  const handleLogin = async (service: ServiceType) => {
-    setBusyService(service);
-    setMessage(`開啟 ${serviceNames[service]} 登入視窗...`);
+  const refreshAuthStatus = async () => {
+    setCheckingAuth(true);
     try {
-      await window.usagePulse.openLoginWindow(service);
-      setMessage(`已開啟 ${serviceNames[service]} 登入視窗，請登入後按下「保存 Session」`);
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "開啟登入失敗");
-    } finally {
-      setBusyService(null);
-    }
-  };
-
-  const handleSaveSession = async (service: ServiceType) => {
-    setBusyService(service);
-    setMessage(`保存 ${serviceNames[service]} Session 中...`);
-    try {
-      await window.usagePulse.saveLoginSession(service);
       const nextAuth = await window.usagePulse.getAuthStatus();
       setAuthStatus(nextAuth);
-      setMessage(`${serviceNames[service]} Session 已保存`);
+      setMessage("本機憑證狀態已更新");
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "保存 Session 失敗");
+      setMessage(error instanceof Error ? error.message : "重新偵測憑證失敗");
     } finally {
-      setBusyService(null);
-    }
-  };
-
-  const handleClearSession = async (service: ServiceType) => {
-    setBusyService(service);
-    try {
-      await window.usagePulse.clearLoginSession(service);
-      const nextAuth = await window.usagePulse.getAuthStatus();
-      setAuthStatus(nextAuth);
-      setMessage(`${serviceNames[service]} Session 已清除`);
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "清除 Session 失敗");
-    } finally {
-      setBusyService(null);
+      setCheckingAuth(false);
     }
   };
 
@@ -147,7 +178,7 @@ export const App = () => {
     <main className="app">
       <section className="panel">
         <h1>Usage-Pulse</h1>
-        <p className="subtitle">跨平台配額監控工具（Cursor / Claude）</p>
+        <p className="subtitle">跨平台配額監控工具（Cursor / Claude Code）</p>
       </section>
 
       <section className="panel">
@@ -163,12 +194,37 @@ export const App = () => {
                   <span className={`status-tag status-${item?.status || "unknown"}`}>{item?.status || "unknown"}</span>
                 </div>
                 <div className="quota-value">
-                  {toDisplay(item?.remaining ?? null)} / {toDisplay(item?.total ?? null)}
+                  {item ? formatQuotaLine(item) : "N/A / N/A"}
                 </div>
                 <div className="progress-track">
                   <div className="progress-fill" style={{ width: `${percent}%` }} />
                 </div>
-                <p className="meta-text">{item?.message || "尚未抓取資料"}</p>
+                {item?.windows?.length ? (
+                  <div className="window-list">
+                    {item.windows.map((window) => (
+                      <div key={`${service}-${window.key}`} style={{ marginBottom: "8px" }}>
+                        <p className="meta-text" style={{ marginBottom: "4px" }}>
+                          {window.label}：{formatValue(window.remaining, item.unit)} /{" "}
+                          {formatValue(window.total, item.unit)}
+                        </p>
+                        {window.resetsAt && (
+                          <p className="meta-text" style={{ margin: "0", color: "#8b949e", fontSize: "12px" }}>
+                            即時倒數：{formatCountdown(window.resetsAt, now)} ({formatResetText(window.resetsAt)})
+                          </p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+                {service === "claude" && (
+                  <p className="meta-text" style={{ marginTop: "8px", fontSize: "12px" }}>
+                    系統鬧鐘狀態：
+                    {alarmSyncStatus === "synced" ? "已同步" : 
+                     alarmSyncStatus === "no-shortcuts" ? "捷徑未安裝" : 
+                     alarmSyncStatus === "unsupported" ? "不支援" : "未知"}
+                  </p>
+                )}
+                <p className="meta-text" style={{ marginTop: "8px" }}>{item?.message || "尚未抓取資料"}</p>
               </div>
             );
           })}
@@ -179,28 +235,21 @@ export const App = () => {
       </section>
 
       <section className="panel">
-        <h2>Session 登入管理</h2>
+        <h2>本機憑證偵測</h2>
         <div className="auth-list">
           {(["cursor", "claude"] as ServiceType[]).map((service) => (
             <div className="auth-card" key={service}>
               <div>
                 <strong>{serviceNames[service]}</strong>
-                <p className="meta-text">{authStatus[service] ? "已保存 Session" : "尚未保存 Session"}</p>
-              </div>
-              <div className="auth-actions">
-                <button onClick={() => handleLogin(service)} disabled={busyService === service}>
-                  登入視窗
-                </button>
-                <button onClick={() => handleSaveSession(service)} disabled={busyService === service}>
-                  保存 Session
-                </button>
-                <button onClick={() => handleClearSession(service)} disabled={busyService === service}>
-                  清除
-                </button>
+                <p className="meta-text">{authStatus[service] ? "已偵測到可用憑證" : "尚未偵測到憑證"}</p>
+                {!authStatus[service] ? <p className="meta-text">{authHints[service]}</p> : null}
               </div>
             </div>
           ))}
         </div>
+        <button className="primary-btn" onClick={refreshAuthStatus} disabled={checkingAuth}>
+          {checkingAuth ? "偵測中..." : "重新偵測憑證"}
+        </button>
       </section>
 
       <section className="panel">
@@ -280,6 +329,52 @@ export const App = () => {
             onChange={(event) => setSettings((prev) => ({ ...prev, launchAtLogin: event.target.checked }))}
           />
         </label>
+
+        <h3 style={{ marginTop: "16px", marginBottom: "8px", fontSize: "16px", color: "#e1e4e8" }}>鬧鐘設定 (Claude Code)</h3>
+        {alarmSyncStatus === "no-shortcuts" && (
+          <p className="warning-text">
+            ⚠️ 偵測到 macOS 尚未安裝「Usage-Pulse Update Alarm」捷徑。<br/>
+            重置鬧鐘將無法同步至系統「時鐘」App。<br/>
+            請建立一個捷徑，名稱命名為 <strong>Usage-Pulse Update Alarm</strong>，
+            並接收文字作為輸入。
+          </p>
+        )}
+        <label className="field switch-row">
+          <span>啟用「配額重置」桌面鬧鐘</span>
+          <input
+            type="checkbox"
+            checked={settings.enableResetAlarm}
+            onChange={(event) => setSettings((prev) => ({ ...prev, enableResetAlarm: event.target.checked }))}
+          />
+        </label>
+        <label className="field switch-row" style={{ paddingLeft: "20px", opacity: settings.enableResetAlarm ? 1 : 0.5 }}>
+          <span>└ 鬧鐘響時，同時送出 LINE 推播</span>
+          <input
+            type="checkbox"
+            disabled={!settings.enableResetAlarm}
+            checked={settings.enableResetAlarmLine}
+            onChange={(event) => setSettings((prev) => ({ ...prev, enableResetAlarmLine: event.target.checked }))}
+          />
+        </label>
+
+        <label className="field switch-row">
+          <span>啟用「低額度」桌面鬧鐘</span>
+          <input
+            type="checkbox"
+            checked={settings.enableLowQuotaAlarm}
+            onChange={(event) => setSettings((prev) => ({ ...prev, enableLowQuotaAlarm: event.target.checked }))}
+          />
+        </label>
+        <label className="field switch-row" style={{ paddingLeft: "20px", opacity: settings.enableLowQuotaAlarm ? 1 : 0.5 }}>
+          <span>└ 鬧鐘響時，同時送出 LINE 推播</span>
+          <input
+            type="checkbox"
+            disabled={!settings.enableLowQuotaAlarm}
+            checked={settings.enableLowQuotaAlarmLine}
+            onChange={(event) => setSettings((prev) => ({ ...prev, enableLowQuotaAlarmLine: event.target.checked }))}
+          />
+        </label>
+        <div style={{ marginBottom: "16px" }} />
 
         <button className="primary-btn" onClick={handleSaveSettings} disabled={savingSettings}>
           {savingSettings ? "儲存中..." : "儲存設定"}

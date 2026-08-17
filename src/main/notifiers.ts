@@ -1,12 +1,29 @@
 import { Notification } from "electron";
 import axios from "axios";
-import type { AppSettings, CombinedSnapshot, NotifyPayload } from "@shared/types";
+import type { AppSettings, NotifyPayload, QuotaSnapshot } from "@shared/types";
 
-const toDisplay = (value: number | null): string => (value === null ? "N/A" : `${value}`);
+const formatValue = (value: number | null, unit: QuotaSnapshot["unit"]): string => {
+  if (value === null) {
+    return "N/A";
+  }
+  if (unit === "usd") {
+    return `$${value.toFixed(2)}`;
+  }
+  if (unit === "percent") {
+    return `${Math.round(value)}%`;
+  }
+  return `${value}`;
+};
+
+const formatQuota = (snapshot: QuotaSnapshot): string => {
+  const remaining = formatValue(snapshot.remaining, snapshot.unit);
+  const total = formatValue(snapshot.total, snapshot.unit);
+  return `${remaining} / ${total}`;
+};
 
 const buildLineFlexPayload = ({ snapshot, reason }: NotifyPayload) => {
-  const cursorValue = `${toDisplay(snapshot.cursor.remaining)} / ${toDisplay(snapshot.cursor.total)}`;
-  const claudeValue = `${toDisplay(snapshot.claude.remaining)} / ${toDisplay(snapshot.claude.total)}`;
+  const cursorValue = formatQuota(snapshot.cursor);
+  const claudeValue = formatQuota(snapshot.claude);
 
   return {
     messages: [
@@ -48,7 +65,7 @@ const buildLineFlexPayload = ({ snapshot, reason }: NotifyPayload) => {
                 type: "box",
                 layout: "baseline",
                 contents: [
-                  { type: "text", text: "Claude", size: "sm", color: "#555555", flex: 3 },
+                  { type: "text", text: "Claude Code", size: "sm", color: "#555555", flex: 3 },
                   { type: "text", text: claudeValue, size: "sm", flex: 5, align: "end" }
                 ]
               }
@@ -67,8 +84,8 @@ export const sendDesktopNotification = (payload: NotifyPayload): void => {
 
   const notification = new Notification({
     title: "Usage-Pulse 配額通知",
-    body: `${payload.reason}\nCursor: ${toDisplay(payload.snapshot.cursor.remaining)} | Claude: ${toDisplay(
-      payload.snapshot.claude.remaining
+    body: `${payload.reason}\nCursor: ${formatQuota(payload.snapshot.cursor)} | Claude Code: ${formatQuota(
+      payload.snapshot.claude
     )}`
   });
 

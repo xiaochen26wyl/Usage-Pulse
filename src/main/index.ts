@@ -1,13 +1,17 @@
 import { join } from "node:path";
 import { app, ipcMain } from "electron";
 import { menubar } from "menubar";
-import type { CombinedSnapshot } from "@shared/types";
-import { clearLoginSession, getAuthStatus, openLoginWindow, saveLoginSession } from "@main/auth-service";
+import type { CombinedSnapshot, QuotaSnapshot } from "@shared/types";
+import { getAuthStatus } from "@main/auth-service";
 import { MonitorEngine } from "@main/monitor-engine";
 import { settingsStore } from "@main/store";
 
 const isMac = process.platform === "darwin";
 const isDev = Boolean(process.env.ELECTRON_RENDERER_URL);
+
+if (process.platform === "win32") {
+  app.setAppUserModelId("com.zorawl.usagepulse");
+}
 
 const monitor = new MonitorEngine();
 
@@ -31,20 +35,44 @@ let trayApp = menubar({
   }
 });
 
-const valueText = (value: number | null): string => (value === null ? "?" : `${value}`);
+const valueText = (snapshot: QuotaSnapshot): string => {
+  if (snapshot.unit === "usd") {
+    if (snapshot.remaining === null) {
+      return "?";
+    }
+    return `$${snapshot.remaining.toFixed(1)}`;
+  }
+
+  if (snapshot.unit === "percent") {
+    const value = snapshot.remaining ?? snapshot.percent;
+    if (value === null) {
+      return "?";
+    }
+    return `${Math.round(value)}%`;
+  }
+
+  return snapshot.remaining === null ? "?" : `${snapshot.remaining}`;
+};
 
 const updateTrayText = (snapshot: CombinedSnapshot): void => {
   if (!trayApp.tray) {
     return;
   }
 
-  const title = `C:${valueText(snapshot.cursor.remaining)} A:${valueText(snapshot.claude.remaining)}`;
+  const title = `C:${valueText(snapshot.cursor)} A:${valueText(snapshot.claude)}`;
   const toolTipLines = [
     "Usage-Pulse",
-    `Cursor: ${valueText(snapshot.cursor.remaining)}`,
-    `Claude: ${valueText(snapshot.claude.remaining)}`,
-    `更新: ${new Date(snapshot.fetchedAt).toLocaleTimeString()}`
+    `Cursor: ${valueText(snapshot.cursor)}`,
+    `Claude Code: ${valueText(snapshot.claude)}`,
   ];
+  if (snapshot.claude.resetsAt) {
+    const date = new Date(snapshot.claude.resetsAt);
+    if (!Number.isNaN(date.getTime())) {
+      const timeStr = `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+      toolTipLines.push(`Claude 重置: ${timeStr}`);
+    }
+  }
+  toolTipLines.push(`更新: ${new Date(snapshot.fetchedAt).toLocaleTimeString()}`);
 
   if (isMac) {
     trayApp.tray.setTitle(title);
@@ -68,14 +96,17 @@ const setupIpcHandlers = (): void => {
   });
 
   ipcMain.handle("auth:status", () => getAuthStatus());
-  ipcMain.handle("auth:open-login", (_event, service) => openLoginWindow(service));
-  ipcMain.handle("auth:save-session", (_event, service) => saveLoginSession(service));
-  ipcMain.handle("auth:clear-session", (_event, service) => clearLoginSession(service));
 
   ipcMain.handle("monitor:run-manual", async () => {
     return monitor.runCheck("manual");
   });
   ipcMain.handle("monitor:get-latest", () => monitor.getLatestSnapshot());
+
+  ipcMain.handle("alarm:status", async () => {
+    const { getSystemAlarmManager } = require("./system-alarm");
+    const manager = getSystemAlarmManager();
+    return manager ? manager.status() : "unsupported";
+  });
 };
 
 app.whenReady().then(async () => {

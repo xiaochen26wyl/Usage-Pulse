@@ -23,11 +23,16 @@ const clamp = (value: number, min: number, max: number) => Math.min(max, Math.ma
 
 export const settingsStore = {
   get(): AppSettings {
-    return store.get("settings");
+    const current = store.get("settings");
+    return {
+      ...DEFAULT_SETTINGS,
+      ...current
+    };
   },
   update(patch: Partial<AppSettings>): AppSettings {
     const current = store.get("settings");
     const merged: AppSettings = {
+      ...DEFAULT_SETTINGS,
       ...current,
       ...patch
     };

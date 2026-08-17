@@ -13,13 +13,12 @@
       "node",
       "electron"
     ],
-    "baseUrl": ".",
     "paths": {
       "@shared/*": [
-        "src/shared/*"
+        "./src/shared/*"
       ],
       "@main/*": [
-        "src/main/*"
+        "./src/main/*"
       ]
     }
   },
