@@ -1,0 +1,212 @@
+:root {
+  color-scheme: light dark;
+  font-family: "Inter", "Noto Sans TC", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: #0e1116;
+  color: #f5f6f8;
+}
+
+.app {
+  min-height: 100vh;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.panel {
+  background: #181d25;
+  border: 1px solid #2a3442;
+  border-radius: 12px;
+  padding: 14px;
+}
+
+h1,
+h2 {
+  margin: 0;
+  color: #ffffff;
+}
+
+h1 {
+  font-size: 22px;
+}
+
+h2 {
+  font-size: 18px;
+  margin-bottom: 10px;
+}
+
+.subtitle {
+  margin: 8px 0 0;
+  color: #c7cdd8;
+}
+
+.quota-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.quota-card {
+  border: 1px solid #314157;
+  border-radius: 10px;
+  padding: 10px;
+  background: #11161d;
+}
+
+.quota-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.quota-value {
+  margin: 8px 0;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.progress-track {
+  width: 100%;
+  height: 8px;
+  border-radius: 999px;
+  background: #2b3442;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #00c2ff, #3b82f6);
+}
+
+.meta-text {
+  margin: 8px 0 0;
+  color: #c7cdd8;
+  font-size: 13px;
+}
+
+.status-tag {
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 12px;
+  text-transform: uppercase;
+  border: 1px solid transparent;
+}
+
+.status-ok {
+  border-color: #59d090;
+  color: #59d090;
+}
+
+.status-low {
+  border-color: #ffbb55;
+  color: #ffbb55;
+}
+
+.status-unknown {
+  border-color: #b5bdca;
+  color: #b5bdca;
+}
+
+.status-error {
+  border-color: #ff7d7d;
+  color: #ff7d7d;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.field span {
+  color: #f5f6f8;
+  font-size: 14px;
+}
+
+input[type="password"],
+input[type="number"] {
+  width: 100%;
+  border-radius: 8px;
+  border: 1px solid #334155;
+  background: #10141b;
+  color: #f5f6f8;
+  padding: 10px;
+}
+
+input[type="range"] {
+  width: 100%;
+}
+
+.switch-row {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+}
+
+button {
+  border: 1px solid #3f4f65;
+  border-radius: 8px;
+  padding: 8px 10px;
+  color: #fff;
+  background: #243142;
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+  background: #304157;
+}
+
+button:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.primary-btn {
+  width: 100%;
+  background: #2563eb;
+  border-color: #2563eb;
+}
+
+.auth-list {
+  display: grid;
+  gap: 10px;
+}
+
+.auth-card {
+  border: 1px solid #314157;
+  border-radius: 10px;
+  padding: 10px;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.auth-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.warning-text {
+  margin: 0 0 12px;
+  color: #ffbf73;
+  font-size: 13px;
+}
+
+.footer p {
+  margin: 0;
+  font-size: 13px;
+  color: #d5dbe6;
+}

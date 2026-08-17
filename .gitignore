@@ -1,0 +1,34 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+release/
+out/
+
+# Runtime data
+auth/*.auth.json
+auth/*.json
+!auth/.gitkeep
+
+# Logs
+*.log
+
+# Environment variables
+.env
+.env.local
+.env*.local
+
+# Playwright cache
+playwright-report/
+test-results/
+
+# IDE and OS
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# TypeScript
+*.tsbuildinfo
