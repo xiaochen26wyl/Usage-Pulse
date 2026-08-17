@@ -3,8 +3,9 @@
 - Do not create `.cursorignore`.
 - Never commit or upload `.env` files, secrets, or tokens to GitHub.
 - `.env.example` is a template only. Never put real keys, secrets, or tokens in it.
+- Only include token/key entries in `.env.example` when they are actually required by this app. If none are required, keep `.env.example` empty.
 - Every secret-like value must use an obvious fake placeholder: `KEY=your_<name>_here`.
-  - Good: `CLAUDE_CODE_OAUTH_TOKEN=your_claude_code_oauth_token_here`
-  - Bad: `CLAUDE_CODE_OAUTH_TOKEN=` (empty)
-  - Bad: `CLAUDE_CODE_OAUTH_TOKEN=changeme` or any string that looks like a live credential
+  - Good: `EXAMPLE_API_KEY=your_example_api_key_here`
+  - Bad: `EXAMPLE_API_KEY=` (empty)
+  - Bad: `EXAMPLE_API_KEY=changeme` or any string that looks like a live credential
 - LINE notifications use Messaging API broadcast (`POST /v2/bot/message/broadcast`). The user's LINE Official Account must have Messaging API enabled, and the Channel Access Token must be set in the app settings.
