@@ -6,14 +6,13 @@ export const SERVICE_LABELS: Record<ServiceType, string> = {
 };
 
 export const DEFAULT_SETTINGS: AppSettings = {
-  intervalMinutes: 5,
+  intervalMinutes: 10,
   lowThresholdPercent: 20,
-  lineChannelToken: "",
-  enableLineNotify: false,
   launchAtLogin: false,
   notifyCooldownMinutes: 15,
   enableResetAlarm: true,
-  enableLowQuotaAlarm: true,
-  enableResetAlarmLine: false,
-  enableLowQuotaAlarmLine: false
+  enableCursorResetAlarm: true,
+  enableClaudeResetAlarm: true,
+  enableCursorLowQuotaAlert: true,
+  enableClaudeLowQuotaAlert: true
 };

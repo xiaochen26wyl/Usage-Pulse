@@ -11,7 +11,7 @@ interface UsagePulseApi {
   getAuthStatus: () => Promise<AuthStatus>;
   runManualCheck: () => Promise<MonitorResult>;
   getLatestSnapshot: () => Promise<CombinedSnapshot | null>;
-  getAlarmSyncStatus: () => Promise<string>;
+  quitApp: () => Promise<void>;
   onSnapshotUpdated: (handler: (snapshot: CombinedSnapshot) => void) => () => void;
 }
 

@@ -4,7 +4,8 @@ import react from "@vitejs/plugin-react";
 
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin()],
+    // Bundle main-process deps to avoid production runtime resolution issues.
+    plugins: [],
     build: {
       outDir: "dist/main",
       rollupOptions: {

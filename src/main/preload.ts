@@ -8,7 +8,7 @@ const api = {
   getAuthStatus: () => ipcRenderer.invoke("auth:status") as Promise<{ cursor: boolean; claude: boolean }>,
   runManualCheck: () => ipcRenderer.invoke("monitor:run-manual") as Promise<MonitorResult>,
   getLatestSnapshot: () => ipcRenderer.invoke("monitor:get-latest") as Promise<CombinedSnapshot | null>,
-  getAlarmSyncStatus: () => ipcRenderer.invoke("alarm:status") as Promise<string>,
+  quitApp: () => ipcRenderer.invoke("app:quit") as Promise<void>,
   onSnapshotUpdated: (handler: (snapshot: CombinedSnapshot) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, snapshot: CombinedSnapshot) => handler(snapshot);
     ipcRenderer.on("snapshot:updated", listener);

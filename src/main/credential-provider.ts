@@ -1,14 +1,17 @@
 import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
+import initSqlJs from "sql.js";
 
 const execFileAsync = promisify(execFile);
+const require = createRequire(import.meta.url);
 
 const CURSOR_ACCESS_TOKEN_KEY = "cursorAuth/accessToken";
 const CLAUDE_KEYCHAIN_SERVICE = "Claude Code-credentials";
+let sqlJsPromise: Promise<Awaited<ReturnType<typeof initSqlJs>>> | null = null;
 
 const pickAccessTokenFromUnknown = (value: unknown): string | null => {
   if (typeof value === "string") {
@@ -62,26 +65,54 @@ const resolveCursorStateDbPath = (): string => {
   return join(homedir(), ".config", "Cursor", "User", "globalStorage", "state.vscdb");
 };
 
-const runReadOnlySqliteQuery = async (dbPath: string, sql: string): Promise<string> => {
-  const dbUri = `${pathToFileURL(dbPath).toString()}?mode=ro`;
-  const { stdout } = await execFileAsync("sqlite3", [dbUri, sql], {
-    timeout: 10_000,
-    maxBuffer: 1024 * 1024
-  });
-  return stdout.trim();
+const getSqlJs = async (): Promise<Awaited<ReturnType<typeof initSqlJs>>> => {
+  if (!sqlJsPromise) {
+    sqlJsPromise = initSqlJs({
+      locateFile: (file: string) => require.resolve(`sql.js/dist/${file}`)
+    });
+  }
+  return sqlJsPromise;
 };
 
-const readCursorTokenFromStateDb = async (): Promise<string> => {
-  const dbPath = resolveCursorStateDbPath();
-  const raw = await runReadOnlySqliteQuery(
-    dbPath,
-    `SELECT value FROM ItemTable WHERE key = '${CURSOR_ACCESS_TOKEN_KEY}' LIMIT 1;`
-  );
+const runReadOnlySqliteQuery = async (dbPath: string, key: string): Promise<string> => {
+  const SQL = await getSqlJs();
+  const databaseBytes = await readFile(dbPath);
+  const db = new SQL.Database(new Uint8Array(databaseBytes));
+  const statement = db.prepare("SELECT value FROM ItemTable WHERE key = $key LIMIT 1;");
+
+  statement.bind({ $key: key });
+  try {
+    if (!statement.step()) {
+      return "";
+    }
+    const row = statement.getAsObject() as Record<string, unknown>;
+    const value = row.value;
+    if (typeof value === "string") {
+      return value.trim();
+    }
+    return value === null || value === undefined ? "" : String(value).trim();
+  } finally {
+    statement.free();
+    db.close();
+  }
+};
+
+export const readCursorTokenFromStateDbPath = async (dbPath: string): Promise<string> => {
+  const raw = await runReadOnlySqliteQuery(dbPath, CURSOR_ACCESS_TOKEN_KEY);
   const token = parseTokenFromRawText(raw);
   if (!token) {
     throw new Error("找不到 Cursor access token，請先在 Cursor Desktop 登入。");
   }
   return token;
+};
+
+const readCursorTokenFromStateDb = async (): Promise<string> => {
+  const dbPath = resolveCursorStateDbPath();
+  try {
+    return await readCursorTokenFromStateDbPath(dbPath);
+  } catch {
+    throw new Error("無法讀取 Cursor 本機憑證，請先確認已登入 Cursor Desktop。");
+  }
 };
 
 const readClaudeTokenFromKeychain = async (): Promise<string | null> => {
@@ -125,11 +156,7 @@ const readClaudeTokenFromCredentialsFile = async (): Promise<string | null> => {
 };
 
 export const getCursorAccessToken = async (): Promise<string> => {
-  try {
-    return await readCursorTokenFromStateDb();
-  } catch {
-    throw new Error("無法讀取 Cursor 本機憑證，請先確認已登入 Cursor Desktop。");
-  }
+  return readCursorTokenFromStateDb();
 };
 
 export const getClaudeCodeOAuthToken = async (): Promise<string> => {

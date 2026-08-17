@@ -43,14 +43,13 @@ export interface AuthStatus {
 export interface AppSettings {
   intervalMinutes: number;
   lowThresholdPercent: number;
-  lineChannelToken: string;
-  enableLineNotify: boolean;
   launchAtLogin: boolean;
   notifyCooldownMinutes: number;
   enableResetAlarm: boolean;
-  enableLowQuotaAlarm: boolean;
-  enableResetAlarmLine: boolean;
-  enableLowQuotaAlarmLine: boolean;
+  enableCursorResetAlarm: boolean;
+  enableClaudeResetAlarm: boolean;
+  enableCursorLowQuotaAlert: boolean;
+  enableClaudeLowQuotaAlert: boolean;
 }
 
 export interface MonitorResult {
@@ -77,6 +76,4 @@ export interface NotifyPayload {
   snapshot: CombinedSnapshot;
   reason: string;
 }
-
-export type AlarmSyncStatus = "synced" | "no-shortcuts" | "unsupported" | "error" | "off" | "unknown";
 

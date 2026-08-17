@@ -2,11 +2,17 @@ import Store from "electron-store";
 import type { AppSettings, CombinedSnapshot } from "@shared/types";
 import { DEFAULT_SETTINGS } from "@main/config";
 
+interface NotificationRecord {
+  key: string;
+  at: string;
+}
+
 interface UsagePulseStore {
   settings: AppSettings;
   lastSnapshot: CombinedSnapshot | null;
   lastNotificationKey: string;
   lastNotificationAt: string;
+  notifications: Record<string, NotificationRecord>;
 }
 
 const store = new Store<UsagePulseStore>({
@@ -15,7 +21,8 @@ const store = new Store<UsagePulseStore>({
     settings: DEFAULT_SETTINGS,
     lastSnapshot: null,
     lastNotificationKey: "",
-    lastNotificationAt: ""
+    lastNotificationAt: "",
+    notifications: {}
   }
 });
 
@@ -39,7 +46,6 @@ export const settingsStore = {
     merged.intervalMinutes = clamp(Number(merged.intervalMinutes || 5), 1, 60);
     merged.lowThresholdPercent = clamp(Number(merged.lowThresholdPercent || 20), 1, 99);
     merged.notifyCooldownMinutes = clamp(Number(merged.notifyCooldownMinutes || 15), 1, 240);
-    merged.lineChannelToken = `${merged.lineChannelToken || ""}`.trim();
     store.set("settings", merged);
     return merged;
   }
@@ -55,14 +61,30 @@ export const snapshotStore = {
 };
 
 export const notificationStore = {
-  get(): { key: string; at: string } {
+  get(scope = "global"): NotificationRecord {
+    const notifications = store.get("notifications") as Record<string, NotificationRecord> | undefined;
+    const scoped = notifications?.[scope];
+    if (scoped && scoped.key) {
+      return scoped;
+    }
+
+    if (scope === "global") {
+      return {
+        key: store.get("lastNotificationKey"),
+        at: store.get("lastNotificationAt")
+      };
+    }
+
     return {
-      key: store.get("lastNotificationKey"),
-      at: store.get("lastNotificationAt")
+      key: "",
+      at: ""
     };
   },
-  set(key: string, at: string): void {
-    store.set("lastNotificationKey", key);
-    store.set("lastNotificationAt", at);
+  set(scope: string, key: string, at: string): void {
+    store.set(`notifications.${scope}`, { key, at });
+    if (scope === "global") {
+      store.set("lastNotificationKey", key);
+      store.set("lastNotificationAt", at);
+    }
   }
 };

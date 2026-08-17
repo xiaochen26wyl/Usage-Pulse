@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { app, ipcMain } from "electron";
+import { app, ipcMain, Menu } from "electron";
 import { menubar } from "menubar";
 import type { CombinedSnapshot, QuotaSnapshot } from "@shared/types";
 import { getAuthStatus } from "@main/auth-service";
@@ -101,11 +101,8 @@ const setupIpcHandlers = (): void => {
     return monitor.runCheck("manual");
   });
   ipcMain.handle("monitor:get-latest", () => monitor.getLatestSnapshot());
-
-  ipcMain.handle("alarm:status", async () => {
-    const { getSystemAlarmManager } = require("./system-alarm");
-    const manager = getSystemAlarmManager();
-    return manager ? manager.status() : "unsupported";
+  ipcMain.handle("app:quit", () => {
+    app.quit();
   });
 };
 
@@ -126,6 +123,22 @@ app.whenReady().then(async () => {
   });
 
   trayApp.on("ready", async () => {
+    if (trayApp.tray) {
+      trayApp.tray.setContextMenu(
+        Menu.buildFromTemplate([
+          {
+            label: "打開 Usage-Pulse",
+            click: () => trayApp.showWindow()
+          },
+          { type: "separator" },
+          {
+            label: "結束 Usage-Pulse",
+            click: () => app.quit()
+          }
+        ])
+      );
+    }
+
     const latest = monitor.getLatestSnapshot();
     if (latest) {
       updateTrayText(latest);

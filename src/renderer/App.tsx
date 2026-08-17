@@ -1,17 +1,16 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import type { AppSettings, AuthStatus, CombinedSnapshot, QuotaSnapshot, ServiceType } from "@shared/types";
 
 const defaultSettings: AppSettings = {
-  intervalMinutes: 5,
+  intervalMinutes: 10,
   lowThresholdPercent: 20,
-  lineChannelToken: "",
-  enableLineNotify: false,
   launchAtLogin: false,
   notifyCooldownMinutes: 15,
   enableResetAlarm: true,
-  enableLowQuotaAlarm: true,
-  enableResetAlarmLine: false,
-  enableLowQuotaAlarmLine: false
+  enableCursorResetAlarm: true,
+  enableClaudeResetAlarm: true,
+  enableCursorLowQuotaAlert: true,
+  enableClaudeLowQuotaAlert: true
 };
 
 const defaultAuth: AuthStatus = {
@@ -90,7 +89,6 @@ export const App = () => {
   const [savingSettings, setSavingSettings] = useState(false);
   const [checking, setChecking] = useState(false);
   const [checkingAuth, setCheckingAuth] = useState(false);
-  const [alarmSyncStatus, setAlarmSyncStatus] = useState<string>("unknown");
   const [message, setMessage] = useState("準備就緒");
   const [now, setNow] = useState<number>(Date.now());
 
@@ -100,16 +98,14 @@ export const App = () => {
   }, []);
 
   const refreshBaseData = async () => {
-    const [nextSettings, nextAuthStatus, latestSnapshot, alarmStatus] = await Promise.all([
+    const [nextSettings, nextAuthStatus, latestSnapshot] = await Promise.all([
       window.usagePulse.getSettings(),
       window.usagePulse.getAuthStatus(),
-      window.usagePulse.getLatestSnapshot(),
-      window.usagePulse.getAlarmSyncStatus()
+      window.usagePulse.getLatestSnapshot()
     ]);
     setSettings(nextSettings);
     setAuthStatus(nextAuthStatus);
     setSnapshot(latestSnapshot);
-    setAlarmSyncStatus(alarmStatus);
   };
 
   useEffect(() => {
@@ -172,7 +168,14 @@ export const App = () => {
     }
   };
 
-  const hasLineToken = useMemo(() => settings.lineChannelToken.trim().length > 0, [settings.lineChannelToken]);
+  const quitApp = async () => {
+    setMessage("正在結束 Usage-Pulse...");
+    try {
+      await window.usagePulse.quitApp();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "結束程式失敗");
+    }
+  };
 
   return (
     <main className="app">
@@ -216,14 +219,6 @@ export const App = () => {
                     ))}
                   </div>
                 ) : null}
-                {service === "claude" && (
-                  <p className="meta-text" style={{ marginTop: "8px", fontSize: "12px" }}>
-                    系統鬧鐘狀態：
-                    {alarmSyncStatus === "synced" ? "已同步" : 
-                     alarmSyncStatus === "no-shortcuts" ? "捷徑未安裝" : 
-                     alarmSyncStatus === "unsupported" ? "不支援" : "未知"}
-                  </p>
-                )}
                 <p className="meta-text" style={{ marginTop: "8px" }}>{item?.message || "尚未抓取資料"}</p>
               </div>
             );
@@ -254,28 +249,6 @@ export const App = () => {
 
       <section className="panel">
         <h2>設定</h2>
-        <label className="field">
-          <span>LINE Channel Access Token</span>
-          <input
-            type="password"
-            value={settings.lineChannelToken}
-            onChange={(event) => setSettings((prev) => ({ ...prev, lineChannelToken: event.target.value }))}
-            placeholder="輸入 LINE Messaging API Token"
-          />
-        </label>
-
-        <label className="field switch-row">
-          <span>啟用 LINE 推播</span>
-          <input
-            type="checkbox"
-            checked={settings.enableLineNotify}
-            onChange={(event) => setSettings((prev) => ({ ...prev, enableLineNotify: event.target.checked }))}
-          />
-        </label>
-        {!hasLineToken && settings.enableLineNotify ? (
-          <p className="warning-text">尚未輸入 Token，無法送出 LINE 推播。</p>
-        ) : null}
-
         <label className="field">
           <span>檢查頻率：{settings.intervalMinutes} 分鐘</span>
           <input
@@ -330,17 +303,12 @@ export const App = () => {
           />
         </label>
 
-        <h3 style={{ marginTop: "16px", marginBottom: "8px", fontSize: "16px", color: "#e1e4e8" }}>鬧鐘設定 (Claude Code)</h3>
-        {alarmSyncStatus === "no-shortcuts" && (
-          <p className="warning-text">
-            ⚠️ 偵測到 macOS 尚未安裝「Usage-Pulse Update Alarm」捷徑。<br/>
-            重置鬧鐘將無法同步至系統「時鐘」App。<br/>
-            請建立一個捷徑，名稱命名為 <strong>Usage-Pulse Update Alarm</strong>，
-            並接收文字作為輸入。
-          </p>
-        )}
+        <h3 style={{ marginTop: "16px", marginBottom: "8px", fontSize: "16px", color: "#e1e4e8" }}>重置提醒</h3>
+        <p className="meta-text" style={{ marginBottom: "10px" }}>
+          只使用內建桌面通知，不需要額外下載工具；提醒在程式執行中生效。
+        </p>
         <label className="field switch-row">
-          <span>啟用「配額重置」桌面鬧鐘</span>
+          <span>啟用重置提醒</span>
           <input
             type="checkbox"
             checked={settings.enableResetAlarm}
@@ -348,36 +316,48 @@ export const App = () => {
           />
         </label>
         <label className="field switch-row" style={{ paddingLeft: "20px", opacity: settings.enableResetAlarm ? 1 : 0.5 }}>
-          <span>└ 鬧鐘響時，同時送出 LINE 推播</span>
+          <span>└ Cursor 重置提醒</span>
           <input
             type="checkbox"
             disabled={!settings.enableResetAlarm}
-            checked={settings.enableResetAlarmLine}
-            onChange={(event) => setSettings((prev) => ({ ...prev, enableResetAlarmLine: event.target.checked }))}
+            checked={settings.enableCursorResetAlarm}
+            onChange={(event) => setSettings((prev) => ({ ...prev, enableCursorResetAlarm: event.target.checked }))}
+          />
+        </label>
+        <label className="field switch-row" style={{ paddingLeft: "20px", opacity: settings.enableResetAlarm ? 1 : 0.5 }}>
+          <span>└ Claude Code 重置提醒</span>
+          <input
+            type="checkbox"
+            disabled={!settings.enableResetAlarm}
+            checked={settings.enableClaudeResetAlarm}
+            onChange={(event) => setSettings((prev) => ({ ...prev, enableClaudeResetAlarm: event.target.checked }))}
           />
         </label>
 
+        <h3 style={{ marginTop: "16px", marginBottom: "8px", fontSize: "16px", color: "#e1e4e8" }}>低額度通知</h3>
         <label className="field switch-row">
-          <span>啟用「低額度」桌面鬧鐘</span>
+          <span>Cursor 低額度通知</span>
           <input
             type="checkbox"
-            checked={settings.enableLowQuotaAlarm}
-            onChange={(event) => setSettings((prev) => ({ ...prev, enableLowQuotaAlarm: event.target.checked }))}
+            checked={settings.enableCursorLowQuotaAlert}
+            onChange={(event) => setSettings((prev) => ({ ...prev, enableCursorLowQuotaAlert: event.target.checked }))}
           />
         </label>
-        <label className="field switch-row" style={{ paddingLeft: "20px", opacity: settings.enableLowQuotaAlarm ? 1 : 0.5 }}>
-          <span>└ 鬧鐘響時，同時送出 LINE 推播</span>
+        <label className="field switch-row">
+          <span>Claude Code 低額度通知</span>
           <input
             type="checkbox"
-            disabled={!settings.enableLowQuotaAlarm}
-            checked={settings.enableLowQuotaAlarmLine}
-            onChange={(event) => setSettings((prev) => ({ ...prev, enableLowQuotaAlarmLine: event.target.checked }))}
+            checked={settings.enableClaudeLowQuotaAlert}
+            onChange={(event) => setSettings((prev) => ({ ...prev, enableClaudeLowQuotaAlert: event.target.checked }))}
           />
         </label>
         <div style={{ marginBottom: "16px" }} />
 
         <button className="primary-btn" onClick={handleSaveSettings} disabled={savingSettings}>
           {savingSettings ? "儲存中..." : "儲存設定"}
+        </button>
+        <button style={{ width: "100%", marginTop: "8px" }} onClick={quitApp}>
+          結束 Usage-Pulse
         </button>
       </section>
 

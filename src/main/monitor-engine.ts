@@ -1,11 +1,14 @@
 import { EventEmitter } from "node:events";
 import type { AppSettings, CombinedSnapshot, MonitorResult, QuotaSnapshot, ScrapeResult, ServiceType } from "@shared/types";
+import { getLowQuotaServices, isDuplicateInCooldown } from "@shared/monitor-utils";
 import { scrapeQuota } from "@main/scrapers";
-import { sendDesktopNotification, sendLineFlexMessage } from "@main/notifiers";
+import { sendDesktopNotification } from "@main/notifiers";
 import { notificationStore, settingsStore, snapshotStore } from "@main/store";
-import { getSystemAlarmManager } from "./system-alarm";
+import { SERVICE_LABELS } from "./config";
 
 type TriggerType = "scheduled" | "manual" | "startup";
+type LowQuotaToggleKey = "enableCursorLowQuotaAlert" | "enableClaudeLowQuotaAlert";
+type ResetToggleKey = "enableCursorResetAlarm" | "enableClaudeResetAlarm";
 
 const nowIso = () => new Date().toISOString();
 
@@ -18,6 +21,22 @@ const toPercent = (remaining: number | null, total: number | null): number | nul
 
 const isLowQuota = (percent: number | null, settings: AppSettings): boolean =>
   percent !== null ? percent <= settings.lowThresholdPercent : false;
+
+const lowQuotaToggleMap: Record<ServiceType, LowQuotaToggleKey> = {
+  cursor: "enableCursorLowQuotaAlert",
+  claude: "enableClaudeLowQuotaAlert"
+};
+
+const resetToggleMap: Record<ServiceType, ResetToggleKey> = {
+  cursor: "enableCursorResetAlarm",
+  claude: "enableClaudeResetAlarm"
+};
+
+const isToggleEnabled = (
+  settings: AppSettings,
+  toggleMap: Record<ServiceType, LowQuotaToggleKey | ResetToggleKey>,
+  service: ServiceType
+): boolean => settings[toggleMap[service]];
 
 const makeQuotaSnapshot = (
   service: ServiceType,
@@ -71,15 +90,14 @@ const hasChanged = (prev: CombinedSnapshot | null, next: CombinedSnapshot): bool
   );
 };
 
-const hasLowAlert = (snapshot: CombinedSnapshot): boolean =>
-  snapshot.cursor.status === "low";
-
-const makeReason = (changed: boolean, lowAlert: boolean): string => {
-  if (lowAlert && changed) {
-    return "配額變化，且進入低額度預警";
+const makeReason = (changed: boolean, lowServices: ServiceType[]): string => {
+  if (changed && lowServices.length > 0) {
+    const labels = lowServices.map((service) => SERVICE_LABELS[service]).join("、");
+    return `配額變化，且 ${labels} 進入低額度預警`;
   }
-  if (lowAlert) {
-    return "進入低額度預警";
+  if (lowServices.length > 0) {
+    const labels = lowServices.map((service) => SERVICE_LABELS[service]).join("、");
+    return `${labels} 進入低額度預警`;
   }
   if (changed) {
     return "配額數值發生變化";
@@ -90,7 +108,18 @@ const makeReason = (changed: boolean, lowAlert: boolean): string => {
 export class MonitorEngine extends EventEmitter {
   private timer: NodeJS.Timeout | null = null;
   private isRunning = false;
-  private resetAlarmTimers: Map<string, NodeJS.Timeout> = new Map();
+  private resetAlarmTimers = new Map<string, NodeJS.Timeout>();
+
+  private shouldNotify(scope: string, key: string, settings: AppSettings): boolean {
+    const cooldownMs = settings.notifyCooldownMinutes * 60_000;
+    const nowMs = Date.now();
+    const last = notificationStore.get(scope);
+    if (isDuplicateInCooldown(last, key, cooldownMs, nowMs)) {
+      return false;
+    }
+    notificationStore.set(scope, key, nowIso());
+    return true;
+  }
 
   start(): void {
     this.reschedule();
@@ -101,7 +130,7 @@ export class MonitorEngine extends EventEmitter {
       clearInterval(this.timer);
       this.timer = null;
     }
-    for (const [key, t] of this.resetAlarmTimers.entries()) {
+    for (const [, t] of this.resetAlarmTimers.entries()) {
       clearTimeout(t);
     }
     this.resetAlarmTimers.clear();
@@ -129,71 +158,60 @@ export class MonitorEngine extends EventEmitter {
   }
 
   private async updateAlarms(snapshot: CombinedSnapshot, settings: AppSettings) {
-    const alarmManager = getSystemAlarmManager();
-    const claude = snapshot.claude;
-    
-    const setOrClear = async (
-      id: string, 
-      title: string, 
-      resetAt: string | null | undefined, 
-      remainingInfo: string,
-      label: string
-    ) => {
-      // clear existing internal timer
-      if (this.resetAlarmTimers.has(id)) {
-        clearTimeout(this.resetAlarmTimers.get(id));
-        this.resetAlarmTimers.delete(id);
+    for (const timer of this.resetAlarmTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.resetAlarmTimers.clear();
+
+    if (!settings.enableResetAlarm) {
+      return;
+    }
+
+    const resetTargets = [
+      {
+        id: "cursor-billing",
+        service: "cursor" as const,
+        resetAt: snapshot.cursor.resetsAt,
+        label: snapshot.cursor.resetLabel || "計費週期"
+      },
+      {
+        id: "claude-session",
+        service: "claude" as const,
+        resetAt: snapshot.claude.resetsAt,
+        label: snapshot.claude.resetLabel || "5 小時視窗"
+      },
+      {
+        id: "claude-weekly",
+        service: "claude" as const,
+        resetAt: snapshot.claude.weeklyResetAt,
+        label: snapshot.claude.weeklyResetLabel || "每週配額"
+      }
+    ];
+
+    for (const target of resetTargets) {
+      if (!isToggleEnabled(settings, resetToggleMap, target.service) || !target.resetAt) {
+        continue;
       }
 
-      if (settings.enableResetAlarm && resetAt) {
-        const timeToFire = new Date(resetAt).getTime() - Date.now();
-        if (timeToFire > 0) {
-          const body = `${label} 已重置。目前剩餘：${remainingInfo}`;
-          if (alarmManager) {
-            await alarmManager.upsert(id, resetAt, title, body);
-          }
-
-          // setup internal timer for LINE and fallback desktop
-          const timerId = setTimeout(() => {
-            if (settings.enableResetAlarmLine) {
-              sendLineFlexMessage(settings, {
-                snapshot,
-                reason: `${label} 重置鬧鐘到點`
-              }).catch(e => console.error("[Usage-Pulse] LINE alarm error", e));
-            }
-            if (!alarmManager) {
-              sendDesktopNotification({ snapshot, reason: `${label} 重置鬧鐘到點` });
-            }
-          }, timeToFire);
-          this.resetAlarmTimers.set(id, timerId);
-        }
-      } else {
-        if (alarmManager) {
-          await alarmManager.remove(id, title);
-        }
+      const fireAtMs = Date.parse(target.resetAt);
+      if (Number.isNaN(fireAtMs) || fireAtMs <= Date.now()) {
+        continue;
       }
-    };
 
-    const sessionInfo = claude.percent !== null ? `${Math.round(claude.percent)}%` : "N/A";
-    await setOrClear("claude-session", "Usage-Pulse Claude Session", claude.resetsAt, sessionInfo, "Claude 5 小時視窗");
-    await setOrClear("claude-weekly", "Usage-Pulse Claude Weekly", claude.weeklyResetAt, sessionInfo, "Claude 週配額");
-
-    // Low quota alarm check (immediate, not scheduled)
-    if (settings.enableLowQuotaAlarm && claude.status === "low") {
-      const key = `claude-low-alarm|${claude.remaining}|${claude.percent}`;
-      const last = notificationStore.get();
-      const cooldownMs = settings.notifyCooldownMinutes * 60_000;
-      const lastAtMs = last.at ? Date.parse(last.at) : 0;
-      const duplicateInCooldown = last.key === key && lastAtMs > 0 && Date.now() - lastAtMs < cooldownMs;
-
-      if (!duplicateInCooldown) {
-        const reason = "Claude 額度低於設定閾值";
-        sendDesktopNotification({ snapshot, reason });
-        if (settings.enableLowQuotaAlarmLine) {
-          sendLineFlexMessage(settings, { snapshot, reason }).catch(e => console.error("[Usage-Pulse] LINE low alarm error", e));
+      const timer = setTimeout(() => {
+        const latest = snapshotStore.get() ?? snapshot;
+        const scope = `reset:${target.id}`;
+        const key = `${target.id}|${target.resetAt}`;
+        if (!this.shouldNotify(scope, key, settings)) {
+          return;
         }
-        notificationStore.set(key, nowIso());
-      }
+        sendDesktopNotification({
+          snapshot: latest,
+          reason: `${SERVICE_LABELS[target.service]} ${target.label} 已到重置時間`
+        });
+      }, fireAtMs - Date.now());
+
+      this.resetAlarmTimers.set(target.id, timer);
     }
   }
 
@@ -206,7 +224,7 @@ export class MonitorEngine extends EventEmitter {
       return {
         snapshot: current,
         changed: false,
-        lowAlert: hasLowAlert(current),
+        lowAlert: getLowQuotaServices(current).length > 0,
         notified: false,
         reason: "檢查作業執行中"
       };
@@ -229,43 +247,46 @@ export class MonitorEngine extends EventEmitter {
       };
 
       const changed = hasChanged(previous, snapshot);
-      const lowAlert = hasLowAlert(snapshot);
-      const reason = makeReason(changed, lowAlert);
+      const lowServices = getLowQuotaServices(snapshot);
+      const lowAlert = lowServices.length > 0;
+      const reason = makeReason(changed, lowServices);
       let notified = false;
 
-      if (changed || lowAlert) {
-        const key = JSON.stringify({
-          c: {
+      if (changed) {
+        const changeKey = JSON.stringify({
+          cursor: {
             remaining: snapshot.cursor.remaining,
             total: snapshot.cursor.total,
             percent: snapshot.cursor.percent,
             status: snapshot.cursor.status
           },
-          a: {
+          claude: {
             remaining: snapshot.claude.remaining,
             total: snapshot.claude.total,
             percent: snapshot.claude.percent,
             status: snapshot.claude.status
-          },
-          reason
-        });
-        const last = notificationStore.get();
-        const cooldownMs = settings.notifyCooldownMinutes * 60_000;
-        const lastAtMs = last.at ? Date.parse(last.at) : 0;
-        const duplicateInCooldown =
-          last.key === key && lastAtMs > 0 && Date.now() - lastAtMs < cooldownMs;
-
-        if (!duplicateInCooldown) {
-          sendDesktopNotification({ snapshot, reason });
-          try {
-            await sendLineFlexMessage(settings, { snapshot, reason });
-          } catch (error) {
-            const message = error instanceof Error ? error.message : "LINE 發送失敗";
-            this.emit("error", new Error(message));
           }
-          notificationStore.set(key, nowIso());
+        });
+        if (this.shouldNotify("change", changeKey, settings)) {
+          sendDesktopNotification({ snapshot, reason: "配額數值發生變化" });
           notified = true;
         }
+      }
+
+      for (const service of lowServices) {
+        if (!isToggleEnabled(settings, lowQuotaToggleMap, service)) {
+          continue;
+        }
+        const target = snapshot[service];
+        const key = `${service}|${target.remaining}|${target.total}|${target.percent}|${target.status}`;
+        if (!this.shouldNotify(`low:${service}`, key, settings)) {
+          continue;
+        }
+        sendDesktopNotification({
+          snapshot,
+          reason: `${SERVICE_LABELS[service]} 額度低於 ${settings.lowThresholdPercent}%`
+        });
+        notified = true;
       }
 
       snapshotStore.set(snapshot);

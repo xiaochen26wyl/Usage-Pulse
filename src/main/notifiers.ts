@@ -1,6 +1,5 @@
 import { Notification } from "electron";
-import axios from "axios";
-import type { AppSettings, NotifyPayload, QuotaSnapshot } from "@shared/types";
+import type { NotifyPayload, QuotaSnapshot } from "@shared/types";
 
 const formatValue = (value: number | null, unit: QuotaSnapshot["unit"]): string => {
   if (value === null) {
@@ -21,62 +20,6 @@ const formatQuota = (snapshot: QuotaSnapshot): string => {
   return `${remaining} / ${total}`;
 };
 
-const buildLineFlexPayload = ({ snapshot, reason }: NotifyPayload) => {
-  const cursorValue = formatQuota(snapshot.cursor);
-  const claudeValue = formatQuota(snapshot.claude);
-
-  return {
-    messages: [
-      {
-        type: "flex",
-        altText: `Usage-Pulse 通知: ${reason}`,
-        contents: {
-          type: "bubble",
-          body: {
-            type: "box",
-            layout: "vertical",
-            spacing: "md",
-            contents: [
-              {
-                type: "text",
-                text: "Usage-Pulse",
-                weight: "bold",
-                size: "lg"
-              },
-              {
-                type: "text",
-                text: reason,
-                wrap: true,
-                size: "sm",
-                color: "#666666"
-              },
-              {
-                type: "separator"
-              },
-              {
-                type: "box",
-                layout: "baseline",
-                contents: [
-                  { type: "text", text: "Cursor", size: "sm", color: "#555555", flex: 3 },
-                  { type: "text", text: cursorValue, size: "sm", flex: 5, align: "end" }
-                ]
-              },
-              {
-                type: "box",
-                layout: "baseline",
-                contents: [
-                  { type: "text", text: "Claude Code", size: "sm", color: "#555555", flex: 3 },
-                  { type: "text", text: claudeValue, size: "sm", flex: 5, align: "end" }
-                ]
-              }
-            ]
-          }
-        }
-      }
-    ]
-  };
-};
-
 export const sendDesktopNotification = (payload: NotifyPayload): void => {
   if (!Notification.isSupported()) {
     return;
@@ -90,23 +33,4 @@ export const sendDesktopNotification = (payload: NotifyPayload): void => {
   });
 
   notification.show();
-};
-
-export const sendLineFlexMessage = async (
-  settings: AppSettings,
-  payload: NotifyPayload
-): Promise<boolean> => {
-  if (!settings.enableLineNotify || !settings.lineChannelToken) {
-    return false;
-  }
-
-  await axios.post("https://api.line.me/v2/bot/message/broadcast", buildLineFlexPayload(payload), {
-    headers: {
-      Authorization: `Bearer ${settings.lineChannelToken}`,
-      "Content-Type": "application/json"
-    },
-    timeout: 15_000
-  });
-
-  return true;
 };

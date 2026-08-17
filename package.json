@@ -1,7 +1,7 @@
 {
   "name": "usage-pulse",
-  "version": "0.1.0",
-  "description": "Cross-platform tray app to monitor AI quota usage with LINE alerts.",
+  "version": "1.0.0",
+  "description": "Cross-platform tray app to monitor AI quota usage with desktop alerts.",
   "main": "dist/main/index.js",
   "author": "zorawl",
   "license": "MIT",
@@ -13,8 +13,10 @@
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
+    "test:unit": "tsx --test \"tests/**/*.test.ts\"",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "check:readonly": "node scripts/check-readonly.mjs",
+    "smoke:build": "node scripts/smoke-build.mjs",
     "dist": "pnpm build && electron-builder",
     "dist:mac": "pnpm build && electron-builder --mac dmg --x64 --arm64",
     "dist:win": "pnpm build && electron-builder --win nsis --x64"
@@ -24,16 +26,19 @@
     "electron-store": "^10.0.1",
     "menubar": "^9.5.3",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "sql.js": "^1.14.2"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
     "@types/react": "^18.3.21",
     "@types/react-dom": "^18.3.7",
+    "@types/sql.js": "^1.4.11",
     "@vitejs/plugin-react": "^4.4.1",
     "electron": "^33.3.0",
     "electron-builder": "^25.1.8",
     "electron-vite": "^3.0.0",
+    "tsx": "^4.23.12",
     "typescript": "^5.9.3",
     "vite": "^5.4.19"
   },
@@ -50,6 +55,8 @@
     ],
     "mac": {
       "category": "public.app-category.utilities",
+      "identity": null,
+      "icon": "node_modules/electron/dist/Electron.app/Contents/Resources/electron.icns",
       "target": [
         {
           "target": "dmg",
@@ -61,6 +68,7 @@
       ]
     },
     "win": {
+      "icon": "node_modules/electron/dist/electron.ico",
       "target": [
         {
           "target": "nsis",
