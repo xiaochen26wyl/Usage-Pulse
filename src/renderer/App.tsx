@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import type { AppSettings, AuthStatus, CombinedSnapshot, QuotaSnapshot, ServiceType } from "@shared/types";
+import type { AppSettings, AuthStatus, CombinedSnapshot, Language, QuotaSnapshot, ServiceType } from "@shared/types";
+import { t } from "@shared/i18n";
 
 const defaultSettings: AppSettings = {
   intervalMinutes: 10,
@@ -10,7 +11,8 @@ const defaultSettings: AppSettings = {
   enableCursorResetAlarm: true,
   enableClaudeResetAlarm: true,
   enableCursorLowQuotaAlert: true,
-  enableClaudeLowQuotaAlert: true
+  enableClaudeLowQuotaAlert: true,
+  language: "zh"
 };
 
 const defaultAuth: AuthStatus = {
@@ -23,9 +25,9 @@ const serviceNames: Record<ServiceType, string> = {
   claude: "Claude Code"
 };
 
-const authHints: Record<ServiceType, string> = {
-  cursor: "請先在 Cursor Desktop 登入後再檢查。",
-  claude: "請在終端機執行 claude 登入（或設定 CLAUDE_CODE_OAUTH_TOKEN）。"
+const authHintKeys: Record<ServiceType, "auth.hint.cursor" | "auth.hint.claude"> = {
+  cursor: "auth.hint.cursor",
+  claude: "auth.hint.claude"
 };
 
 const formatValue = (value: number | null, unit: QuotaSnapshot["unit"]): string => {
@@ -44,31 +46,31 @@ const formatValue = (value: number | null, unit: QuotaSnapshot["unit"]): string 
 const formatQuotaLine = (snapshot: QuotaSnapshot): string =>
   `${formatValue(snapshot.remaining, snapshot.unit)} / ${formatValue(snapshot.total, snapshot.unit)}`;
 
-const formatResetText = (iso: string | null): string => {
+const formatResetText = (iso: string | null, lang: Language): string => {
   if (!iso) {
-    return "未知";
+    return t(lang, "app.unknown");
   }
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) {
-    return "未知";
+    return t(lang, "app.unknown");
   }
   return date.toLocaleString();
 };
 
-const formatCountdown = (iso: string | null, now: number): string => {
-  if (!iso) return "未知";
+const formatCountdown = (iso: string | null, now: number, lang: Language): string => {
+  if (!iso) return t(lang, "app.unknown");
   const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return "未知";
-  
+  if (Number.isNaN(date.getTime())) return t(lang, "app.unknown");
+
   const diff = date.getTime() - now;
-  if (diff <= 0) return "已重置";
+  if (diff <= 0) return t(lang, "app.alreadyReset");
 
   const seconds = Math.floor(diff / 1000) % 60;
   const minutes = Math.floor(diff / 60000) % 60;
   const hours = Math.floor(diff / 3600000) % 24;
   const days = Math.floor(diff / 86400000);
 
-  if (days > 0) return `${days} 天 ${hours} 小時 ${minutes} 分鐘`;
+  if (days > 0) return t(lang, "app.countdown.days", { days, hours, minutes });
   return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
 };
 
@@ -89,8 +91,9 @@ export const App = () => {
   const [savingSettings, setSavingSettings] = useState(false);
   const [checking, setChecking] = useState(false);
   const [checkingAuth, setCheckingAuth] = useState(false);
-  const [message, setMessage] = useState("準備就緒");
+  const [message, setMessage] = useState(t(defaultSettings.language, "app.readyMessage"));
   const [now, setNow] = useState<number>(Date.now());
+  const lang = settings.language;
 
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 1000);
@@ -110,7 +113,7 @@ export const App = () => {
 
   useEffect(() => {
     refreshBaseData().catch((error) => {
-      setMessage(error instanceof Error ? error.message : "初始化失敗");
+      setMessage(error instanceof Error ? error.message : t(lang, "app.initFailed"));
     });
 
     const unsubscribe = window.usagePulse.onSnapshotUpdated((nextSnapshot) => {
@@ -122,20 +125,22 @@ export const App = () => {
     };
   }, []);
 
+  const clampSettings = (value: AppSettings): AppSettings => ({
+    ...value,
+    intervalMinutes: Math.min(60, Math.max(1, Number(value.intervalMinutes) || 5)),
+    lowThresholdPercent: Math.min(99, Math.max(1, Number(value.lowThresholdPercent) || 20)),
+    notifyCooldownMinutes: Math.min(240, Math.max(1, Number(value.notifyCooldownMinutes) || 15))
+  });
+
   const handleSaveSettings = async () => {
     setSavingSettings(true);
-    setMessage("儲存設定中...");
+    setMessage(t(lang, "app.savingSettings"));
     try {
-      const next = await window.usagePulse.saveSettings({
-        ...settings,
-        intervalMinutes: Math.min(60, Math.max(1, Number(settings.intervalMinutes) || 5)),
-        lowThresholdPercent: Math.min(99, Math.max(1, Number(settings.lowThresholdPercent) || 20)),
-        notifyCooldownMinutes: Math.min(240, Math.max(1, Number(settings.notifyCooldownMinutes) || 15))
-      });
+      const next = await window.usagePulse.saveSettings(clampSettings(settings));
       setSettings(next);
-      setMessage("設定已儲存");
+      setMessage(t(next.language, "app.settingsSaved"));
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "儲存失敗");
+      setMessage(error instanceof Error ? error.message : t(lang, "app.saveFailed"));
     } finally {
       setSavingSettings(false);
     }
@@ -146,9 +151,9 @@ export const App = () => {
     try {
       const nextAuth = await window.usagePulse.getAuthStatus();
       setAuthStatus(nextAuth);
-      setMessage("本機憑證狀態已更新");
+      setMessage(t(lang, "app.authRefreshed"));
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "重新偵測憑證失敗");
+      setMessage(error instanceof Error ? error.message : t(lang, "app.authRefreshFailed"));
     } finally {
       setCheckingAuth(false);
     }
@@ -156,36 +161,56 @@ export const App = () => {
 
   const runManualCheck = async () => {
     setChecking(true);
-    setMessage("正在手動檢查...");
+    setMessage(t(lang, "app.checking"));
     try {
       const result = await window.usagePulse.runManualCheck();
       setSnapshot(result.snapshot);
-      setMessage(`檢查完成：${result.reason}`);
+      setMessage(t(lang, "app.checkComplete", { reason: result.reason }));
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "手動檢查失敗");
+      setMessage(error instanceof Error ? error.message : t(lang, "app.checkFailed"));
     } finally {
       setChecking(false);
     }
   };
 
   const quitApp = async () => {
-    setMessage("正在結束 Usage-Pulse...");
+    setMessage(t(lang, "app.quitting"));
     try {
       await window.usagePulse.quitApp();
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "結束程式失敗");
+      setMessage(error instanceof Error ? error.message : t(lang, "app.quitFailed"));
+    }
+  };
+
+  const toggleLanguage = async () => {
+    const nextLang: Language = lang === "zh" ? "en" : "zh";
+    setSettings((prev) => ({ ...prev, language: nextLang }));
+    try {
+      const next = await window.usagePulse.saveSettings(clampSettings({ ...settings, language: nextLang }));
+      setSettings(next);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : t(nextLang, "app.saveFailed"));
     }
   };
 
   return (
     <main className="app">
       <section className="panel">
-        <h1>Usage-Pulse</h1>
-        <p className="subtitle">跨平台配額監控工具（Cursor / Claude Code）</p>
+        <div className="quota-header">
+          <h1>Usage-Pulse</h1>
+          <button
+            className="lang-toggle"
+            onClick={toggleLanguage}
+            title={t(lang, "settings.language")}
+          >
+            {lang === "zh" ? "EN" : "中文"}
+          </button>
+        </div>
+        <p className="subtitle">{t(lang, "app.subtitle")}</p>
       </section>
 
       <section className="panel">
-        <h2>即時配額</h2>
+        <h2>{t(lang, "section.realtimeQuota")}</h2>
         <div className="quota-grid">
           {(["cursor", "claude"] as ServiceType[]).map((service) => {
             const item = snapshot?.[service];
@@ -197,7 +222,7 @@ export const App = () => {
                   <span className={`status-tag status-${item?.status || "unknown"}`}>{item?.status || "unknown"}</span>
                 </div>
                 <div className="quota-value">
-                  {item ? formatQuotaLine(item) : "N/A / N/A"}
+                  {item ? formatQuotaLine(item) : t(lang, "app.naSlashNa")}
                 </div>
                 <div className="progress-track">
                   <div className="progress-fill" style={{ width: `${percent}%` }} />
@@ -212,45 +237,48 @@ export const App = () => {
                         </p>
                         {window.resetsAt && (
                           <p className="meta-text" style={{ margin: "0", color: "#8b949e", fontSize: "12px" }}>
-                            即時倒數：{formatCountdown(window.resetsAt, now)} ({formatResetText(window.resetsAt)})
+                            {t(lang, "app.liveCountdown", {
+                              countdown: formatCountdown(window.resetsAt, now, lang),
+                              resetTime: formatResetText(window.resetsAt, lang)
+                            })}
                           </p>
                         )}
                       </div>
                     ))}
                   </div>
                 ) : null}
-                <p className="meta-text" style={{ marginTop: "8px" }}>{item?.message || "尚未抓取資料"}</p>
+                <p className="meta-text" style={{ marginTop: "8px" }}>{item?.message || t(lang, "app.notFetchedYet")}</p>
               </div>
             );
           })}
         </div>
         <button className="primary-btn" onClick={runManualCheck} disabled={checking}>
-          {checking ? "檢查中..." : "立即手動檢查"}
+          {checking ? t(lang, "button.checking") : t(lang, "button.manualCheck")}
         </button>
       </section>
 
       <section className="panel">
-        <h2>本機憑證偵測</h2>
+        <h2>{t(lang, "section.credentialDetection")}</h2>
         <div className="auth-list">
           {(["cursor", "claude"] as ServiceType[]).map((service) => (
             <div className="auth-card" key={service}>
               <div>
                 <strong>{serviceNames[service]}</strong>
-                <p className="meta-text">{authStatus[service] ? "已偵測到可用憑證" : "尚未偵測到憑證"}</p>
-                {!authStatus[service] ? <p className="meta-text">{authHints[service]}</p> : null}
+                <p className="meta-text">{authStatus[service] ? t(lang, "auth.detected") : t(lang, "auth.notDetected")}</p>
+                {!authStatus[service] ? <p className="meta-text">{t(lang, authHintKeys[service])}</p> : null}
               </div>
             </div>
           ))}
         </div>
         <button className="primary-btn" onClick={refreshAuthStatus} disabled={checkingAuth}>
-          {checkingAuth ? "偵測中..." : "重新偵測憑證"}
+          {checkingAuth ? t(lang, "button.detecting") : t(lang, "button.redetect")}
         </button>
       </section>
 
       <section className="panel">
-        <h2>設定</h2>
+        <h2>{t(lang, "section.settings")}</h2>
         <label className="field">
-          <span>檢查頻率：{settings.intervalMinutes} 分鐘</span>
+          <span>{t(lang, "settings.checkInterval", { minutes: settings.intervalMinutes })}</span>
           <input
             type="range"
             min={1}
@@ -263,7 +291,7 @@ export const App = () => {
         </label>
 
         <label className="field">
-          <span>低額度預警閾值：{settings.lowThresholdPercent}%</span>
+          <span>{t(lang, "settings.lowThreshold", { percent: settings.lowThresholdPercent })}</span>
           <input
             type="range"
             min={1}
@@ -279,7 +307,7 @@ export const App = () => {
         </label>
 
         <label className="field">
-          <span>通知冷卻時間（分鐘）</span>
+          <span>{t(lang, "settings.notifyCooldown")}</span>
           <input
             type="number"
             min={1}
@@ -295,7 +323,7 @@ export const App = () => {
         </label>
 
         <label className="field switch-row">
-          <span>開機自動啟動</span>
+          <span>{t(lang, "settings.launchAtLogin")}</span>
           <input
             type="checkbox"
             checked={settings.launchAtLogin}
@@ -303,12 +331,14 @@ export const App = () => {
           />
         </label>
 
-        <h3 style={{ marginTop: "16px", marginBottom: "8px", fontSize: "16px", color: "#e1e4e8" }}>重置提醒</h3>
+        <h3 style={{ marginTop: "16px", marginBottom: "8px", fontSize: "16px", color: "#e1e4e8" }}>
+          {t(lang, "settings.resetAlarm.title")}
+        </h3>
         <p className="meta-text" style={{ marginBottom: "10px" }}>
-          只使用內建桌面通知，不需要額外下載工具；提醒在程式執行中生效。
+          {t(lang, "settings.resetAlarm.desc")}
         </p>
         <label className="field switch-row">
-          <span>啟用重置提醒</span>
+          <span>{t(lang, "settings.resetAlarm.enable")}</span>
           <input
             type="checkbox"
             checked={settings.enableResetAlarm}
@@ -316,7 +346,7 @@ export const App = () => {
           />
         </label>
         <label className="field switch-row" style={{ paddingLeft: "20px", opacity: settings.enableResetAlarm ? 1 : 0.5 }}>
-          <span>└ Cursor 重置提醒</span>
+          <span>{t(lang, "settings.resetAlarm.cursor")}</span>
           <input
             type="checkbox"
             disabled={!settings.enableResetAlarm}
@@ -325,7 +355,7 @@ export const App = () => {
           />
         </label>
         <label className="field switch-row" style={{ paddingLeft: "20px", opacity: settings.enableResetAlarm ? 1 : 0.5 }}>
-          <span>└ Claude Code 重置提醒</span>
+          <span>{t(lang, "settings.resetAlarm.claude")}</span>
           <input
             type="checkbox"
             disabled={!settings.enableResetAlarm}
@@ -334,9 +364,11 @@ export const App = () => {
           />
         </label>
 
-        <h3 style={{ marginTop: "16px", marginBottom: "8px", fontSize: "16px", color: "#e1e4e8" }}>低額度通知</h3>
+        <h3 style={{ marginTop: "16px", marginBottom: "8px", fontSize: "16px", color: "#e1e4e8" }}>
+          {t(lang, "settings.lowQuota.title")}
+        </h3>
         <label className="field switch-row">
-          <span>Cursor 低額度通知</span>
+          <span>{t(lang, "settings.lowQuota.cursor")}</span>
           <input
             type="checkbox"
             checked={settings.enableCursorLowQuotaAlert}
@@ -344,7 +376,7 @@ export const App = () => {
           />
         </label>
         <label className="field switch-row">
-          <span>Claude Code 低額度通知</span>
+          <span>{t(lang, "settings.lowQuota.claude")}</span>
           <input
             type="checkbox"
             checked={settings.enableClaudeLowQuotaAlert}
@@ -354,10 +386,10 @@ export const App = () => {
         <div style={{ marginBottom: "16px" }} />
 
         <button className="primary-btn" onClick={handleSaveSettings} disabled={savingSettings}>
-          {savingSettings ? "儲存中..." : "儲存設定"}
+          {savingSettings ? t(lang, "button.saving") : t(lang, "button.saveSettings")}
         </button>
         <button style={{ width: "100%", marginTop: "8px" }} onClick={quitApp}>
-          結束 Usage-Pulse
+          {t(lang, "button.quit")}
         </button>
       </section>
 

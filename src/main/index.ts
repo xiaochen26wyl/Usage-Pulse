@@ -2,6 +2,7 @@ import { join } from "node:path";
 import { app, ipcMain, Menu } from "electron";
 import { menubar } from "menubar";
 import type { CombinedSnapshot, QuotaSnapshot } from "@shared/types";
+import { t } from "@shared/i18n";
 import { getAuthStatus } from "@main/auth-service";
 import { MonitorEngine } from "@main/monitor-engine";
 import { settingsStore } from "@main/store";
@@ -59,6 +60,7 @@ const updateTrayText = (snapshot: CombinedSnapshot): void => {
     return;
   }
 
+  const lang = settingsStore.get().language;
   const title = `C:${valueText(snapshot.cursor)} A:${valueText(snapshot.claude)}`;
   const toolTipLines = [
     "Usage-Pulse",
@@ -69,10 +71,10 @@ const updateTrayText = (snapshot: CombinedSnapshot): void => {
     const date = new Date(snapshot.claude.resetsAt);
     if (!Number.isNaN(date.getTime())) {
       const timeStr = `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
-      toolTipLines.push(`Claude 重置: ${timeStr}`);
+      toolTipLines.push(t(lang, "tray.tooltip.claudeReset", { time: timeStr }));
     }
   }
-  toolTipLines.push(`更新: ${new Date(snapshot.fetchedAt).toLocaleTimeString()}`);
+  toolTipLines.push(t(lang, "tray.tooltip.updated", { time: new Date(snapshot.fetchedAt).toLocaleTimeString() }));
 
   if (isMac) {
     trayApp.tray.setTitle(title);
@@ -86,12 +88,37 @@ const applyAutoLaunch = (enabled: boolean): void => {
   });
 };
 
+const buildTrayMenu = (): void => {
+  if (!trayApp.tray) {
+    return;
+  }
+  const lang = settingsStore.get().language;
+  trayApp.tray.setContextMenu(
+    Menu.buildFromTemplate([
+      {
+        label: t(lang, "tray.menu.open"),
+        click: () => trayApp.showWindow()
+      },
+      { type: "separator" },
+      {
+        label: t(lang, "tray.menu.quit"),
+        click: () => app.quit()
+      }
+    ])
+  );
+};
+
 const setupIpcHandlers = (): void => {
   ipcMain.handle("settings:get", () => settingsStore.get());
   ipcMain.handle("settings:save", (_event, patch) => {
     const next = settingsStore.update(patch);
     applyAutoLaunch(next.launchAtLogin);
     monitor.reschedule();
+    buildTrayMenu();
+    const latest = monitor.getLatestSnapshot();
+    if (latest) {
+      updateTrayText(latest);
+    }
     return next;
   });
 
@@ -123,27 +150,14 @@ app.whenReady().then(async () => {
   });
 
   trayApp.on("ready", async () => {
-    if (trayApp.tray) {
-      trayApp.tray.setContextMenu(
-        Menu.buildFromTemplate([
-          {
-            label: "打開 Usage-Pulse",
-            click: () => trayApp.showWindow()
-          },
-          { type: "separator" },
-          {
-            label: "結束 Usage-Pulse",
-            click: () => app.quit()
-          }
-        ])
-      );
-    }
+    buildTrayMenu();
 
     const latest = monitor.getLatestSnapshot();
     if (latest) {
       updateTrayText(latest);
     } else if (trayApp.tray) {
-      trayApp.tray.setToolTip("Usage-Pulse\n尚未抓取到配額資料");
+      const lang = settingsStore.get().language;
+      trayApp.tray.setToolTip(t(lang, "tray.tooltip.noData"));
       if (isMac) {
         trayApp.tray.setTitle("C:? A:?");
       }

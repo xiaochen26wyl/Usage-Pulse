@@ -1,6 +1,8 @@
 import axios from "axios";
 import type { QuotaWindow, ScrapeResult } from "@shared/types";
+import { t } from "@shared/i18n";
 import { getCursorAccessToken } from "@main/credential-provider";
+import { settingsStore } from "@main/store";
 
 const CURSOR_API_BASE = "https://api2.cursor.sh";
 
@@ -87,6 +89,7 @@ const extractUsagePayload = (raw: CursorCurrentPeriodUsage): CursorCurrentPeriod
 };
 
 export const collectCursorQuota = async (): Promise<ScrapeResult> => {
+  const lang = settingsStore.get().language;
   const token = await getCursorAccessToken();
 
   let usage: CursorCurrentPeriodUsage;
@@ -94,9 +97,9 @@ export const collectCursorQuota = async (): Promise<ScrapeResult> => {
     usage = extractUsagePayload(await cursorRequest<CursorCurrentPeriodUsage>("/aiserver.v1.DashboardService/GetCurrentPeriodUsage", token));
   } catch (error) {
     if (axios.isAxiosError(error) && error.response?.status === 401) {
-      throw new Error("Cursor 登入已失效，請先重新登入 Cursor Desktop。");
+      throw new Error(t(lang, "error.cursorLoginExpired"));
     }
-    throw new Error("Cursor 用量 API 請求失敗。");
+    throw new Error(t(lang, "error.cursorApiFailed"));
   }
 
   const planUsage = usage.planUsage || {};
@@ -132,12 +135,12 @@ export const collectCursorQuota = async (): Promise<ScrapeResult> => {
   const windows: QuotaWindow[] = [
     {
       key: "billing_cycle",
-      label: "本期 included usage",
+      label: t(lang, "window.label.billingCycle"),
       remaining: remainingUsd,
       total: totalUsd,
       percent,
       resetsAt,
-      message: "資料來源：Cursor DashboardService"
+      message: t(lang, "window.message.cursorSource")
     }
   ];
 
@@ -148,14 +151,14 @@ export const collectCursorQuota = async (): Promise<ScrapeResult> => {
       unit: "usd",
       resetsAt,
       windows,
-      message: "Cursor 回應缺少可用的配額欄位。"
+      message: t(lang, "error.cursorMissingFields")
     };
   }
 
   const remainingText = remainingUsd === null ? "N/A" : `$${remainingUsd.toFixed(2)}`;
   const totalText = totalUsd === null ? "N/A" : `$${totalUsd.toFixed(2)}`;
   const percentUsed = toNumber(planUsage.totalPercentUsed);
-  const suffix = percentUsed === null ? "" : `（已用 ${Math.round(percentUsed)}%）`;
+  const suffix = percentUsed === null ? "" : t(lang, "message.cursorUsedSuffix", { percent: Math.round(percentUsed) });
 
   return {
     remaining: remainingUsd,
@@ -163,6 +166,6 @@ export const collectCursorQuota = async (): Promise<ScrapeResult> => {
     unit: "usd",
     resetsAt,
     windows,
-    message: `Cursor included usage 剩餘 ${remainingText} / ${totalText}${suffix}`
+    message: t(lang, "message.cursorSummary", { remaining: remainingText, total: totalText, suffix })
   };
 };

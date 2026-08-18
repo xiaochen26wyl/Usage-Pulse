@@ -1,6 +1,7 @@
 import { EventEmitter } from "node:events";
 import type { AppSettings, CombinedSnapshot, MonitorResult, QuotaSnapshot, ScrapeResult, ServiceType } from "@shared/types";
 import { getLowQuotaServices, isDuplicateInCooldown } from "@shared/monitor-utils";
+import { t } from "@shared/i18n";
 import { scrapeQuota } from "@main/scrapers";
 import { sendDesktopNotification } from "@main/notifiers";
 import { notificationStore, settingsStore, snapshotStore } from "@main/store";
@@ -43,11 +44,10 @@ const makeQuotaSnapshot = (
   scrapeResult: ScrapeResult,
   settings: AppSettings
 ): QuotaSnapshot => {
-  const { remaining, total, unit, resetsAt, resetLabel, weeklyResetAt, weeklyResetLabel, windows, message } = scrapeResult;
+  const { remaining, total, unit, resetsAt, resetLabel, weeklyResetAt, weeklyResetLabel, windows, message, isError } = scrapeResult;
   const percent = toPercent(remaining, total);
   const low = isLowQuota(percent, settings);
-  const hasError = /失敗|error/i.test(message);
-  const status = hasError ? "error" : low ? "low" : remaining === null ? "unknown" : "ok";
+  const status = isError ? "error" : low ? "low" : remaining === null ? "unknown" : "ok";
 
   return {
     service,
@@ -90,19 +90,19 @@ const hasChanged = (prev: CombinedSnapshot | null, next: CombinedSnapshot): bool
   );
 };
 
-const makeReason = (changed: boolean, lowServices: ServiceType[]): string => {
+const makeReason = (changed: boolean, lowServices: ServiceType[], lang: AppSettings["language"]): string => {
   if (changed && lowServices.length > 0) {
     const labels = lowServices.map((service) => SERVICE_LABELS[service]).join("、");
-    return `配額變化，且 ${labels} 進入低額度預警`;
+    return t(lang, "reason.changedAndLow", { labels });
   }
   if (lowServices.length > 0) {
     const labels = lowServices.map((service) => SERVICE_LABELS[service]).join("、");
-    return `${labels} 進入低額度預警`;
+    return t(lang, "reason.low", { labels });
   }
   if (changed) {
-    return "配額數值發生變化";
+    return t(lang, "reason.changed");
   }
-  return "無變化";
+  return t(lang, "reason.noChange");
 };
 
 export class MonitorEngine extends EventEmitter {
@@ -130,8 +130,8 @@ export class MonitorEngine extends EventEmitter {
       clearInterval(this.timer);
       this.timer = null;
     }
-    for (const [, t] of this.resetAlarmTimers.entries()) {
-      clearTimeout(t);
+    for (const [, timer] of this.resetAlarmTimers.entries()) {
+      clearTimeout(timer);
     }
     this.resetAlarmTimers.clear();
   }
@@ -167,24 +167,25 @@ export class MonitorEngine extends EventEmitter {
       return;
     }
 
+    const lang = settings.language;
     const resetTargets = [
       {
         id: "cursor-billing",
         service: "cursor" as const,
         resetAt: snapshot.cursor.resetsAt,
-        label: snapshot.cursor.resetLabel || "計費週期"
+        label: snapshot.cursor.resetLabel || t(lang, "fallback.billingCycle")
       },
       {
         id: "claude-session",
         service: "claude" as const,
         resetAt: snapshot.claude.resetsAt,
-        label: snapshot.claude.resetLabel || "5 小時視窗"
+        label: snapshot.claude.resetLabel || t(lang, "window.label.session")
       },
       {
         id: "claude-weekly",
         service: "claude" as const,
         resetAt: snapshot.claude.weeklyResetAt,
-        label: snapshot.claude.weeklyResetLabel || "每週配額"
+        label: snapshot.claude.weeklyResetLabel || t(lang, "window.label.weekly")
       }
     ];
 
@@ -207,7 +208,7 @@ export class MonitorEngine extends EventEmitter {
         }
         sendDesktopNotification({
           snapshot: latest,
-          reason: `${SERVICE_LABELS[target.service]} ${target.label} 已到重置時間`
+          reason: t(lang, "reason.resetFired", { service: SERVICE_LABELS[target.service], label: target.label })
         });
       }, fireAtMs - Date.now());
 
@@ -218,15 +219,16 @@ export class MonitorEngine extends EventEmitter {
   async runCheck(trigger: TriggerType): Promise<MonitorResult> {
     if (this.isRunning) {
       const current = snapshotStore.get();
+      const lang = settingsStore.get().language;
       if (!current) {
-        throw new Error("目前有檢查作業執行中，且尚未有可用快照。");
+        throw new Error(t(lang, "error.checkInProgressNoSnapshot"));
       }
       return {
         snapshot: current,
         changed: false,
         lowAlert: getLowQuotaServices(current).length > 0,
         notified: false,
-        reason: "檢查作業執行中"
+        reason: t(lang, "reason.checkInProgress")
       };
     }
 
@@ -234,6 +236,7 @@ export class MonitorEngine extends EventEmitter {
 
     try {
       const settings = settingsStore.get();
+      const lang = settings.language;
       const previous = snapshotStore.get();
       const [cursorResult, claudeResult] = await Promise.all([
         scrapeQuota("cursor"),
@@ -249,7 +252,7 @@ export class MonitorEngine extends EventEmitter {
       const changed = hasChanged(previous, snapshot);
       const lowServices = getLowQuotaServices(snapshot);
       const lowAlert = lowServices.length > 0;
-      const reason = makeReason(changed, lowServices);
+      const reason = makeReason(changed, lowServices, lang);
       let notified = false;
 
       if (changed) {
@@ -268,7 +271,7 @@ export class MonitorEngine extends EventEmitter {
           }
         });
         if (this.shouldNotify("change", changeKey, settings)) {
-          sendDesktopNotification({ snapshot, reason: "配額數值發生變化" });
+          sendDesktopNotification({ snapshot, reason: t(lang, "reason.changed") });
           notified = true;
         }
       }
@@ -284,7 +287,7 @@ export class MonitorEngine extends EventEmitter {
         }
         sendDesktopNotification({
           snapshot,
-          reason: `${SERVICE_LABELS[service]} 額度低於 ${settings.lowThresholdPercent}%`
+          reason: t(lang, "reason.lowQuotaNotify", { service: SERVICE_LABELS[service], threshold: settings.lowThresholdPercent })
         });
         notified = true;
       }

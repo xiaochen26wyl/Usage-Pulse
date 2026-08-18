@@ -1,5 +1,7 @@
 export type ServiceType = "cursor" | "claude";
 
+export type Language = "zh" | "en";
+
 export type QuotaStatus = "ok" | "low" | "unknown" | "error";
 export type QuotaUnit = "usd" | "percent" | "count";
 
@@ -50,6 +52,7 @@ export interface AppSettings {
   enableClaudeResetAlarm: boolean;
   enableCursorLowQuotaAlert: boolean;
   enableClaudeLowQuotaAlert: boolean;
+  language: Language;
 }
 
 export interface MonitorResult {
@@ -70,6 +73,7 @@ export interface ScrapeResult {
   weeklyResetLabel?: string | null;
   windows: QuotaWindow[];
   message: string;
+  isError?: boolean;
 }
 
 export interface NotifyPayload {

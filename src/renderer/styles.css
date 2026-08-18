@@ -181,6 +181,12 @@ button:disabled {
   border-color: #2563eb;
 }
 
+.lang-toggle {
+  padding: 4px 10px;
+  font-size: 12px;
+  border-radius: 999px;
+}
+
 .auth-list {
   display: grid;
   gap: 10px;

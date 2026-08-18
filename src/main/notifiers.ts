@@ -1,5 +1,7 @@
 import { Notification } from "electron";
 import type { NotifyPayload, QuotaSnapshot } from "@shared/types";
+import { t } from "@shared/i18n";
+import { settingsStore } from "@main/store";
 
 const formatValue = (value: number | null, unit: QuotaSnapshot["unit"]): string => {
   if (value === null) {
@@ -25,8 +27,9 @@ export const sendDesktopNotification = (payload: NotifyPayload): void => {
     return;
   }
 
+  const lang = settingsStore.get().language;
   const notification = new Notification({
-    title: "Usage-Pulse 配額通知",
+    title: t(lang, "notification.title"),
     body: `${payload.reason}\nCursor: ${formatQuota(payload.snapshot.cursor)} | Claude Code: ${formatQuota(
       payload.snapshot.claude
     )}`

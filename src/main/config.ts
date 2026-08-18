@@ -14,5 +14,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   enableCursorResetAlarm: true,
   enableClaudeResetAlarm: true,
   enableCursorLowQuotaAlert: true,
-  enableClaudeLowQuotaAlert: true
+  enableClaudeLowQuotaAlert: true,
+  language: "zh"
 };

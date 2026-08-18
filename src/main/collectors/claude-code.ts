@@ -1,6 +1,8 @@
 import axios from "axios";
-import type { QuotaWindow, ScrapeResult } from "@shared/types";
+import type { Language, QuotaWindow, ScrapeResult } from "@shared/types";
+import { t } from "@shared/i18n";
 import { getClaudeCodeOAuthToken } from "@main/credential-provider";
+import { settingsStore } from "@main/store";
 
 const CLAUDE_USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
 
@@ -68,23 +70,23 @@ const detectLimitKey = (raw: string): string => {
   return key || "unknown";
 };
 
-const labelForKey = (key: string): string => {
+const labelForKey = (key: string, lang: Language): string => {
   if (key === "session") {
-    return "5 小時視窗";
+    return t(lang, "window.label.session");
   }
   if (key === "weekly_all") {
-    return "每週總配額";
+    return t(lang, "window.label.weeklyAll");
   }
   if (key === "weekly_scoped") {
-    return "每週模型配額";
+    return t(lang, "window.label.weeklyScoped");
   }
   if (key === "weekly") {
-    return "每週配額";
+    return t(lang, "window.label.weekly");
   }
   return key;
 };
 
-const parseLimitObject = (rawLimit: Record<string, unknown>): NormalizedLimit | null => {
+const parseLimitObject = (rawLimit: Record<string, unknown>, lang: Language): NormalizedLimit | null => {
   const rawKey =
     `${rawLimit.name ?? rawLimit.id ?? rawLimit.type ?? rawLimit.window ?? rawLimit.limit ?? rawLimit.key ?? ""}`.trim();
   const key = detectLimitKey(rawKey);
@@ -110,13 +112,13 @@ const parseLimitObject = (rawLimit: Record<string, unknown>): NormalizedLimit | 
 
   return {
     key,
-    label: labelForKey(key),
+    label: labelForKey(key, lang),
     usedPercent: finalUsed,
     resetsAt: toIsoTime(rawLimit.resetsAt ?? rawLimit.resetAt ?? rawLimit.reset_at)
   };
 };
 
-const parseLegacyLimit = (key: string, rawValue: unknown): NormalizedLimit | null => {
+const parseLegacyLimit = (key: string, rawValue: unknown, lang: Language): NormalizedLimit | null => {
   if (!rawValue || typeof rawValue !== "object") {
     return null;
   }
@@ -130,13 +132,13 @@ const parseLegacyLimit = (key: string, rawValue: unknown): NormalizedLimit | nul
 
   return {
     key,
-    label: labelForKey(key),
+    label: labelForKey(key, lang),
     usedPercent,
     resetsAt: toIsoTime(item.resetsAt ?? item.resetAt ?? item.reset_at)
   };
 };
 
-const extractLimits = (payload: Record<string, unknown>): NormalizedLimit[] => {
+const extractLimits = (payload: Record<string, unknown>, lang: Language): NormalizedLimit[] => {
   const limits: NormalizedLimit[] = [];
   const limitsRaw = payload.limits;
   if (Array.isArray(limitsRaw)) {
@@ -144,7 +146,7 @@ const extractLimits = (payload: Record<string, unknown>): NormalizedLimit[] => {
       if (!entry || typeof entry !== "object") {
         continue;
       }
-      const parsed = parseLimitObject(entry as Record<string, unknown>);
+      const parsed = parseLimitObject(entry as Record<string, unknown>, lang);
       if (parsed) {
         limits.push(parsed);
       }
@@ -162,7 +164,7 @@ const extractLimits = (payload: Record<string, unknown>): NormalizedLimit[] => {
   ];
 
   for (const [key, raw] of legacyCandidates) {
-    const parsed = parseLegacyLimit(key, raw);
+    const parsed = parseLegacyLimit(key, raw, lang);
     if (parsed) {
       limits.push(parsed);
     }
@@ -182,6 +184,7 @@ const selectPrimaryLimits = (limits: NormalizedLimit[]): { session: NormalizedLi
 };
 
 export const collectClaudeCodeQuota = async (): Promise<ScrapeResult> => {
+  const lang = settingsStore.get().language;
   const token = await getClaudeCodeOAuthToken();
 
   let payload: Record<string, unknown>;
@@ -198,16 +201,16 @@ export const collectClaudeCodeQuota = async (): Promise<ScrapeResult> => {
   } catch (error) {
     if (axios.isAxiosError(error)) {
       if (error.response?.status === 401) {
-        throw new Error("Claude Code 登入已失效，請先在終端機執行 claude 重新登入。");
+        throw new Error(t(lang, "error.claudeLoginExpired"));
       }
       if (error.response?.status === 429) {
-        throw new Error("Claude Code 用量 API 暫時限流，請稍後再試。");
+        throw new Error(t(lang, "error.claudeRateLimited"));
       }
     }
-    throw new Error("Claude Code 用量 API 請求失敗。");
+    throw new Error(t(lang, "error.claudeApiFailed"));
   }
 
-  const limits = extractLimits(payload);
+  const limits = extractLimits(payload, lang);
   if (limits.length === 0) {
     return {
       remaining: null,
@@ -215,7 +218,7 @@ export const collectClaudeCodeQuota = async (): Promise<ScrapeResult> => {
       unit: "percent",
       resetsAt: null,
       windows: [],
-      message: "Claude Code 回應缺少可解析的配額欄位。"
+      message: t(lang, "error.claudeMissingFields")
     };
   }
 
@@ -228,7 +231,7 @@ export const collectClaudeCodeQuota = async (): Promise<ScrapeResult> => {
       total: item.usedPercent === null ? null : 100,
       percent: remaining,
       resetsAt: item.resetsAt,
-      message: "資料來源：Claude Code OAuth Usage API"
+      message: t(lang, "window.message.claudeSource")
     };
   });
 
@@ -250,6 +253,6 @@ export const collectClaudeCodeQuota = async (): Promise<ScrapeResult> => {
     resetsAt,
     weeklyResetAt: weekly?.resetsAt ?? null,
     windows,
-    message: `Claude Code 配額剩餘：5h ${sessionText}｜週 ${weeklyText}`
+    message: t(lang, "message.claudeSummary", { session: sessionText, weekly: weeklyText })
   };
 };
