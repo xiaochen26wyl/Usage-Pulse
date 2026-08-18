@@ -63,9 +63,15 @@ jobs:
           - os: macos-latest
             script: dist:mac
             artifact: usage-pulse-mac
+            files: |
+              release/*.dmg
+              release/*.dmg.blockmap
           - os: windows-latest
             script: dist:win
             artifact: usage-pulse-win
+            files: |
+              release/*.exe
+              release/*.exe.blockmap
 
     steps:
       - name: Checkout
@@ -90,7 +96,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
-          path: release/**
+          path: ${{ matrix.files }}
           if-no-files-found: error
 
   publish:
