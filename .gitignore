@@ -23,3 +23,8 @@ out/
 
 # TypeScript
 *.tsbuildinfo
+
+# AI 協作規則（僅本機使用，不上傳 GitHub）
+CLAUDE.md
+.cursorrules
+.cursor/

@@ -3,11 +3,11 @@
   "version": "1.0.0",
   "description": "Cross-platform tray app to monitor AI quota usage with desktop alerts.",
   "main": "dist/main/index.js",
-  "author": "zorawl",
+  "author": "xiaochen26wyl",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/zorawl/Usage-Pulse.git"
+    "url": "https://github.com/xiaochen26wyl/Usage-Pulse.git"
   },
   "scripts": {
     "dev": "electron-vite dev",
@@ -43,7 +43,7 @@
     "vite": "^5.4.19"
   },
   "build": {
-    "appId": "com.zorawl.usagepulse",
+    "appId": "com.xiaochen26wyl.usagepulse",
     "productName": "Usage-Pulse",
     "asar": true,
     "directories": {
