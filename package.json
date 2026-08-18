@@ -19,7 +19,17 @@
     "smoke:build": "node scripts/smoke-build.mjs",
     "dist": "pnpm build && electron-builder --publish never",
     "dist:mac": "pnpm build && electron-builder --mac dmg --x64 --arm64 --publish never",
-    "dist:win": "pnpm build && electron-builder --win nsis --x64 --publish never"
+    "dist:win": "pnpm build && electron-builder --win nsis --x64 --publish never",
+    "git:start-work": "node scripts/git-workflow.mjs start-work",
+    "git:start-branch": "node scripts/git-workflow.mjs start-branch",
+    "git:sync-main": "node scripts/git-workflow.mjs sync-main",
+    "git:check-sync": "node scripts/git-workflow.mjs check-sync",
+    "git:push-wip": "node scripts/git-workflow.mjs push-wip",
+    "git:finish-work": "node scripts/git-workflow.mjs finish-work",
+    "git:merge-to-main": "node scripts/git-workflow.mjs merge-to-main",
+    "git:cleanup-branches": "node scripts/git-workflow.mjs cleanup-branches",
+    "git:issue-sync": "node scripts/github-issue-sync.mjs",
+    "git:end-day": "node scripts/git-workflow.mjs end-day"
   },
   "dependencies": {
     "axios": "^1.11.0",

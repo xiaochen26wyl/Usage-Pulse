@@ -58,6 +58,7 @@
 - `pnpm smoke:build`: smoke test on the build output
 - `pnpm dist:mac`: produce a macOS `.dmg`
 - `pnpm dist:win`: produce a Windows `.exe`
+- Git daily workflow (`start-work` / `push-wip` / `finish-work`) → [`doc/Git_Workflow.md`](Git_Workflow.md)
 
 #### Before every release (local)
 1. `pnpm install`
@@ -132,6 +133,7 @@
 - `pnpm smoke:build`：建置產物煙測
 - `pnpm dist:mac`：輸出 macOS `.dmg`
 - `pnpm dist:win`：輸出 Windows `.exe`
+- Git 日常流程（開工／推送／收工）→ [`doc/Git_Workflow.md`](Git_Workflow.md)
 
 #### 發版前必做（本機）
 1. `pnpm install`
