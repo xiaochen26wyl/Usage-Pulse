@@ -10,6 +10,8 @@
     "url": "https://github.com/xiaochen26wyl/Usage-Pulse.git"
   },
   "scripts": {
+    "postinstall": "node scripts/fix-electron-install.mjs",
+    "fix:electron": "node scripts/fix-electron-install.mjs",
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
