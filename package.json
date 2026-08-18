@@ -17,9 +17,9 @@
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "check:readonly": "node scripts/check-readonly.mjs",
     "smoke:build": "node scripts/smoke-build.mjs",
-    "dist": "pnpm build && electron-builder",
-    "dist:mac": "pnpm build && electron-builder --mac dmg --x64 --arm64",
-    "dist:win": "pnpm build && electron-builder --win nsis --x64"
+    "dist": "pnpm build && electron-builder --publish never",
+    "dist:mac": "pnpm build && electron-builder --mac dmg --x64 --arm64 --publish never",
+    "dist:win": "pnpm build && electron-builder --win nsis --x64 --publish never"
   },
   "dependencies": {
     "axios": "^1.11.0",
