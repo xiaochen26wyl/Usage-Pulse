@@ -10,6 +10,7 @@ const api = {
   quitApp: () => ipcRenderer.invoke("app:quit") as Promise<void>,
   openExternal: (url: string) => ipcRenderer.invoke("app:open-external", url) as Promise<void>,
   openClockApp: () => ipcRenderer.invoke("app:open-clock") as Promise<void>,
+  clearClipboard: () => ipcRenderer.invoke("app:clear-clipboard") as Promise<void>,
   onSnapshotUpdated: (handler: (snapshot: CombinedSnapshot) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, snapshot: CombinedSnapshot) => handler(snapshot);
     ipcRenderer.on("snapshot:updated", listener);

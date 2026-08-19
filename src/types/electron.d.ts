@@ -12,6 +12,7 @@ interface UsagePulseApi {
   quitApp: () => Promise<void>;
   openExternal: (url: string) => Promise<void>;
   openClockApp: () => Promise<void>;
+  clearClipboard: () => Promise<void>;
   onSnapshotUpdated: (handler: (snapshot: CombinedSnapshot) => void) => () => void;
 }
 
