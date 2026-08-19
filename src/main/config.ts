@@ -6,14 +6,19 @@ export const SERVICE_LABELS: Record<ServiceType, string> = {
 };
 
 export const DEFAULT_SETTINGS: AppSettings = {
-  intervalMinutes: 10,
-  lowThresholdPercent: 20,
+  cursorIntervalMinutes: 10,
+  claudeIntervalMinutes: 10,
+  cursorLowThresholdPercent: 20,
+  claudeLowThresholdPercent: 20,
   launchAtLogin: false,
   notifyCooldownMinutes: 15,
-  enableResetAlarm: true,
   enableCursorResetAlarm: true,
   enableClaudeResetAlarm: true,
   enableCursorLowQuotaAlert: true,
   enableClaudeLowQuotaAlert: true,
-  language: "zh"
+  language: "zh",
+  lineChannelAccessToken: "",
+  lineChannelId: "",
+  lineAssertionKid: "",
+  lineAssertionPrivateKey: ""
 };

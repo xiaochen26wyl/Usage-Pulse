@@ -1,6 +1,35 @@
 import Store from "electron-store";
 import type { AppSettings, CombinedSnapshot } from "@shared/types";
 import { DEFAULT_SETTINGS } from "@main/config";
+import { decryptSecret, encryptSecret } from "@main/secure-store";
+
+// Settings fields listed here are encrypted at rest via the OS keychain (see secure-store.ts)
+// whenever they're written to the electron-store JSON file, and decrypted on read. Add future
+// secrets (e.g. additional LINE keys) to this list rather than storing them in plain text.
+const SECRET_SETTINGS_KEYS: Array<keyof AppSettings> = [
+  "lineChannelAccessToken",
+  "lineChannelId",
+  "lineAssertionKid",
+  "lineAssertionPrivateKey"
+];
+
+const asStringRecord = (settings: AppSettings) => settings as unknown as Record<string, string>;
+
+const decryptSettings = (settings: AppSettings): AppSettings => {
+  const result = { ...settings };
+  for (const key of SECRET_SETTINGS_KEYS) {
+    asStringRecord(result)[key] = decryptSecret(asStringRecord(settings)[key] || "");
+  }
+  return result;
+};
+
+const encryptSettings = (settings: AppSettings): AppSettings => {
+  const result = { ...settings };
+  for (const key of SECRET_SETTINGS_KEYS) {
+    asStringRecord(result)[key] = encryptSecret(asStringRecord(settings)[key] || "");
+  }
+  return result;
+};
 
 interface NotificationRecord {
   key: string;
@@ -31,22 +60,28 @@ const clamp = (value: number, min: number, max: number) => Math.min(max, Math.ma
 export const settingsStore = {
   get(): AppSettings {
     const current = store.get("settings");
-    return {
+    return decryptSettings({
       ...DEFAULT_SETTINGS,
       ...current
-    };
+    });
   },
   update(patch: Partial<AppSettings>): AppSettings {
-    const current = store.get("settings");
-    const merged: AppSettings = {
+    const current = decryptSettings({
       ...DEFAULT_SETTINGS,
+      ...store.get("settings")
+    });
+    const merged: AppSettings = {
       ...current,
       ...patch
     };
-    merged.intervalMinutes = clamp(Number(merged.intervalMinutes || 5), 1, 60);
-    merged.lowThresholdPercent = clamp(Number(merged.lowThresholdPercent || 20), 1, 99);
-    merged.notifyCooldownMinutes = clamp(Number(merged.notifyCooldownMinutes || 15), 1, 240);
-    store.set("settings", merged);
+    merged.cursorIntervalMinutes = clamp(Number(merged.cursorIntervalMinutes || 10), 5, 60);
+    merged.claudeIntervalMinutes = clamp(Number(merged.claudeIntervalMinutes || 10), 5, 60);
+    merged.cursorLowThresholdPercent = clamp(Number(merged.cursorLowThresholdPercent || 20), 5, 30);
+    merged.claudeLowThresholdPercent = clamp(Number(merged.claudeLowThresholdPercent || 20), 5, 30);
+    merged.notifyCooldownMinutes = Number.isFinite(Number(merged.notifyCooldownMinutes))
+      ? clamp(Number(merged.notifyCooldownMinutes), 1, 240)
+      : 15;
+    store.set("settings", encryptSettings(merged));
     return merged;
   }
 };

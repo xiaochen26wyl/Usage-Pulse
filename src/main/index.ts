@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { app, ipcMain, Menu, nativeTheme, shell } from "electron";
+import { app, clipboard, ipcMain, Menu, shell } from "electron";
 import { menubar } from "menubar";
 import type { CombinedSnapshot, QuotaSnapshot } from "@shared/types";
 import { t } from "@shared/i18n";
@@ -66,20 +66,42 @@ const valueText = (snapshot: QuotaSnapshot): string => {
   return snapshot.remaining === null ? "?" : `${snapshot.remaining}`;
 };
 
+// Once the 5-hour session window is exhausted (0%), showing "0%" is dead
+// information — the countdown to the next reset is what's actually useful,
+// so switch to "X.x小時" (or "xx分" under an hour) until it refills.
+const sessionCountdownText = (session: QuotaSnapshot["windows"][number]): string | null => {
+  if (!session.resetsAt) {
+    return null;
+  }
+  const msRemaining = new Date(session.resetsAt).getTime() - Date.now();
+  if (msRemaining <= 0) {
+    return null;
+  }
+  const hoursRemaining = msRemaining / (60 * 60 * 1000);
+  if (hoursRemaining >= 1) {
+    return `${hoursRemaining.toFixed(1)}小時`;
+  }
+  const minutesRemaining = Math.max(1, Math.round(msRemaining / 60000));
+  return `${minutesRemaining}分`;
+};
+
 // Claude Code's top-level `remaining` is the max of the 5-hour session and
 // weekly windows; the tray specifically wants the 5-hour figure, so read it
 // straight from the session window instead of falling back to that combined value.
 const sessionValueText = (snapshot: QuotaSnapshot): string => {
   const session = snapshot.windows.find((window) => window.key === "session");
   if (session && session.remaining !== null) {
+    if (Math.round(session.remaining) <= 0) {
+      return sessionCountdownText(session) ?? "0%";
+    }
     return `${Math.round(session.remaining)}%`;
   }
   return valueText(snapshot);
 };
 
-const trayTitleLine1 = "Cursor  CC";
+const trayTitleLine1 = "Cursor CC";
 const trayTitleLine2 = (snapshot: CombinedSnapshot): string =>
-  `${valueText(snapshot.cursor)}  ${sessionValueText(snapshot.claude)}`;
+  `${valueText(snapshot.cursor)} ${sessionValueText(snapshot.claude)}`;
 
 const updateTrayText = async (snapshot: CombinedSnapshot): Promise<void> => {
   if (!trayApp.tray) {
@@ -112,7 +134,7 @@ const setTrayImage = async (line1: string, line2: string): Promise<void> => {
     return;
   }
   try {
-    const image = await renderTrayImage(line1, line2, nativeTheme.shouldUseDarkColors);
+    const image = await renderTrayImage(line1, line2);
     trayApp.tray.setImage(image);
   } catch (error) {
     console.error("[Usage-Pulse] tray render failed", error);
@@ -125,25 +147,23 @@ const applyAutoLaunch = (enabled: boolean): void => {
   });
 };
 
-const buildTrayMenu = (): void => {
-  if (!trayApp.tray) {
-    return;
-  }
-  const lang = settingsStore.get().language;
-  trayApp.tray.setContextMenu(
-    Menu.buildFromTemplate([
-      {
-        label: t(lang, "tray.menu.open"),
-        click: () => trayApp.showWindow()
-      },
-      { type: "separator" },
-      {
-        label: t(lang, "tray.menu.quit"),
-        click: () => app.quit()
-      }
-    ])
-  );
-};
+// Built lazily on each right-click (instead of via tray.setContextMenu) so
+// the menu only appears when explicitly requested. setContextMenu attaches
+// the menu as the tray icon's permanent native menu on macOS, which makes
+// *every* click - left or right - pop it up on top of menubar's own
+// left-click-to-toggle-window behavior, leaving it stuck over the popup.
+const buildTrayMenu = (): Menu =>
+  Menu.buildFromTemplate([
+    {
+      label: t(settingsStore.get().language, "tray.menu.open"),
+      click: () => trayApp.showWindow()
+    },
+    { type: "separator" },
+    {
+      label: t(settingsStore.get().language, "tray.menu.quit"),
+      click: () => app.quit()
+    }
+  ]);
 
 const setupIpcHandlers = (): void => {
   ipcMain.handle("settings:get", () => settingsStore.get());
@@ -151,7 +171,6 @@ const setupIpcHandlers = (): void => {
     const next = settingsStore.update(patch);
     applyAutoLaunch(next.launchAtLogin);
     monitor.reschedule();
-    buildTrayMenu();
     const latest = monitor.getLatestSnapshot();
     if (latest) {
       updateTrayText(latest);
@@ -176,6 +195,9 @@ const setupIpcHandlers = (): void => {
     }
     await execFileAsync("open", ["-a", "Clock"]);
   });
+  ipcMain.handle("app:clear-clipboard", () => {
+    clipboard.clear();
+  });
 };
 
 app.whenReady().then(async () => {
@@ -195,7 +217,9 @@ app.whenReady().then(async () => {
   });
 
   trayApp.on("ready", async () => {
-    buildTrayMenu();
+    trayApp.tray?.on("right-click", () => {
+      trayApp.tray?.popUpContextMenu(buildTrayMenu());
+    });
 
     if (isMac) {
       await initTrayRenderer(trayIconPath);
@@ -208,16 +232,9 @@ app.whenReady().then(async () => {
       const lang = settingsStore.get().language;
       trayApp.tray.setToolTip(t(lang, "tray.tooltip.noData"));
       if (isMac) {
-        await setTrayImage(trayTitleLine1, "?  ?");
+        await setTrayImage(trayTitleLine1, "? ?");
       }
     }
-
-    nativeTheme.on("updated", () => {
-      const latestSnapshot = monitor.getLatestSnapshot();
-      if (isMac && latestSnapshot) {
-        setTrayImage(trayTitleLine1, trayTitleLine2(latestSnapshot));
-      }
-    });
 
     await monitor.runCheck("startup").catch((error) => {
       console.error("[Usage-Pulse] startup check failed", error);

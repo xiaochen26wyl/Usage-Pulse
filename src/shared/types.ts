@@ -43,16 +43,21 @@ export interface AuthStatus {
 }
 
 export interface AppSettings {
-  intervalMinutes: number;
-  lowThresholdPercent: number;
+  cursorIntervalMinutes: number;
+  claudeIntervalMinutes: number;
+  cursorLowThresholdPercent: number;
+  claudeLowThresholdPercent: number;
   launchAtLogin: boolean;
   notifyCooldownMinutes: number;
-  enableResetAlarm: boolean;
   enableCursorResetAlarm: boolean;
   enableClaudeResetAlarm: boolean;
   enableCursorLowQuotaAlert: boolean;
   enableClaudeLowQuotaAlert: boolean;
   language: Language;
+  lineChannelAccessToken: string;
+  lineChannelId: string;
+  lineAssertionKid: string;
+  lineAssertionPrivateKey: string;
 }
 
 export interface MonitorResult {

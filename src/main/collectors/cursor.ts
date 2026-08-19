@@ -11,6 +11,8 @@ interface CursorPlanUsage {
   limit?: number | string;
   includedSpend?: number | string;
   totalPercentUsed?: number | string;
+  autoPercentUsed?: number | string;
+  apiPercentUsed?: number | string;
 }
 
 interface CursorCurrentPeriodUsage {
@@ -143,6 +145,33 @@ export const collectCursorQuota = async (): Promise<ScrapeResult> => {
       message: t(lang, "window.message.cursorSource")
     }
   ];
+
+  const autoPercentUsed = toNumber(planUsage.autoPercentUsed);
+  const apiPercentUsed = toNumber(planUsage.apiPercentUsed);
+
+  if (autoPercentUsed !== null) {
+    windows.push({
+      key: "cursor_models",
+      label: t(lang, "window.label.cursorModels"),
+      remaining: null,
+      total: null,
+      percent: Math.round(autoPercentUsed * 100) / 100,
+      resetsAt: null,
+      message: t(lang, "window.desc.cursorModels")
+    });
+  }
+
+  if (apiPercentUsed !== null) {
+    windows.push({
+      key: "other_models",
+      label: t(lang, "window.label.otherModels"),
+      remaining: null,
+      total: null,
+      percent: Math.round(apiPercentUsed * 100) / 100,
+      resetsAt: null,
+      message: t(lang, "window.desc.otherModels")
+    });
+  }
 
   if (remainingUsd === null && totalUsd === null) {
     return {

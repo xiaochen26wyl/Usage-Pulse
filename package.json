@@ -4,7 +4,7 @@
   "description": "Cross-platform tray app to monitor AI quota usage with desktop alerts.",
   "main": "dist/main/index.js",
   "author": "xiaochen26wyl",
-  "license": "MIT",
+  "license": "SEE LICENSE IN LICENSE",
   "repository": {
     "type": "git",
     "url": "https://github.com/xiaochen26wyl/Usage-Pulse.git"

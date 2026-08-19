@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import type { AppSettings, CombinedSnapshot, MonitorResult, QuotaSnapshot, ScrapeResult, ServiceType } from "@shared/types";
-import { getLowQuotaServices, isDuplicateInCooldown } from "@shared/monitor-utils";
+import { isDuplicateInCooldown } from "@shared/monitor-utils";
 import { t } from "@shared/i18n";
 import { scrapeQuota } from "@main/scrapers";
 import { sendDesktopNotification } from "@main/notifiers";
@@ -10,6 +10,8 @@ import { SERVICE_LABELS } from "./config";
 type TriggerType = "scheduled" | "manual" | "startup";
 type LowQuotaToggleKey = "enableCursorLowQuotaAlert" | "enableClaudeLowQuotaAlert";
 type ResetToggleKey = "enableCursorResetAlarm" | "enableClaudeResetAlarm";
+type IntervalKey = "cursorIntervalMinutes" | "claudeIntervalMinutes";
+type ThresholdKey = "cursorLowThresholdPercent" | "claudeLowThresholdPercent";
 
 const nowIso = () => new Date().toISOString();
 
@@ -20,8 +22,8 @@ const toPercent = (remaining: number | null, total: number | null): number | nul
   return Math.max(0, Math.min(100, Math.round((remaining / total) * 100)));
 };
 
-const isLowQuota = (percent: number | null, settings: AppSettings): boolean =>
-  percent !== null ? percent <= settings.lowThresholdPercent : false;
+const isLowQuota = (percent: number | null, threshold: number): boolean =>
+  percent !== null ? percent <= threshold : false;
 
 const lowQuotaToggleMap: Record<ServiceType, LowQuotaToggleKey> = {
   cursor: "enableCursorLowQuotaAlert",
@@ -33,6 +35,16 @@ const resetToggleMap: Record<ServiceType, ResetToggleKey> = {
   claude: "enableClaudeResetAlarm"
 };
 
+const intervalKeyMap: Record<ServiceType, IntervalKey> = {
+  cursor: "cursorIntervalMinutes",
+  claude: "claudeIntervalMinutes"
+};
+
+const thresholdKeyMap: Record<ServiceType, ThresholdKey> = {
+  cursor: "cursorLowThresholdPercent",
+  claude: "claudeLowThresholdPercent"
+};
+
 const isToggleEnabled = (
   settings: AppSettings,
   toggleMap: Record<ServiceType, LowQuotaToggleKey | ResetToggleKey>,
@@ -42,11 +54,11 @@ const isToggleEnabled = (
 const makeQuotaSnapshot = (
   service: ServiceType,
   scrapeResult: ScrapeResult,
-  settings: AppSettings
+  threshold: number
 ): QuotaSnapshot => {
   const { remaining, total, unit, resetsAt, resetLabel, weeklyResetAt, weeklyResetLabel, windows, message, isError } = scrapeResult;
   const percent = toPercent(remaining, total);
-  const low = isLowQuota(percent, settings);
+  const low = isLowQuota(percent, threshold);
   const status = isError ? "error" : low ? "low" : remaining === null ? "unknown" : "ok";
 
   return {
@@ -66,27 +78,19 @@ const makeQuotaSnapshot = (
   };
 };
 
-const hasChanged = (prev: CombinedSnapshot | null, next: CombinedSnapshot): boolean => {
+const hasServiceChanged = (prev: QuotaSnapshot | null, next: QuotaSnapshot): boolean => {
   if (!prev) {
     return true;
   }
   return (
-    prev.cursor.remaining !== next.cursor.remaining ||
-    prev.cursor.total !== next.cursor.total ||
-    prev.cursor.percent !== next.cursor.percent ||
-    prev.cursor.unit !== next.cursor.unit ||
-    prev.cursor.resetsAt !== next.cursor.resetsAt ||
-    prev.cursor.weeklyResetAt !== next.cursor.weeklyResetAt ||
-    JSON.stringify(prev.cursor.windows) !== JSON.stringify(next.cursor.windows) ||
-    prev.claude.remaining !== next.claude.remaining ||
-    prev.claude.total !== next.claude.total ||
-    prev.claude.percent !== next.claude.percent ||
-    prev.claude.unit !== next.claude.unit ||
-    prev.claude.resetsAt !== next.claude.resetsAt ||
-    prev.claude.weeklyResetAt !== next.claude.weeklyResetAt ||
-    JSON.stringify(prev.claude.windows) !== JSON.stringify(next.claude.windows) ||
-    prev.cursor.status !== next.cursor.status ||
-    prev.claude.status !== next.claude.status
+    prev.remaining !== next.remaining ||
+    prev.total !== next.total ||
+    prev.percent !== next.percent ||
+    prev.unit !== next.unit ||
+    prev.resetsAt !== next.resetsAt ||
+    prev.weeklyResetAt !== next.weeklyResetAt ||
+    prev.status !== next.status ||
+    JSON.stringify(prev.windows) !== JSON.stringify(next.windows)
   );
 };
 
@@ -105,9 +109,11 @@ const makeReason = (changed: boolean, lowServices: ServiceType[], lang: AppSetti
   return t(lang, "reason.noChange");
 };
 
+const SERVICES: ServiceType[] = ["cursor", "claude"];
+
 export class MonitorEngine extends EventEmitter {
-  private timer: NodeJS.Timeout | null = null;
-  private isRunning = false;
+  private timers: Record<ServiceType, NodeJS.Timeout | null> = { cursor: null, claude: null };
+  private isRunning: Record<ServiceType, boolean> = { cursor: false, claude: false };
   private resetAlarmTimers = new Map<string, NodeJS.Timeout>();
 
   private shouldNotify(scope: string, key: string, settings: AppSettings): boolean {
@@ -126,9 +132,12 @@ export class MonitorEngine extends EventEmitter {
   }
 
   stop(): void {
-    if (this.timer) {
-      clearInterval(this.timer);
-      this.timer = null;
+    for (const service of SERVICES) {
+      const timer = this.timers[service];
+      if (timer) {
+        clearInterval(timer);
+        this.timers[service] = null;
+      }
     }
     for (const [, timer] of this.resetAlarmTimers.entries()) {
       clearTimeout(timer);
@@ -139,17 +148,20 @@ export class MonitorEngine extends EventEmitter {
   reschedule(): void {
     this.stop();
     const settings = settingsStore.get();
-    const intervalMs = settings.intervalMinutes * 60_000;
-    this.timer = setInterval(() => {
-      this.runCheck("scheduled").catch((error) => {
-        this.emit("error", error);
-      });
-    }, intervalMs);
+
+    for (const service of SERVICES) {
+      const intervalMs = settings[intervalKeyMap[service]] * 60_000;
+      this.timers[service] = setInterval(() => {
+        this.checkService(service, "scheduled").catch((error) => {
+          this.emit("error", error);
+        });
+      }, intervalMs);
+    }
 
     // Reapply alarms based on new settings
     const current = snapshotStore.get();
     if (current) {
-      this.updateAlarms(current, settings).catch(e => console.error("[Usage-Pulse] Failed to reapply alarms", e));
+      this.updateAlarms(current, settings).catch((e) => console.error("[Usage-Pulse] Failed to reapply alarms", e));
     }
   }
 
@@ -162,10 +174,6 @@ export class MonitorEngine extends EventEmitter {
       clearTimeout(timer);
     }
     this.resetAlarmTimers.clear();
-
-    if (!settings.enableResetAlarm) {
-      return;
-    }
 
     const lang = settings.language;
     const resetTargets = [
@@ -216,8 +224,8 @@ export class MonitorEngine extends EventEmitter {
     }
   }
 
-  async runCheck(trigger: TriggerType): Promise<MonitorResult> {
-    if (this.isRunning) {
+  private async checkService(service: ServiceType, trigger: TriggerType): Promise<MonitorResult> {
+    if (this.isRunning[service]) {
       const current = snapshotStore.get();
       const lang = settingsStore.get().language;
       if (!current) {
@@ -226,87 +234,104 @@ export class MonitorEngine extends EventEmitter {
       return {
         snapshot: current,
         changed: false,
-        lowAlert: getLowQuotaServices(current).length > 0,
+        lowAlert: current[service].status === "low",
         notified: false,
         reason: t(lang, "reason.checkInProgress")
       };
     }
 
-    this.isRunning = true;
+    this.isRunning[service] = true;
 
     try {
       const settings = settingsStore.get();
       const lang = settings.language;
-      const previous = snapshotStore.get();
-      const [cursorResult, claudeResult] = await Promise.all([
-        scrapeQuota("cursor"),
-        scrapeQuota("claude")
-      ]);
+      const previousSnapshot = snapshotStore.get();
+      const previousServiceSnapshot = previousSnapshot ? previousSnapshot[service] : null;
 
-      const snapshot: CombinedSnapshot = {
-        cursor: makeQuotaSnapshot("cursor", cursorResult, settings),
-        claude: makeQuotaSnapshot("claude", claudeResult, settings),
+      const scrapeResult = await scrapeQuota(service);
+      const threshold = settings[thresholdKeyMap[service]];
+      const nextServiceSnapshot = makeQuotaSnapshot(service, scrapeResult, threshold);
+
+      // Re-read the store *after* the scrape awaits, right before merging and
+      // writing back — the other service's independent checkService() call may
+      // have completed and written its own update while this one was in flight.
+      // Merging from a snapshot captured before the await would clobber that
+      // update; reading fresh here (with no further await before the write)
+      // guarantees this write only replaces this service's own key.
+      const latestCombined = snapshotStore.get();
+      const otherService: ServiceType = service === "cursor" ? "claude" : "cursor";
+      const otherServiceSnapshot = latestCombined ? latestCombined[otherService] : nextServiceSnapshot;
+
+      const combined: CombinedSnapshot = {
+        cursor: service === "cursor" ? nextServiceSnapshot : otherServiceSnapshot,
+        claude: service === "claude" ? nextServiceSnapshot : otherServiceSnapshot,
         fetchedAt: nowIso()
       };
 
-      const changed = hasChanged(previous, snapshot);
-      const lowServices = getLowQuotaServices(snapshot);
-      const lowAlert = lowServices.length > 0;
-      const reason = makeReason(changed, lowServices, lang);
+      const changed = hasServiceChanged(previousServiceSnapshot, nextServiceSnapshot);
+      const isLow = nextServiceSnapshot.status === "low";
+      const reason = makeReason(changed, isLow ? [service] : [], lang);
       let notified = false;
 
       if (changed) {
         const changeKey = JSON.stringify({
-          cursor: {
-            remaining: snapshot.cursor.remaining,
-            total: snapshot.cursor.total,
-            percent: snapshot.cursor.percent,
-            status: snapshot.cursor.status
-          },
-          claude: {
-            remaining: snapshot.claude.remaining,
-            total: snapshot.claude.total,
-            percent: snapshot.claude.percent,
-            status: snapshot.claude.status
-          }
+          remaining: nextServiceSnapshot.remaining,
+          total: nextServiceSnapshot.total,
+          percent: nextServiceSnapshot.percent,
+          status: nextServiceSnapshot.status
         });
-        if (this.shouldNotify("change", changeKey, settings)) {
-          sendDesktopNotification({ snapshot, reason: t(lang, "reason.changed") });
+        if (this.shouldNotify(`change:${service}`, changeKey, settings)) {
+          sendDesktopNotification({ snapshot: combined, reason: t(lang, "reason.changed") });
           notified = true;
         }
       }
 
-      for (const service of lowServices) {
-        if (!isToggleEnabled(settings, lowQuotaToggleMap, service)) {
-          continue;
+      if (isLow && isToggleEnabled(settings, lowQuotaToggleMap, service)) {
+        const key = `${service}|${nextServiceSnapshot.remaining}|${nextServiceSnapshot.total}|${nextServiceSnapshot.percent}|${nextServiceSnapshot.status}`;
+        if (this.shouldNotify(`low:${service}`, key, settings)) {
+          sendDesktopNotification({
+            snapshot: combined,
+            reason: t(lang, "reason.lowQuotaNotify", { service: SERVICE_LABELS[service], threshold })
+          });
+          notified = true;
         }
-        const target = snapshot[service];
-        const key = `${service}|${target.remaining}|${target.total}|${target.percent}|${target.status}`;
-        if (!this.shouldNotify(`low:${service}`, key, settings)) {
-          continue;
-        }
-        sendDesktopNotification({
-          snapshot,
-          reason: t(lang, "reason.lowQuotaNotify", { service: SERVICE_LABELS[service], threshold: settings.lowThresholdPercent })
-        });
-        notified = true;
       }
 
-      snapshotStore.set(snapshot);
-      this.emit("snapshot", snapshot);
+      snapshotStore.set(combined);
+      this.emit("snapshot", combined);
 
-      // Update alarms with new snapshot
-      await this.updateAlarms(snapshot, settings);
+      // Update alarms with the latest combined snapshot
+      await this.updateAlarms(combined, settings);
 
       return {
-        snapshot,
+        snapshot: combined,
         changed,
-        lowAlert,
+        lowAlert: isLow,
         notified,
         reason
       };
     } finally {
-      this.isRunning = false;
+      this.isRunning[service] = false;
     }
+  }
+
+  async runCheck(trigger: TriggerType): Promise<MonitorResult> {
+    const [cursorResult, claudeResult] = await Promise.all([
+      this.checkService("cursor", trigger),
+      this.checkService("claude", trigger)
+    ]);
+
+    const lang = settingsStore.get().language;
+    const snapshot = this.getLatestSnapshot() ?? cursorResult.snapshot;
+    const noChangeText = t(lang, "reason.noChange");
+    const reasons = [cursorResult.reason, claudeResult.reason].filter((reason) => reason && reason !== noChangeText);
+
+    return {
+      snapshot,
+      changed: cursorResult.changed || claudeResult.changed,
+      lowAlert: cursorResult.lowAlert || claudeResult.lowAlert,
+      notified: cursorResult.notified || claudeResult.notified,
+      reason: reasons.length > 0 ? reasons.join("；") : noChangeText
+    };
   }
 }

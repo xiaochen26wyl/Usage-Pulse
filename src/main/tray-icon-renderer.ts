@@ -13,6 +13,7 @@ const CANVAS_HEIGHT = 40;
 const SCALE_FACTOR = 2;
 const ICON_SIZE = 26;
 const PADDING = 6;
+const ICON_TEXT_GAP = 3;
 
 let rendererWindow: BrowserWindow | null = null;
 let loadPromise: Promise<void> | null = null;
@@ -31,20 +32,24 @@ window.loadIcon = (dataUrl) => new Promise((resolve) => {
   img.src = dataUrl;
 });
 
-window.renderTray = (line1, line2, dark) => {
+window.renderTray = (line1, line2) => {
   const canvas = document.getElementById("c");
   const ctx = canvas.getContext("2d");
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.fillStyle = dark ? "#ffffff" : "#000000";
+  // Most menu bars render dark/translucent regardless of the system's
+  // light/dark setting, so white text (matching other menu bar utilities)
+  // is legible far more often than following nativeTheme would be.
+  ctx.fillStyle = "#ffffff";
   ctx.textBaseline = "middle";
 
   const padding = ${PADDING};
   const iconSize = ${ICON_SIZE};
+  const iconTextGap = ${ICON_TEXT_GAP};
   let textStartX = padding;
   if (iconImg) {
     const iconY = (canvas.height - iconSize) / 2;
     ctx.drawImage(iconImg, padding, iconY, iconSize, iconSize);
-    textStartX = padding + iconSize + padding;
+    textStartX = padding + iconSize + iconTextGap;
   }
 
   const maxWidth = canvas.width - textStartX - padding;
@@ -67,7 +72,7 @@ window.renderTray = (line1, line2, dark) => {
   ctx.font = "600 " + size1 + "px -apple-system, BlinkMacSystemFont, sans-serif";
   ctx.fillText(line1, textCenterX, canvas.height * 0.28);
 
-  const size2 = fitFontSize(line2, "bold", 17, 9);
+  const size2 = fitFontSize(line2, "bold", 20, 9);
   ctx.font = "bold " + size2 + "px -apple-system, BlinkMacSystemFont, sans-serif";
   ctx.fillText(line2, textCenterX, canvas.height * 0.74);
 
@@ -123,13 +128,13 @@ export const initTrayRenderer = async (iconPath: string): Promise<void> => {
   });
 };
 
-export const renderTrayImage = async (line1: string, line2: string, dark: boolean): Promise<NativeImage> => {
+export const renderTrayImage = async (line1: string, line2: string): Promise<NativeImage> => {
   const win = await ensureRendererWindow();
   if (iconLoadPromise) {
     await iconLoadPromise.catch(() => undefined);
   }
   const dataUrl = (await win.webContents.executeJavaScript(
-    `window.renderTray(${JSON.stringify(line1)}, ${JSON.stringify(line2)}, ${dark})`
+    `window.renderTray(${JSON.stringify(line1)}, ${JSON.stringify(line2)})`
   )) as string;
   const base64 = dataUrl.split(",")[1] ?? "";
   return nativeImage.createFromBuffer(Buffer.from(base64, "base64"), { scaleFactor: SCALE_FACTOR });
