@@ -4,10 +4,13 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRequire } from "node:module";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import initSqlJs from "sql.js";
 import { readCursorTokenFromStateDbPath } from "../src/main/credential-provider";
 
 const require = createRequire(import.meta.url);
+const execFileAsync = promisify(execFile);
 
 test("readCursorTokenFromStateDbPath reads token from sqlite db", async () => {
   const SQL = await initSqlJs({
@@ -29,6 +32,41 @@ test("readCursorTokenFromStateDbPath reads token from sqlite db", async () => {
 
     const token = await readCursorTokenFromStateDbPath(dbPath);
     assert.equal(token, "cursor_test_token");
+  } finally {
+    db.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("readCursorTokenFromStateDbPath falls back to sqlite3 CLI for oversized db files", async (t) => {
+  try {
+    await execFileAsync("sqlite3", ["-version"]);
+  } catch {
+    t.skip("sqlite3 CLI not available in this environment");
+    return;
+  }
+
+  const SQL = await initSqlJs({
+    locateFile: (file) => require.resolve(`sql.js/dist/${file}`)
+  });
+  const db = new SQL.Database();
+  db.run("CREATE TABLE ItemTable (key TEXT PRIMARY KEY, value TEXT)");
+  db.run("INSERT INTO ItemTable (key, value) VALUES (?, ?)", [
+    "cursorAuth/accessToken",
+    JSON.stringify({ accessToken: "cursor_large_db_token" })
+  ]);
+  // Pad well past the 150MB sql.js-fallback threshold so stat() routes this through the CLI path.
+  db.run("INSERT INTO ItemTable (key, value) VALUES (?, ?)", ["padding/blob", "x".repeat(160 * 1024 * 1024)]);
+
+  const dir = await mkdtemp(join(tmpdir(), "usage-pulse-test-"));
+  const dbPath = join(dir, "state.vscdb");
+
+  try {
+    const binary = Buffer.from(db.export());
+    await writeFile(dbPath, binary);
+
+    const token = await readCursorTokenFromStateDbPath(dbPath);
+    assert.equal(token, "cursor_large_db_token");
   } finally {
     db.close();
     await rm(dir, { recursive: true, force: true });

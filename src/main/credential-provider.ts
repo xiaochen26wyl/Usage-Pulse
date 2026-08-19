@@ -1,17 +1,31 @@
 import { execFile } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import initSqlJs from "sql.js";
+import type { SqlJsStatic } from "sql.js";
 
 const execFileAsync = promisify(execFile);
 const require = createRequire(import.meta.url);
+// Loaded via require(), not a static `import`: sql.js ships its Emscripten/CJS
+// glue as a UMD-style script doing `module.exports = ...`. Vite/Rollup statically
+// bundling that into the main process's SSR output breaks its module/exports
+// binding (throws "Cannot set properties of undefined (setting 'exports')" the
+// moment initSqlJs() is called) even though the build itself succeeds silently.
+// require() keeps it out of the bundle so Node's real CJS loader runs it as-is.
+const initSqlJs = require("sql.js") as (config?: {
+  locateFile?: (file: string) => string;
+}) => Promise<SqlJsStatic>;
 
 const CURSOR_ACCESS_TOKEN_KEY = "cursorAuth/accessToken";
 const CLAUDE_KEYCHAIN_SERVICE = "Claude Code-credentials";
-let sqlJsPromise: Promise<Awaited<ReturnType<typeof initSqlJs>>> | null = null;
+// sql.js loads the whole db file into the JS heap; beyond this size that becomes
+// slow/memory-heavy enough to effectively hang, so fall back to the sqlite3 CLI instead.
+const CURSOR_STATE_DB_LARGE_FILE_THRESHOLD_BYTES = 150 * 1024 * 1024;
+let sqlJsPromise: Promise<SqlJsStatic> | null = null;
+
+class CursorStateDbTooLargeError extends Error {}
 
 const pickAccessTokenFromUnknown = (value: unknown): string | null => {
   if (typeof value === "string") {
@@ -65,7 +79,7 @@ const resolveCursorStateDbPath = (): string => {
   return join(homedir(), ".config", "Cursor", "User", "globalStorage", "state.vscdb");
 };
 
-const getSqlJs = async (): Promise<Awaited<ReturnType<typeof initSqlJs>>> => {
+const getSqlJs = async (): Promise<SqlJsStatic> => {
   if (!sqlJsPromise) {
     sqlJsPromise = initSqlJs({
       locateFile: (file: string) => require.resolve(`sql.js/dist/${file}`)
@@ -97,8 +111,35 @@ const runReadOnlySqliteQuery = async (dbPath: string, key: string): Promise<stri
   }
 };
 
+const readValueViaSqliteCli = async (dbPath: string, key: string): Promise<string> => {
+  const escapedKey = key.replace(/'/g, "''");
+  const { stdout } = await execFileAsync("sqlite3", [
+    "-readonly",
+    "-batch",
+    "-noheader",
+    dbPath,
+    `SELECT value FROM ItemTable WHERE key = '${escapedKey}' LIMIT 1;`
+  ]);
+  return stdout.trim();
+};
+
+const readValueFromLargeStateDb = async (dbPath: string, key: string, sizeBytes: number): Promise<string> => {
+  try {
+    return await readValueViaSqliteCli(dbPath, key);
+  } catch {
+    const sizeMb = Math.round(sizeBytes / 1024 / 1024);
+    throw new CursorStateDbTooLargeError(
+      `Cursor 本機資料庫異常肥大（約 ${sizeMb} MB），無法安全載入。請先關閉 Cursor，備份並移除此檔案讓 Cursor 重新建立（會需要重新登入 Cursor）：${dbPath}`
+    );
+  }
+};
+
 export const readCursorTokenFromStateDbPath = async (dbPath: string): Promise<string> => {
-  const raw = await runReadOnlySqliteQuery(dbPath, CURSOR_ACCESS_TOKEN_KEY);
+  const { size } = await stat(dbPath);
+  const raw =
+    size > CURSOR_STATE_DB_LARGE_FILE_THRESHOLD_BYTES
+      ? await readValueFromLargeStateDb(dbPath, CURSOR_ACCESS_TOKEN_KEY, size)
+      : await runReadOnlySqliteQuery(dbPath, CURSOR_ACCESS_TOKEN_KEY);
   const token = parseTokenFromRawText(raw);
   if (!token) {
     throw new Error("找不到 Cursor access token，請先在 Cursor Desktop 登入。");
@@ -110,7 +151,10 @@ const readCursorTokenFromStateDb = async (): Promise<string> => {
   const dbPath = resolveCursorStateDbPath();
   try {
     return await readCursorTokenFromStateDbPath(dbPath);
-  } catch {
+  } catch (error) {
+    if (error instanceof CursorStateDbTooLargeError) {
+      throw error;
+    }
     throw new Error("無法讀取 Cursor 本機憑證，請先確認已登入 Cursor Desktop。");
   }
 };

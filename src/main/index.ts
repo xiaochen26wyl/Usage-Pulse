@@ -1,14 +1,18 @@
 import { join } from "node:path";
-import { app, ipcMain, Menu } from "electron";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { app, ipcMain, Menu, nativeTheme, shell } from "electron";
 import { menubar } from "menubar";
 import type { CombinedSnapshot, QuotaSnapshot } from "@shared/types";
 import { t } from "@shared/i18n";
 import { getAuthStatus } from "@main/auth-service";
 import { MonitorEngine } from "@main/monitor-engine";
 import { settingsStore } from "@main/store";
+import { destroyTrayRenderer, initTrayRenderer, renderTrayImage } from "@main/tray-icon-renderer";
 
 const isMac = process.platform === "darwin";
 const isDev = Boolean(process.env.ELECTRON_RENDERER_URL);
+const execFileAsync = promisify(execFile);
 
 if (process.platform === "win32") {
   app.setAppUserModelId("com.zorawl.usagepulse");
@@ -16,9 +20,16 @@ if (process.platform === "win32") {
 
 const monitor = new MonitorEngine();
 
+// Explicit icon path: menubar's own default-icon fallback resolves via a
+// __dirname-relative lookup that breaks once menubar is bundled into
+// dist/main/index.js by electron-vite (the path ends up pointing at
+// dist/assets instead of node_modules/menubar/assets).
+const trayIconPath = join(app.getAppPath(), "assets/tray/icon.png");
+
 let trayApp = menubar({
   preloadWindow: true,
   tooltip: "Usage-Pulse",
+  icon: trayIconPath,
   index: isDev
     ? process.env.ELECTRON_RENDERER_URL
     : `file://${join(app.getAppPath(), "dist/renderer/index.html")}`,
@@ -55,13 +66,27 @@ const valueText = (snapshot: QuotaSnapshot): string => {
   return snapshot.remaining === null ? "?" : `${snapshot.remaining}`;
 };
 
-const updateTrayText = (snapshot: CombinedSnapshot): void => {
+// Claude Code's top-level `remaining` is the max of the 5-hour session and
+// weekly windows; the tray specifically wants the 5-hour figure, so read it
+// straight from the session window instead of falling back to that combined value.
+const sessionValueText = (snapshot: QuotaSnapshot): string => {
+  const session = snapshot.windows.find((window) => window.key === "session");
+  if (session && session.remaining !== null) {
+    return `${Math.round(session.remaining)}%`;
+  }
+  return valueText(snapshot);
+};
+
+const trayTitleLine1 = "Cursor  CC";
+const trayTitleLine2 = (snapshot: CombinedSnapshot): string =>
+  `${valueText(snapshot.cursor)}  ${sessionValueText(snapshot.claude)}`;
+
+const updateTrayText = async (snapshot: CombinedSnapshot): Promise<void> => {
   if (!trayApp.tray) {
     return;
   }
 
   const lang = settingsStore.get().language;
-  const title = `C:${valueText(snapshot.cursor)} A:${valueText(snapshot.claude)}`;
   const toolTipLines = [
     "Usage-Pulse",
     `Cursor: ${valueText(snapshot.cursor)}`,
@@ -77,9 +102,21 @@ const updateTrayText = (snapshot: CombinedSnapshot): void => {
   toolTipLines.push(t(lang, "tray.tooltip.updated", { time: new Date(snapshot.fetchedAt).toLocaleTimeString() }));
 
   if (isMac) {
-    trayApp.tray.setTitle(title);
+    await setTrayImage(trayTitleLine1, trayTitleLine2(snapshot));
   }
   trayApp.tray.setToolTip(toolTipLines.join("\n"));
+};
+
+const setTrayImage = async (line1: string, line2: string): Promise<void> => {
+  if (!trayApp.tray) {
+    return;
+  }
+  try {
+    const image = await renderTrayImage(line1, line2, nativeTheme.shouldUseDarkColors);
+    trayApp.tray.setImage(image);
+  } catch (error) {
+    console.error("[Usage-Pulse] tray render failed", error);
+  }
 };
 
 const applyAutoLaunch = (enabled: boolean): void => {
@@ -124,12 +161,20 @@ const setupIpcHandlers = (): void => {
 
   ipcMain.handle("auth:status", () => getAuthStatus());
 
-  ipcMain.handle("monitor:run-manual", async () => {
-    return monitor.runCheck("manual");
-  });
   ipcMain.handle("monitor:get-latest", () => monitor.getLatestSnapshot());
   ipcMain.handle("app:quit", () => {
     app.quit();
+  });
+  ipcMain.handle("app:open-external", (_event, url: string) => {
+    if (typeof url === "string" && /^https:\/\//.test(url)) {
+      return shell.openExternal(url);
+    }
+  });
+  ipcMain.handle("app:open-clock", async () => {
+    if (!isMac) {
+      throw new Error("app:open-clock is macOS-only");
+    }
+    await execFileAsync("open", ["-a", "Clock"]);
   });
 };
 
@@ -152,16 +197,27 @@ app.whenReady().then(async () => {
   trayApp.on("ready", async () => {
     buildTrayMenu();
 
+    if (isMac) {
+      await initTrayRenderer(trayIconPath);
+    }
+
     const latest = monitor.getLatestSnapshot();
     if (latest) {
-      updateTrayText(latest);
+      await updateTrayText(latest);
     } else if (trayApp.tray) {
       const lang = settingsStore.get().language;
       trayApp.tray.setToolTip(t(lang, "tray.tooltip.noData"));
       if (isMac) {
-        trayApp.tray.setTitle("C:? A:?");
+        await setTrayImage(trayTitleLine1, "?  ?");
       }
     }
+
+    nativeTheme.on("updated", () => {
+      const latestSnapshot = monitor.getLatestSnapshot();
+      if (isMac && latestSnapshot) {
+        setTrayImage(trayTitleLine1, trayTitleLine2(latestSnapshot));
+      }
+    });
 
     await monitor.runCheck("startup").catch((error) => {
       console.error("[Usage-Pulse] startup check failed", error);
@@ -172,6 +228,7 @@ app.whenReady().then(async () => {
 
 app.on("before-quit", () => {
   monitor.stop();
+  destroyTrayRenderer();
 });
 
 app.on("window-all-closed", () => {});

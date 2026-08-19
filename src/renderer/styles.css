@@ -66,6 +66,19 @@ h2 {
   margin-top: 8px;
 }
 
+.window-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 8px 0;
+}
+
+.window-bar-label {
+  font-size: 14px;
+  font-weight: 600;
+  color: #f5f6f8;
+}
+
 .quota-header {
   display: flex;
   align-items: center;
@@ -219,4 +232,19 @@ button:disabled {
   margin: 0;
   font-size: 13px;
   color: #d5dbe6;
+}
+
+.footer p.footer-credit {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #8b949e;
+}
+
+.footer-link {
+  color: #6cb6ff;
+  text-decoration: none;
+}
+
+.footer-link:hover {
+  text-decoration: underline;
 }

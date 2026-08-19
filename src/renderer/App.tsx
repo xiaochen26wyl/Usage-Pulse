@@ -1,6 +1,16 @@
 import { useEffect, useState } from "react";
-import type { AppSettings, AuthStatus, CombinedSnapshot, Language, QuotaSnapshot, ServiceType } from "@shared/types";
+import type {
+  AppSettings,
+  AuthStatus,
+  CombinedSnapshot,
+  Language,
+  QuotaSnapshot,
+  QuotaWindow,
+  ServiceType
+} from "@shared/types";
 import { t } from "@shared/i18n";
+
+const THREADS_URL = "https://www.threads.com/@xiaochen26wyl";
 
 const defaultSettings: AppSettings = {
   intervalMinutes: 10,
@@ -43,8 +53,8 @@ const formatValue = (value: number | null, unit: QuotaSnapshot["unit"]): string 
   return `${value}`;
 };
 
-const formatQuotaLine = (snapshot: QuotaSnapshot): string =>
-  `${formatValue(snapshot.remaining, snapshot.unit)} / ${formatValue(snapshot.total, snapshot.unit)}`;
+const formatQuotaLine = (snapshot: QuotaSnapshot, lang: Language): string =>
+  `${t(lang, "quota.remaining")} ${formatValue(snapshot.remaining, snapshot.unit)} / ${formatValue(snapshot.total, snapshot.unit)}`;
 
 const formatResetText = (iso: string | null, lang: Language): string => {
   if (!iso) {
@@ -89,8 +99,8 @@ export const App = () => {
   const [authStatus, setAuthStatus] = useState<AuthStatus>(defaultAuth);
   const [snapshot, setSnapshot] = useState<CombinedSnapshot | null>(null);
   const [savingSettings, setSavingSettings] = useState(false);
-  const [checking, setChecking] = useState(false);
   const [checkingAuth, setCheckingAuth] = useState(false);
+  const [authMessage, setAuthMessage] = useState("");
   const [message, setMessage] = useState(t(defaultSettings.language, "app.readyMessage"));
   const [now, setNow] = useState<number>(Date.now());
   const lang = settings.language;
@@ -125,12 +135,15 @@ export const App = () => {
     };
   }, []);
 
-  const clampSettings = (value: AppSettings): AppSettings => ({
-    ...value,
-    intervalMinutes: Math.min(60, Math.max(1, Number(value.intervalMinutes) || 5)),
-    lowThresholdPercent: Math.min(99, Math.max(1, Number(value.lowThresholdPercent) || 20)),
-    notifyCooldownMinutes: Math.min(240, Math.max(1, Number(value.notifyCooldownMinutes) || 15))
-  });
+  const clampSettings = (value: AppSettings): AppSettings => {
+    const cooldownRaw = Math.min(240, Math.max(5, Number(value.notifyCooldownMinutes) || 15));
+    return {
+      ...value,
+      intervalMinutes: Math.min(30, Math.max(5, Number(value.intervalMinutes) || 10)),
+      lowThresholdPercent: Math.min(30, Math.max(5, Number(value.lowThresholdPercent) || 20)),
+      notifyCooldownMinutes: Math.round(cooldownRaw / 5) * 5
+    };
+  };
 
   const handleSaveSettings = async () => {
     setSavingSettings(true);
@@ -151,25 +164,11 @@ export const App = () => {
     try {
       const nextAuth = await window.usagePulse.getAuthStatus();
       setAuthStatus(nextAuth);
-      setMessage(t(lang, "app.authRefreshed"));
+      setAuthMessage(t(lang, "app.authRefreshed"));
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : t(lang, "app.authRefreshFailed"));
+      setAuthMessage(error instanceof Error ? error.message : t(lang, "app.authRefreshFailed"));
     } finally {
       setCheckingAuth(false);
-    }
-  };
-
-  const runManualCheck = async () => {
-    setChecking(true);
-    setMessage(t(lang, "app.checking"));
-    try {
-      const result = await window.usagePulse.runManualCheck();
-      setSnapshot(result.snapshot);
-      setMessage(t(lang, "app.checkComplete", { reason: result.reason }));
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : t(lang, "app.checkFailed"));
-    } finally {
-      setChecking(false);
     }
   };
 
@@ -181,6 +180,45 @@ export const App = () => {
       setMessage(error instanceof Error ? error.message : t(lang, "app.quitFailed"));
     }
   };
+
+  const openThreads = async () => {
+    try {
+      await window.usagePulse.openExternal(THREADS_URL);
+    } catch {
+      // best-effort: opening the support link failing is not worth surfacing.
+    }
+  };
+
+  const openClockApp = async () => {
+    try {
+      await window.usagePulse.openClockApp();
+    } catch (error) {
+      const isUnsupported = error instanceof Error && error.message.includes("macOS-only");
+      setMessage(t(lang, isUnsupported ? "settings.resetAlarm.openClockUnsupported" : "settings.resetAlarm.openClockFailed"));
+    }
+  };
+
+  const renderWindowBar = (window: QuotaWindow, unit: QuotaSnapshot["unit"]) => (
+    <div className="window-bar" key={window.key}>
+      <div className="quota-header" style={{ marginBottom: "6px" }}>
+        <span className="window-bar-label">{window.label}</span>
+        <span className="meta-text" style={{ margin: 0 }}>
+          {t(lang, "quota.remaining")} {formatValue(window.remaining, unit)} / {formatValue(window.total, unit)}
+        </span>
+      </div>
+      <div className="progress-track">
+        <div className="progress-fill" style={{ width: `${window.percent ?? 0}%` }} />
+      </div>
+      {window.resetsAt && (
+        <p className="meta-text" style={{ margin: "6px 0 0", color: "#8b949e", fontSize: "12px" }}>
+          {t(lang, "app.liveCountdown", {
+            countdown: formatCountdown(window.resetsAt, now, lang),
+            resetTime: formatResetText(window.resetsAt, lang)
+          })}
+        </p>
+      )}
+    </div>
+  );
 
   const toggleLanguage = async () => {
     const nextLang: Language = lang === "zh" ? "en" : "zh";
@@ -214,6 +252,35 @@ export const App = () => {
         <div className="quota-grid">
           {(["cursor", "claude"] as ServiceType[]).map((service) => {
             const item = snapshot?.[service];
+
+            if (service === "claude") {
+              const windows = item?.windows ?? [];
+              const sessionWindow = windows.find((window) => window.key === "session") ?? null;
+              const weeklyWindow =
+                windows.find((window) => window.key === "weekly_all") ??
+                windows.find((window) => window.key === "weekly_scoped") ??
+                windows.find((window) => window.key === "weekly") ??
+                null;
+              const barWindows = [sessionWindow, weeklyWindow].filter((window): window is QuotaWindow => window !== null);
+
+              return (
+                <div className="quota-card" key={service}>
+                  <div className="quota-header">
+                    <strong>{serviceNames[service]}</strong>
+                    <span className={`status-tag status-${item?.status || "unknown"}`}>{item?.status || "unknown"}</span>
+                  </div>
+                  {barWindows.length ? (
+                    <div className="window-bars">
+                      {barWindows.map((window) => renderWindowBar(window, item!.unit))}
+                    </div>
+                  ) : (
+                    <p className="meta-text" style={{ marginTop: "8px" }}>{t(lang, "app.notFetchedYet")}</p>
+                  )}
+                  <p className="meta-text" style={{ marginTop: "8px" }}>{item?.message || t(lang, "app.notFetchedYet")}</p>
+                </div>
+              );
+            }
+
             const percent = item ? getBarPercent(item) : 0;
             return (
               <div className="quota-card" key={service}>
@@ -222,7 +289,7 @@ export const App = () => {
                   <span className={`status-tag status-${item?.status || "unknown"}`}>{item?.status || "unknown"}</span>
                 </div>
                 <div className="quota-value">
-                  {item ? formatQuotaLine(item) : t(lang, "app.naSlashNa")}
+                  {item ? formatQuotaLine(item, lang) : t(lang, "app.naSlashNa")}
                 </div>
                 <div className="progress-track">
                   <div className="progress-fill" style={{ width: `${percent}%` }} />
@@ -232,7 +299,7 @@ export const App = () => {
                     {item.windows.map((window) => (
                       <div key={`${service}-${window.key}`} style={{ marginBottom: "8px" }}>
                         <p className="meta-text" style={{ marginBottom: "4px" }}>
-                          {window.label}：{formatValue(window.remaining, item.unit)} /{" "}
+                          {window.label}（{t(lang, "quota.remaining")}）：{formatValue(window.remaining, item.unit)} /{" "}
                           {formatValue(window.total, item.unit)}
                         </p>
                         {window.resetsAt && (
@@ -252,9 +319,6 @@ export const App = () => {
             );
           })}
         </div>
-        <button className="primary-btn" onClick={runManualCheck} disabled={checking}>
-          {checking ? t(lang, "button.checking") : t(lang, "button.manualCheck")}
-        </button>
       </section>
 
       <section className="panel">
@@ -273,6 +337,7 @@ export const App = () => {
         <button className="primary-btn" onClick={refreshAuthStatus} disabled={checkingAuth}>
           {checkingAuth ? t(lang, "button.detecting") : t(lang, "button.redetect")}
         </button>
+        {authMessage ? <p className="meta-text">{authMessage}</p> : null}
       </section>
 
       <section className="panel">
@@ -281,8 +346,8 @@ export const App = () => {
           <span>{t(lang, "settings.checkInterval", { minutes: settings.intervalMinutes })}</span>
           <input
             type="range"
-            min={1}
-            max={60}
+            min={5}
+            max={30}
             value={settings.intervalMinutes}
             onChange={(event) =>
               setSettings((prev) => ({ ...prev, intervalMinutes: Number(event.target.value) || prev.intervalMinutes }))
@@ -294,8 +359,8 @@ export const App = () => {
           <span>{t(lang, "settings.lowThreshold", { percent: settings.lowThresholdPercent })}</span>
           <input
             type="range"
-            min={1}
-            max={99}
+            min={5}
+            max={30}
             value={settings.lowThresholdPercent}
             onChange={(event) =>
               setSettings((prev) => ({
@@ -306,12 +371,33 @@ export const App = () => {
           />
         </label>
 
-        <label className="field">
+        <h3 style={{ marginTop: "16px", marginBottom: "8px", fontSize: "16px", color: "#e1e4e8" }}>
+          {t(lang, "settings.lowQuota.title")}
+        </h3>
+        <label className="field switch-row">
+          <span>{t(lang, "settings.lowQuota.cursor")}</span>
+          <input
+            type="checkbox"
+            checked={settings.enableCursorLowQuotaAlert}
+            onChange={(event) => setSettings((prev) => ({ ...prev, enableCursorLowQuotaAlert: event.target.checked }))}
+          />
+        </label>
+        <label className="field switch-row">
+          <span>{t(lang, "settings.lowQuota.claude")}</span>
+          <input
+            type="checkbox"
+            checked={settings.enableClaudeLowQuotaAlert}
+            onChange={(event) => setSettings((prev) => ({ ...prev, enableClaudeLowQuotaAlert: event.target.checked }))}
+          />
+        </label>
+
+        <label className="field" style={{ marginTop: "16px" }}>
           <span>{t(lang, "settings.notifyCooldown")}</span>
           <input
             type="number"
-            min={1}
+            min={5}
             max={240}
+            step={5}
             value={settings.notifyCooldownMinutes}
             onChange={(event) =>
               setSettings((prev) => ({
@@ -354,6 +440,14 @@ export const App = () => {
             onChange={(event) => setSettings((prev) => ({ ...prev, enableCursorResetAlarm: event.target.checked }))}
           />
         </label>
+        {settings.enableResetAlarm && settings.enableCursorResetAlarm && snapshot?.cursor.resetsAt && (
+          <p className="meta-text" style={{ paddingLeft: "20px", margin: "2px 0 0", color: "#8b949e", fontSize: "12px" }}>
+            {t(lang, "settings.resetAlarm.nextFire", {
+              countdown: formatCountdown(snapshot.cursor.resetsAt, now, lang),
+              resetTime: formatResetText(snapshot.cursor.resetsAt, lang)
+            })}
+          </p>
+        )}
         <label className="field switch-row" style={{ paddingLeft: "20px", opacity: settings.enableResetAlarm ? 1 : 0.5 }}>
           <span>{t(lang, "settings.resetAlarm.claude")}</span>
           <input
@@ -363,26 +457,29 @@ export const App = () => {
             onChange={(event) => setSettings((prev) => ({ ...prev, enableClaudeResetAlarm: event.target.checked }))}
           />
         </label>
+        {settings.enableResetAlarm && settings.enableClaudeResetAlarm && snapshot?.claude.resetsAt && (
+          <p className="meta-text" style={{ paddingLeft: "20px", margin: "2px 0 0", color: "#8b949e", fontSize: "12px" }}>
+            {t(lang, "settings.resetAlarm.nextFire", {
+              countdown: formatCountdown(snapshot.claude.resetsAt, now, lang),
+              resetTime: formatResetText(snapshot.claude.resetsAt, lang)
+            })}
+          </p>
+        )}
+        {settings.enableResetAlarm && settings.enableClaudeResetAlarm && snapshot?.claude.weeklyResetAt && (
+          <p className="meta-text" style={{ paddingLeft: "20px", margin: "2px 0 0", color: "#8b949e", fontSize: "12px" }}>
+            {t(lang, "settings.resetAlarm.nextFire", {
+              countdown: formatCountdown(snapshot.claude.weeklyResetAt, now, lang),
+              resetTime: formatResetText(snapshot.claude.weeklyResetAt, lang)
+            })}
+          </p>
+        )}
 
-        <h3 style={{ marginTop: "16px", marginBottom: "8px", fontSize: "16px", color: "#e1e4e8" }}>
-          {t(lang, "settings.lowQuota.title")}
-        </h3>
-        <label className="field switch-row">
-          <span>{t(lang, "settings.lowQuota.cursor")}</span>
-          <input
-            type="checkbox"
-            checked={settings.enableCursorLowQuotaAlert}
-            onChange={(event) => setSettings((prev) => ({ ...prev, enableCursorLowQuotaAlert: event.target.checked }))}
-          />
-        </label>
-        <label className="field switch-row">
-          <span>{t(lang, "settings.lowQuota.claude")}</span>
-          <input
-            type="checkbox"
-            checked={settings.enableClaudeLowQuotaAlert}
-            onChange={(event) => setSettings((prev) => ({ ...prev, enableClaudeLowQuotaAlert: event.target.checked }))}
-          />
-        </label>
+        <p className="meta-text" style={{ marginTop: "10px", color: "#8b949e", fontSize: "12px" }}>
+          {t(lang, "settings.resetAlarm.note")}
+        </p>
+        <button type="button" style={{ marginTop: "8px" }} onClick={openClockApp}>
+          {t(lang, "settings.resetAlarm.openClock")}
+        </button>
         <div style={{ marginBottom: "16px" }} />
 
         <button className="primary-btn" onClick={handleSaveSettings} disabled={savingSettings}>
@@ -395,6 +492,19 @@ export const App = () => {
 
       <footer className="panel footer">
         <p>{message}</p>
+        <p className="footer-credit">
+          {t(lang, "footer.developer")} · {t(lang, "footer.support")}{" "}
+          <a
+            href={THREADS_URL}
+            className="footer-link"
+            onClick={(event) => {
+              event.preventDefault();
+              openThreads();
+            }}
+          >
+            Threads
+          </a>
+        </p>
       </footer>
     </main>
   );

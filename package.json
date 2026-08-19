@@ -63,12 +63,14 @@
     },
     "files": [
       "dist/**",
+      "assets/**",
+      "node_modules/sql.js/**/*",
       "package.json"
     ],
     "mac": {
       "category": "public.app-category.utilities",
       "identity": null,
-      "icon": "node_modules/electron/dist/Electron.app/Contents/Resources/electron.icns",
+      "icon": "build/icon.png",
       "target": [
         {
           "target": "dmg",
@@ -80,7 +82,7 @@
       ]
     },
     "win": {
-      "icon": "node_modules/electron/dist/electron.ico",
+      "icon": "build/icon.png",
       "target": [
         {
           "target": "nsis",

@@ -9,9 +9,6 @@ const zh = {
   "app.saveFailed": "儲存失敗",
   "app.authRefreshed": "本機憑證狀態已更新",
   "app.authRefreshFailed": "重新偵測憑證失敗",
-  "app.checking": "正在手動檢查...",
-  "app.checkComplete": "檢查完成：{reason}",
-  "app.checkFailed": "手動檢查失敗",
   "app.quitting": "正在結束 Usage-Pulse...",
   "app.quitFailed": "結束程式失敗",
   "app.naSlashNa": "N/A / N/A",
@@ -25,8 +22,6 @@ const zh = {
   "section.credentialDetection": "本機憑證偵測",
   "section.settings": "設定",
 
-  "button.manualCheck": "立即手動檢查",
-  "button.checking": "檢查中...",
   "button.redetect": "重新偵測憑證",
   "button.detecting": "偵測中...",
   "button.saveSettings": "儲存設定",
@@ -36,7 +31,7 @@ const zh = {
   "auth.detected": "已偵測到可用憑證",
   "auth.notDetected": "尚未偵測到憑證",
   "auth.hint.cursor": "請先在 Cursor Desktop 登入後再檢查。",
-  "auth.hint.claude": "請在終端機執行 claude 登入（或設定 CLAUDE_CODE_OAUTH_TOKEN）。",
+  "auth.hint.claude": "請先安裝獨立 Claude Code CLI 並在終端機執行 claude 完成登入（僅用 Claude Desktop 不會產生這組憑證；或改設定 CLAUDE_CODE_OAUTH_TOKEN）。",
 
   "settings.checkInterval": "檢查頻率：{minutes} 分鐘",
   "settings.lowThreshold": "低額度預警閾值：{percent}%",
@@ -45,9 +40,14 @@ const zh = {
   "settings.language": "語言",
   "settings.resetAlarm.title": "重置提醒",
   "settings.resetAlarm.desc": "只使用內建桌面通知，不需要額外下載工具；提醒在程式執行中生效。",
+  "settings.resetAlarm.note": "注意：這不是 macOS「時鐘」App 的系統鬧鐘，只是 Usage-Pulse 在背景計時；App 沒開著或 Mac 睡眠太久時可能不會準時觸發。",
   "settings.resetAlarm.enable": "啟用重置提醒",
   "settings.resetAlarm.cursor": "└ Cursor 重置提醒",
   "settings.resetAlarm.claude": "└ Claude Code 重置提醒",
+  "settings.resetAlarm.nextFire": "└ 下次觸發倒數：{countdown}（{resetTime}）",
+  "settings.resetAlarm.openClock": "開啟「時鐘」App 檢查系統鬧鐘",
+  "settings.resetAlarm.openClockFailed": "開啟「時鐘」App 失敗",
+  "settings.resetAlarm.openClockUnsupported": "此功能僅支援 macOS",
   "settings.lowQuota.title": "低額度通知",
   "settings.lowQuota.cursor": "Cursor 低額度通知",
   "settings.lowQuota.claude": "Claude Code 低額度通知",
@@ -57,6 +57,7 @@ const zh = {
   "window.label.weeklyAll": "每週總配額",
   "window.label.weeklyScoped": "每週模型配額",
   "window.label.weekly": "每週配額",
+  "quota.remaining": "剩餘",
   "window.message.cursorSource": "資料來源：Cursor DashboardService",
   "window.message.claudeSource": "資料來源：Claude Code OAuth Usage API",
 
@@ -65,7 +66,7 @@ const zh = {
   "error.cursorLoginExpired": "Cursor 登入已失效，請先重新登入 Cursor Desktop。",
   "error.cursorApiFailed": "Cursor 用量 API 請求失敗。",
   "error.cursorMissingFields": "Cursor 回應缺少可用的配額欄位。",
-  "error.claudeLoginExpired": "Claude Code 登入已失效，請先在終端機執行 claude 重新登入。",
+  "error.claudeLoginExpired": "Claude Code 登入已失效，請先在終端機執行 claude 重新登入（獨立 CLI，非 Claude Desktop）。",
   "error.claudeRateLimited": "Claude Code 用量 API 暫時限流，請稍後再試。",
   "error.claudeApiFailed": "Claude Code 用量 API 請求失敗。",
   "error.claudeMissingFields": "Claude Code 回應缺少可解析的配額欄位。",
@@ -92,7 +93,10 @@ const zh = {
   "tray.menu.quit": "結束 Usage-Pulse",
   "tray.tooltip.noData": "Usage-Pulse\n尚未抓取到配額資料",
   "tray.tooltip.claudeReset": "Claude 重置: {time}",
-  "tray.tooltip.updated": "更新: {time}"
+  "tray.tooltip.updated": "更新: {time}",
+
+  "footer.developer": "開發者 W.Y. LI",
+  "footer.support": "客服"
 };
 
 const en: Record<keyof typeof zh, string> = {
@@ -104,9 +108,6 @@ const en: Record<keyof typeof zh, string> = {
   "app.saveFailed": "Save failed",
   "app.authRefreshed": "Local credential status updated",
   "app.authRefreshFailed": "Failed to re-detect credentials",
-  "app.checking": "Checking manually...",
-  "app.checkComplete": "Check complete: {reason}",
-  "app.checkFailed": "Manual check failed",
   "app.quitting": "Quitting Usage-Pulse...",
   "app.quitFailed": "Failed to quit",
   "app.naSlashNa": "N/A / N/A",
@@ -120,8 +121,6 @@ const en: Record<keyof typeof zh, string> = {
   "section.credentialDetection": "Local Credential Detection",
   "section.settings": "Settings",
 
-  "button.manualCheck": "Check Now",
-  "button.checking": "Checking...",
   "button.redetect": "Re-detect Credentials",
   "button.detecting": "Detecting...",
   "button.saveSettings": "Save Settings",
@@ -131,7 +130,7 @@ const en: Record<keyof typeof zh, string> = {
   "auth.detected": "Credentials detected",
   "auth.notDetected": "No credentials detected",
   "auth.hint.cursor": "Please log in to Cursor Desktop first.",
-  "auth.hint.claude": "Run `claude` login in your terminal (or set CLAUDE_CODE_OAUTH_TOKEN).",
+  "auth.hint.claude": "Install the standalone Claude Code CLI and run `claude` in your terminal to log in (using Claude Desktop alone does not create this credential; or set CLAUDE_CODE_OAUTH_TOKEN instead).",
 
   "settings.checkInterval": "Check interval: {minutes} min",
   "settings.lowThreshold": "Low quota alert threshold: {percent}%",
@@ -140,9 +139,14 @@ const en: Record<keyof typeof zh, string> = {
   "settings.language": "Language",
   "settings.resetAlarm.title": "Reset Alerts",
   "settings.resetAlarm.desc": "Uses built-in desktop notifications only — no extra tools needed; alerts fire while the app is running.",
+  "settings.resetAlarm.note": "Note: this is not a real macOS Clock app alarm — it's just an in-app timer. It may not fire on time if the app isn't running or the Mac has been asleep.",
   "settings.resetAlarm.enable": "Enable reset alerts",
   "settings.resetAlarm.cursor": "└ Cursor reset alert",
   "settings.resetAlarm.claude": "└ Claude Code reset alert",
+  "settings.resetAlarm.nextFire": "└ Next alert in: {countdown} ({resetTime})",
+  "settings.resetAlarm.openClock": "Open Clock App to check system alarms",
+  "settings.resetAlarm.openClockFailed": "Failed to open Clock app",
+  "settings.resetAlarm.openClockUnsupported": "This feature is macOS-only",
   "settings.lowQuota.title": "Low Quota Alerts",
   "settings.lowQuota.cursor": "Cursor low quota alert",
   "settings.lowQuota.claude": "Claude Code low quota alert",
@@ -152,6 +156,7 @@ const en: Record<keyof typeof zh, string> = {
   "window.label.weeklyAll": "Weekly total quota",
   "window.label.weeklyScoped": "Weekly model quota",
   "window.label.weekly": "Weekly quota",
+  "quota.remaining": "Remaining",
   "window.message.cursorSource": "Data source: Cursor DashboardService",
   "window.message.claudeSource": "Data source: Claude Code OAuth Usage API",
 
@@ -160,7 +165,7 @@ const en: Record<keyof typeof zh, string> = {
   "error.cursorLoginExpired": "Cursor login has expired. Please log in to Cursor Desktop again.",
   "error.cursorApiFailed": "Cursor usage API request failed.",
   "error.cursorMissingFields": "Cursor response is missing usable quota fields.",
-  "error.claudeLoginExpired": "Claude Code login has expired. Please run `claude` login again in your terminal.",
+  "error.claudeLoginExpired": "Claude Code login has expired. Please run `claude` again in your terminal to log back in (the standalone CLI, not Claude Desktop).",
   "error.claudeRateLimited": "Claude Code usage API is temporarily rate-limited. Please try again later.",
   "error.claudeApiFailed": "Claude Code usage API request failed.",
   "error.claudeMissingFields": "Claude Code response has no parsable quota fields.",
@@ -187,7 +192,10 @@ const en: Record<keyof typeof zh, string> = {
   "tray.menu.quit": "Quit Usage-Pulse",
   "tray.tooltip.noData": "Usage-Pulse\nNo quota data fetched yet",
   "tray.tooltip.claudeReset": "Claude reset: {time}",
-  "tray.tooltip.updated": "Updated: {time}"
+  "tray.tooltip.updated": "Updated: {time}",
+
+  "footer.developer": "Developer W.Y. LI",
+  "footer.support": "Support"
 };
 
 const dictionaries: Record<Language, Record<string, string>> = { zh, en };
