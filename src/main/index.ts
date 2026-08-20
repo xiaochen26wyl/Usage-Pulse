@@ -1,11 +1,11 @@
 import { join } from "node:path";
 import { app, clipboard, ipcMain, Menu, powerMonitor, shell } from "electron";
 import { menubar } from "menubar";
-import type { AlarmStatusReport, CombinedSnapshot, QuotaSnapshot } from "@shared/types";
+import type { AlarmStatusReport, AuthStatus, CombinedSnapshot, CredentialStatus, QuotaSnapshot, ServiceType } from "@shared/types";
 import { t } from "@shared/i18n";
 import { alarmService } from "@main/alarm-service";
 import { destroyAlarmWindow, closeAlarmPopup, getAlarmPayload, snoozeAlarmPopup } from "@main/alarm-window";
-import { getAuthStatus } from "@main/auth-service";
+import { credentialMonitor } from "@main/credential-monitor";
 import { MonitorEngine } from "@main/monitor-engine";
 import { settingsStore } from "@main/store";
 import { destroyTrayRenderer, initTrayRenderer, renderTrayImage } from "@main/tray-icon-renderer";
@@ -186,7 +186,12 @@ const setupIpcHandlers = (): void => {
     return next;
   });
 
-  ipcMain.handle("auth:status", () => getAuthStatus());
+  ipcMain.handle("auth:status", (): AuthStatus => credentialMonitor.getStatus());
+  // Per-service on purpose: each quota card re-detects only its own credential,
+  // so a failing Cursor login can be retried without touching Claude Code.
+  ipcMain.handle("auth:check", (_event, service: ServiceType): Promise<CredentialStatus> =>
+    credentialMonitor.check(service)
+  );
 
   ipcMain.handle("monitor:get-latest", () => monitor.getLatestSnapshot());
   ipcMain.handle("monitor:run-manual", () => monitor.runCheck("manual"));
@@ -238,11 +243,33 @@ app.whenReady().then(async () => {
     console.error("[Usage-Pulse]", error.message);
   });
 
+  // Lets the periodic sweep reach an already-open window; without it the
+  // credential rows would only ever refresh on mount or on a manual re-detect.
+  credentialMonitor.on("auth", (status: AuthStatus) => {
+    if (trayApp.window && !trayApp.window.isDestroyed()) {
+      trayApp.window.webContents.send("auth:updated", status);
+    }
+  });
+
+  credentialMonitor.on("error", (error: Error) => {
+    console.error("[Usage-Pulse] credential check failed", error.message);
+  });
+
+  // A rotated or dead credential gets one immediate quota check before anyone
+  // is notified — hitting the API is what normally prompts the IDE to refresh.
+  credentialMonitor.setQuotaRefresher((service) => monitor.runServiceCheck(service, "credential"));
+
   // Chromium timers do not advance while the machine sleeps, so a timer armed
   // before a sleep comes back late — or, for an alarm already past, not at all.
   // Re-arming on wake is what lets the catch-up window replay it.
-  powerMonitor.on("resume", () => alarmService.rearm("resume"));
-  powerMonitor.on("unlock-screen", () => alarmService.rearm("unlock"));
+  powerMonitor.on("resume", () => {
+    alarmService.rearm("resume");
+    void credentialMonitor.checkIfDue();
+  });
+  powerMonitor.on("unlock-screen", () => {
+    alarmService.rearm("unlock");
+    void credentialMonitor.checkIfDue();
+  });
 
   app.on("second-instance", (_event, argv) => {
     if (isAlarmLaunch(argv)) {
@@ -283,11 +310,17 @@ app.whenReady().then(async () => {
       console.error("[Usage-Pulse] startup check failed", error);
     });
     monitor.start();
+
+    await credentialMonitor.checkAll().catch((error) => {
+      console.error("[Usage-Pulse] startup credential check failed", error);
+    });
+    credentialMonitor.start();
   });
 });
 
 app.on("before-quit", () => {
   monitor.stop();
+  credentialMonitor.stop();
   destroyAlarmWindow();
   destroyTrayRenderer();
 });

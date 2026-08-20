@@ -1,11 +1,21 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { AlarmPopupPayload, AlarmStatusReport, AppSettings, CombinedSnapshot, MonitorResult } from "@shared/types";
+import type {
+  AlarmPopupPayload,
+  AlarmStatusReport,
+  AppSettings,
+  AuthStatus,
+  CombinedSnapshot,
+  CredentialStatus,
+  MonitorResult,
+  ServiceType
+} from "@shared/types";
 
 const api = {
   getSettings: () => ipcRenderer.invoke("settings:get") as Promise<AppSettings>,
   saveSettings: (settings: Partial<AppSettings>) =>
     ipcRenderer.invoke("settings:save", settings) as Promise<AppSettings>,
-  getAuthStatus: () => ipcRenderer.invoke("auth:status") as Promise<{ cursor: boolean; claude: boolean }>,
+  getAuthStatus: () => ipcRenderer.invoke("auth:status") as Promise<AuthStatus>,
+  checkAuth: (service: ServiceType) => ipcRenderer.invoke("auth:check", service) as Promise<CredentialStatus>,
   getLatestSnapshot: () => ipcRenderer.invoke("monitor:get-latest") as Promise<CombinedSnapshot | null>,
   runManualCheck: () => ipcRenderer.invoke("monitor:run-manual") as Promise<MonitorResult>,
   quitApp: () => ipcRenderer.invoke("app:quit") as Promise<void>,
@@ -23,6 +33,13 @@ const api = {
     ipcRenderer.on("alarm:payload", listener);
     return () => {
       ipcRenderer.removeListener("alarm:payload", listener);
+    };
+  },
+  onAuthUpdated: (handler: (status: AuthStatus) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, status: AuthStatus) => handler(status);
+    ipcRenderer.on("auth:updated", listener);
+    return () => {
+      ipcRenderer.removeListener("auth:updated", listener);
     };
   },
   onSnapshotUpdated: (handler: (snapshot: CombinedSnapshot) => void) => {

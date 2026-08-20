@@ -4,13 +4,16 @@ import type {
   AppSettings,
   AuthStatus,
   CombinedSnapshot,
-  MonitorResult
+  CredentialStatus,
+  MonitorResult,
+  ServiceType
 } from "@shared/types";
 
 interface UsagePulseApi {
   getSettings: () => Promise<AppSettings>;
   saveSettings: (settings: Partial<AppSettings>) => Promise<AppSettings>;
   getAuthStatus: () => Promise<AuthStatus>;
+  checkAuth: (service: ServiceType) => Promise<CredentialStatus>;
   getLatestSnapshot: () => Promise<CombinedSnapshot | null>;
   runManualCheck: () => Promise<MonitorResult>;
   quitApp: () => Promise<void>;
@@ -24,6 +27,7 @@ interface UsagePulseApi {
   dismissAlarm: () => Promise<void>;
   snoozeAlarm: () => Promise<void>;
   onAlarmPayload: (handler: (payload: AlarmPopupPayload) => void) => () => void;
+  onAuthUpdated: (handler: (status: AuthStatus) => void) => () => void;
   onSnapshotUpdated: (handler: (snapshot: CombinedSnapshot) => void) => () => void;
 }
 

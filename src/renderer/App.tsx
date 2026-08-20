@@ -4,6 +4,8 @@ import type {
   AppSettings,
   AuthStatus,
   CombinedSnapshot,
+  CredentialState,
+  CredentialStatus,
   Language,
   QuotaSnapshot,
   QuotaWindow,
@@ -35,9 +37,40 @@ const defaultSettings: AppSettings = {
   lineAssertionPrivateKey: ""
 };
 
+const emptyCredential = (service: ServiceType): CredentialStatus => ({
+  service,
+  state: "missing",
+  expiresAt: null,
+  rotatedAt: null,
+  checkedAt: ""
+});
+
 const defaultAuth: AuthStatus = {
-  cursor: false,
-  claude: false
+  cursor: emptyCredential("cursor"),
+  claude: emptyCredential("claude")
+};
+
+const credentialStateKeys: Record<CredentialState, "auth.state.ok" | "auth.state.expiring" | "auth.state.expired" | "auth.state.missing" | "auth.state.error"> = {
+  ok: "auth.state.ok",
+  expiring: "auth.state.expiring",
+  expired: "auth.state.expired",
+  missing: "auth.state.missing",
+  error: "auth.state.error"
+};
+
+// Reuses the quota status-tag palette so a card reads consistently top to
+// bottom: green healthy, amber needs-attention, red broken.
+const credentialTagClass = (state: CredentialState): string => {
+  if (state === "ok") {
+    return "status-ok";
+  }
+  if (state === "expiring") {
+    return "status-low";
+  }
+  if (state === "missing") {
+    return "status-unknown";
+  }
+  return "status-error";
 };
 
 const serviceNames: Record<ServiceType, string> = {
@@ -102,8 +135,8 @@ export const App = () => {
   const [authStatus, setAuthStatus] = useState<AuthStatus>(defaultAuth);
   const [snapshot, setSnapshot] = useState<CombinedSnapshot | null>(null);
   const [savingSettings, setSavingSettings] = useState(false);
-  const [checkingAuth, setCheckingAuth] = useState(false);
-  const [authMessage, setAuthMessage] = useState("");
+  const [checkingAuth, setCheckingAuth] = useState<Record<ServiceType, boolean>>({ cursor: false, claude: false });
+  const [authMessage, setAuthMessage] = useState<Record<ServiceType, string>>({ cursor: "", claude: "" });
   const [claudeCommandCopied, setClaudeCommandCopied] = useState(false);
   const [lineFields, setLineFields] = useState({
     lineChannelAccessToken: "",
@@ -151,12 +184,17 @@ export const App = () => {
       console.error(error);
     });
 
-    const unsubscribe = window.usagePulse.onSnapshotUpdated((nextSnapshot) => {
+    const unsubscribeSnapshot = window.usagePulse.onSnapshotUpdated((nextSnapshot) => {
       setSnapshot(nextSnapshot);
     });
 
+    const unsubscribeAuth = window.usagePulse.onAuthUpdated((nextAuth) => {
+      setAuthStatus(nextAuth);
+    });
+
     return () => {
-      unsubscribe();
+      unsubscribeSnapshot();
+      unsubscribeAuth();
     };
   }, []);
 
@@ -233,16 +271,21 @@ export const App = () => {
     }
   };
 
-  const refreshAuthStatus = async () => {
-    setCheckingAuth(true);
+  // Scoped to one service: the Cursor card re-reads only Cursor's credential and
+  // the Claude Code card only Claude's, so retrying one never disturbs the other.
+  const refreshAuthStatus = async (service: ServiceType) => {
+    setCheckingAuth((prev) => ({ ...prev, [service]: true }));
     try {
-      const nextAuth = await window.usagePulse.getAuthStatus();
-      setAuthStatus(nextAuth);
-      setAuthMessage(t(lang, "app.authRefreshed"));
+      const next = await window.usagePulse.checkAuth(service);
+      setAuthStatus((prev) => ({ ...prev, [service]: next }));
+      setAuthMessage((prev) => ({ ...prev, [service]: t(lang, "app.authRefreshed") }));
     } catch (error) {
-      setAuthMessage(error instanceof Error ? error.message : t(lang, "app.authRefreshFailed"));
+      setAuthMessage((prev) => ({
+        ...prev,
+        [service]: error instanceof Error ? error.message : t(lang, "app.authRefreshFailed")
+      }));
     } finally {
-      setCheckingAuth(false);
+      setCheckingAuth((prev) => ({ ...prev, [service]: false }));
     }
   };
 
@@ -313,7 +356,57 @@ export const App = () => {
     }
   };
 
-  const renderUsagePercentBar = (window: QuotaWindow, isLow = false) => (
+  // Bar colour identifies the service, never the quota level — Cursor is always
+  // green and Claude Code always blue. Low quota is signalled by the status tag
+  // in the card header instead.
+  const barClass = (service: ServiceType): string =>
+    service === "cursor" ? "progress-fill progress-fill-cursor" : "progress-fill";
+
+  // Lives inside each quota card rather than in a section of its own: a card
+  // showing "no data" is almost always explained by the credential right above
+  // it, and the re-detect button here only ever touches this one service.
+  const renderCredentialRow = (service: ServiceType) => {
+    const credential = authStatus[service];
+    const message = authMessage[service];
+
+    return (
+      <div className="credential-row">
+        <div className="quota-header">
+          <span className={`status-tag ${credentialTagClass(credential.state)}`}>
+            {t(lang, credentialStateKeys[credential.state])}
+          </span>
+          <button
+            type="button"
+            className="warning-btn"
+            style={{ width: "auto" }}
+            onClick={() => refreshAuthStatus(service)}
+            disabled={checkingAuth[service]}
+          >
+            {checkingAuth[service] ? t(lang, "button.detecting") : t(lang, "button.redetect")}
+          </button>
+        </div>
+        <p className="meta-text" style={{ margin: "6px 0 0" }}>
+          {credential.checkedAt
+            ? t(lang, "auth.lastChecked", { time: new Date(credential.checkedAt).toLocaleString() })
+            : t(lang, "auth.lastCheckedNever")}
+        </p>
+        {credential.expiresAt ? (
+          <p className="meta-text" style={{ margin: "2px 0 0" }}>
+            {t(lang, "auth.expiresAt", { time: new Date(credential.expiresAt).toLocaleString() })}
+          </p>
+        ) : null}
+        {credential.state === "missing" || credential.state === "error" ? (
+          <p className="meta-text" style={{ margin: "2px 0 0" }}>{t(lang, authHintKeys[service])}</p>
+        ) : null}
+        {credential.message ? (
+          <p className="meta-text" style={{ margin: "2px 0 0" }}>{credential.message}</p>
+        ) : null}
+        {message ? <p className="meta-text" style={{ margin: "2px 0 0" }}>{message}</p> : null}
+      </div>
+    );
+  };
+
+  const renderUsagePercentBar = (window: QuotaWindow, service: ServiceType) => (
     <div className="window-bar" key={window.key}>
       <div className="quota-header" style={{ marginBottom: "6px" }}>
         <span className="window-bar-label">{window.label}</span>
@@ -323,7 +416,7 @@ export const App = () => {
       </div>
       <div className="progress-track">
         <div
-          className={`progress-fill${isLow ? " progress-fill-warning" : ""}`}
+          className={barClass(service)}
           style={{ width: `${Math.max(0, Math.min(100, window.percent ?? 0))}%` }}
         />
       </div>
@@ -333,7 +426,7 @@ export const App = () => {
     </div>
   );
 
-  const renderWindowBar = (window: QuotaWindow, unit: QuotaSnapshot["unit"], isLow = false) => (
+  const renderWindowBar = (window: QuotaWindow, unit: QuotaSnapshot["unit"], service: ServiceType) => (
     <div className="window-bar" key={window.key}>
       <div className="quota-header" style={{ marginBottom: "6px" }}>
         <span className="window-bar-label">{window.label}</span>
@@ -343,7 +436,7 @@ export const App = () => {
       </div>
       <div className="progress-track">
         <div
-          className={`progress-fill${isLow ? " progress-fill-warning" : ""}`}
+          className={barClass(service)}
           style={{ width: `${window.percent ?? 0}%` }}
         />
       </div>
@@ -413,9 +506,10 @@ export const App = () => {
                     <strong>{serviceNames[service]}</strong>
                     <span className={`status-tag status-${item?.status || "unknown"}`}>{item?.status || "unknown"}</span>
                   </div>
+                  {renderCredentialRow(service)}
                   {barWindows.length ? (
                     <div className="window-bars">
-                      {barWindows.map((window) => renderWindowBar(window, item!.unit, item?.status === "low"))}
+                      {barWindows.map((window) => renderWindowBar(window, item!.unit, service))}
                     </div>
                   ) : (
                     <p className="meta-text" style={{ marginTop: "8px" }}>{item?.message || t(lang, "app.notFetchedYet")}</p>
@@ -443,7 +537,6 @@ export const App = () => {
             const allWindows = item?.windows ?? [];
             const billingWindow = allWindows.find((window) => window.key === "billing_cycle") ?? null;
             const cursorModelsWindow = allWindows.find((window) => window.key === "cursor_models") ?? null;
-            const isLow = item?.status === "low";
             const billingUsed =
               billingWindow && billingWindow.remaining !== null && billingWindow.total !== null
                 ? billingWindow.total - billingWindow.remaining
@@ -458,9 +551,10 @@ export const App = () => {
                   <strong>{serviceNames[service]}</strong>
                   <span className={`status-tag status-${item?.status || "unknown"}`}>{item?.status || "unknown"}</span>
                 </div>
+                {renderCredentialRow(service)}
                 {cursorModelsWindow ? (
                   <div className="window-bars" style={{ marginBottom: "12px" }}>
-                    {renderUsagePercentBar(cursorModelsWindow, isLow)}
+                    {renderUsagePercentBar(cursorModelsWindow, service)}
                   </div>
                 ) : null}
                 {billingWindow ? (
@@ -474,7 +568,7 @@ export const App = () => {
                     </div>
                     <div className="progress-track">
                       <div
-                        className={`progress-fill${isLow ? " progress-fill-warning" : ""}`}
+                        className={barClass(service)}
                         style={{ width: `${Math.max(0, Math.min(100, billingUsedPercent))}%` }}
                       />
                     </div>
@@ -683,26 +777,7 @@ export const App = () => {
       </section>
 
       <section className="panel">
-        <h2>{t(lang, "section.credentialDetection")}</h2>
-        <div className="auth-list">
-          {(["cursor", "claude"] as ServiceType[]).map((service) => (
-            <div className="auth-card" key={service}>
-              <div>
-                <strong>{serviceNames[service]}</strong>
-                <p className="meta-text">{authStatus[service] ? t(lang, "auth.detected") : t(lang, "auth.notDetected")}</p>
-                {!authStatus[service] ? <p className="meta-text">{t(lang, authHintKeys[service])}</p> : null}
-              </div>
-            </div>
-          ))}
-        </div>
-        <button className="primary-btn" onClick={refreshAuthStatus} disabled={checkingAuth}>
-          {checkingAuth ? t(lang, "button.detecting") : t(lang, "button.redetect")}
-        </button>
-        {authMessage ? <p className="meta-text">{authMessage}</p> : null}
-
-        <h3 className="subsection-title" style={{ marginTop: "20px" }}>
-          {t(lang, "line.title")}
-        </h3>
+        <h2>{t(lang, "line.title")}</h2>
         <p className="meta-text" style={{ marginBottom: "10px" }}>{t(lang, "line.desc")}</p>
         <div className="callout-warning">⚠️ {t(lang, "line.clipboardWarning")}</div>
         <p className="meta-text" style={{ margin: "8px 0 12px" }}>{t(lang, "line.pasteHint")}</p>

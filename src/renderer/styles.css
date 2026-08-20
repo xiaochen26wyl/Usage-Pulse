@@ -114,13 +114,16 @@ h2 {
   overflow: hidden;
 }
 
+/* Bar colour identifies the service, not the quota level: Claude Code keeps the
+   blue default and Cursor overrides to green. Low quota is signalled by the
+   status tag in the card header, so the fill never changes hue. */
 .progress-fill {
   height: 100%;
   background: linear-gradient(90deg, #00c2ff, var(--color-primary));
 }
 
-.progress-fill-warning {
-  background: linear-gradient(90deg, #ffd27a, var(--color-warning));
+.progress-fill-cursor {
+  background: linear-gradient(90deg, #7ee2a8, var(--color-success));
 }
 
 .meta-text {
@@ -155,6 +158,13 @@ h2 {
 .status-error {
   border-color: var(--color-danger);
   color: var(--color-danger);
+}
+
+/* Per-service credential status, shown inside its own quota card. */
+.credential-row {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--color-border);
 }
 
 .subsection-title {
@@ -303,30 +313,6 @@ button:disabled {
   padding: 4px 10px;
   font-size: 12px;
   border-radius: 999px;
-}
-
-.auth-list {
-  display: grid;
-  gap: 10px;
-}
-
-.auth-card {
-  border: 1px solid #314157;
-  border-radius: 12px;
-  padding: 12px;
-  display: flex;
-  gap: 10px;
-  justify-content: space-between;
-  align-items: flex-start;
-  background: #11161d;
-  box-shadow: var(--shadow-card);
-}
-
-.auth-actions {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-  justify-content: flex-end;
 }
 
 .warning-text {

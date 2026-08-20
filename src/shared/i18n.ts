@@ -22,8 +22,6 @@ const zh = {
   "button.saving": "儲存中...",
   "button.quit": "結束 Usage-Pulse",
 
-  "auth.detected": "已偵測到可用憑證",
-  "auth.notDetected": "尚未偵測到憑證",
   "auth.hint.cursor": "請先在 Cursor Desktop 登入後再檢查。",
   "auth.hint.claude": "請先安裝獨立 Claude Code CLI 並在終端機執行 claude 完成登入（僅用 Claude Desktop 不會產生這組憑證；或改設定 CLAUDE_CODE_OAUTH_TOKEN）。",
   "auth.state.ok": "憑證正常",
@@ -163,8 +161,6 @@ const en: Record<keyof typeof zh, string> = {
   "button.saving": "Saving...",
   "button.quit": "Quit Usage-Pulse",
 
-  "auth.detected": "Credentials detected",
-  "auth.notDetected": "No credentials detected",
   "auth.hint.cursor": "Please log in to Cursor Desktop first.",
   "auth.hint.claude": "Install the standalone Claude Code CLI and run `claude` in your terminal to log in (using Claude Desktop alone does not create this credential; or set CLAUDE_CODE_OAUTH_TOKEN instead).",
   "auth.state.ok": "Credential healthy",
