@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { app, BrowserWindow, screen } from "electron";
 import type { AlarmPopupPayload } from "@shared/types";
+import { ALARM_POPUP_AUTO_DISMISS_MINUTES } from "@shared/alarm-utils";
 
 const isDev = Boolean(process.env.ELECTRON_RENDERER_URL);
 
@@ -24,6 +25,10 @@ let popup: BrowserWindow | null = null;
 let currentPayload: AlarmPopupPayload | null = null;
 let autoDismissTimer: NodeJS.Timeout | null = null;
 let snoozeTimer: NodeJS.Timeout | null = null;
+// Each low-quota alert (and each reset alarm) fires its own popup independently
+// rather than clobbering whichever one is already on screen — anything that
+// arrives while a popup is showing waits here and is shown once it closes.
+const queue: AlarmPopupPayload[] = [];
 
 const alarmUrl = (): string =>
   isDev
@@ -37,9 +42,9 @@ const clearAutoDismiss = (): void => {
   }
 };
 
-const armAutoDismiss = (minutes: number): void => {
+const armAutoDismiss = (): void => {
   clearAutoDismiss();
-  autoDismissTimer = setTimeout(() => closeAlarmPopup(), Math.max(1, minutes) * 60_000);
+  autoDismissTimer = setTimeout(() => closeAlarmPopup(), ALARM_POPUP_AUTO_DISMISS_MINUTES * 60_000);
 };
 
 const createPopup = (): BrowserWindow => {
@@ -84,13 +89,8 @@ const createPopup = (): BrowserWindow => {
   return window;
 };
 
-export const showAlarmPopup = (payload: AlarmPopupPayload): void => {
+const displayPopup = (payload: AlarmPopupPayload): void => {
   currentPayload = payload;
-
-  if (snoozeTimer) {
-    clearTimeout(snoozeTimer);
-    snoozeTimer = null;
-  }
 
   if (!popup || popup.isDestroyed()) {
     popup = createPopup();
@@ -104,17 +104,37 @@ export const showAlarmPopup = (payload: AlarmPopupPayload): void => {
   // showInactive, not show: the window must be impossible to miss without
   // stealing the keystroke the user is in the middle of typing elsewhere.
   popup.showInactive();
-  armAutoDismiss(payload.autoDismissMinutes);
+  armAutoDismiss();
+};
+
+export const showAlarmPopup = (payload: AlarmPopupPayload): void => {
+  if (snoozeTimer) {
+    clearTimeout(snoozeTimer);
+    snoozeTimer = null;
+  }
+
+  if (currentPayload && popup && !popup.isDestroyed()) {
+    queue.push(payload);
+    return;
+  }
+
+  displayPopup(payload);
 };
 
 export const getAlarmPayload = (): AlarmPopupPayload | null => currentPayload;
 
 export const closeAlarmPopup = (): void => {
   clearAutoDismiss();
+  currentPayload = null;
   if (popup && !popup.isDestroyed()) {
     popup.close();
   }
   popup = null;
+
+  const next = queue.shift();
+  if (next) {
+    displayPopup(next);
+  }
 };
 
 export const snoozeAlarmPopup = (): void => {
@@ -138,6 +158,7 @@ export const destroyAlarmWindow = (): void => {
     clearTimeout(snoozeTimer);
     snoozeTimer = null;
   }
+  queue.length = 0;
   closeAlarmPopup();
   currentPayload = null;
 };

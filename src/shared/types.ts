@@ -66,23 +66,34 @@ export interface AuthStatus {
 export interface AppSettings {
   cursorIntervalMinutes: number;
   claudeIntervalMinutes: number;
-  cursorLowThresholdPercent: number;
-  claudeLowThresholdPercent: number;
+  // Cursor's low-quota warning is split by model tier: "advanced models" is the
+  // other_models/apiPercentUsed window (pay-as-you-go premium models), "cursor
+  // models" is the cursor_models/autoPercentUsed window (Cursor's own Grok/Composer).
+  cursorAdvancedModelsLowThresholdPercent: number;
+  enableCursorAdvancedModelsLowAlert: boolean;
+  cursorModelsLowThresholdPercent: number;
+  enableCursorModelsLowAlert: boolean;
+  // Claude Code's low-quota warning is split three ways: the 5-hour session
+  // window's consumption, its weekly window's consumption, and a separate
+  // cooldown alert (see enableClaudeCooldownAlert below).
+  claudeSessionLowThresholdPercent: number;
+  enableClaudeSessionLowAlert: boolean;
+  claudeWeeklyLowThresholdPercent: number;
+  enableClaudeWeeklyLowAlert: boolean;
+  // Not a percent threshold: the Claude Code 5-hour window starts counting the
+  // moment the first message is sent (not when the quota runs out), so once the
+  // session quota hits 0% the user is locked out until that window's resetsAt,
+  // regardless of how much of the 5 hours has actually elapsed. This toggle
+  // alerts on that lockout state itself, distinct from the consumption warning.
+  enableClaudeCooldownAlert: boolean;
   launchAtLogin: boolean;
   notifyCooldownMinutes: number;
   enableCursorResetAlarm: boolean;
   enableClaudeResetAlarm: boolean;
-  enableCursorLowQuotaAlert: boolean;
-  enableClaudeLowQuotaAlert: boolean;
   language: Language;
   enableAlarmPopup: boolean;
   alarmSoundEnabled: boolean;
-  alarmPopupAutoDismissMinutes: number;
-  alarmCatchUpMinutes: number;
   lineChannelAccessToken: string;
-  lineChannelId: string;
-  lineAssertionKid: string;
-  lineAssertionPrivateKey: string;
 }
 
 export interface MonitorResult {
@@ -123,22 +134,39 @@ export interface AlarmTarget {
 }
 
 // Records that a given fireAt has already rung, so a re-arm (poll, resume,
-// restart) replays neither the on-time firing nor its catch-up.
+// restart) does not replay the same firing.
 export interface AlarmFireRecord {
   fireAt: string;
   firedAt: string;
-  catchUp: boolean;
 }
 
+// Ids for the independent low-quota-style popups, one per alert configured in
+// settings — distinct from AlarmSource (the scheduled reset-time alarms) even
+// though "claude-cooldown" describes the same underlying session window.
+export type LowQuotaAlertSource =
+  | "cursor-advanced-models-low"
+  | "cursor-models-low"
+  | "claude-session-low"
+  | "claude-weekly-low"
+  | "claude-cooldown"
+  // Quota fully spent on that window. Cursor has one per model window; Claude
+  // Code only counts the weekly window (its 5-hour window going to zero is the
+  // cooldown alert above, which recovers on its own).
+  | "cursor-advanced-models-exhausted"
+  | "cursor-models-exhausted"
+  | "claude-weekly-exhausted";
+
 export interface AlarmPopupPayload {
-  id: AlarmSource | "test";
+  id: AlarmSource | LowQuotaAlertSource | "test";
   service: ServiceType | null;
   label: string;
   fireAt: string;
-  catchUp: boolean;
-  autoDismissMinutes: number;
   soundEnabled: boolean;
   language: Language;
+  // Set only for the cooldown popup: when present, the popup shows a live
+  // countdown to this ISO time (the session window's resetsAt) instead of a
+  // static "fired at" timestamp.
+  countdownTarget?: string | null;
 }
 
 export interface AlarmStatusReport {

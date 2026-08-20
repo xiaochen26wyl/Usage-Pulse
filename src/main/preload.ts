@@ -6,7 +6,6 @@ import type {
   AuthStatus,
   CombinedSnapshot,
   CredentialStatus,
-  MonitorResult,
   ServiceType
 } from "@shared/types";
 
@@ -17,7 +16,6 @@ const api = {
   getAuthStatus: () => ipcRenderer.invoke("auth:status") as Promise<AuthStatus>,
   checkAuth: (service: ServiceType) => ipcRenderer.invoke("auth:check", service) as Promise<CredentialStatus>,
   getLatestSnapshot: () => ipcRenderer.invoke("monitor:get-latest") as Promise<CombinedSnapshot | null>,
-  runManualCheck: () => ipcRenderer.invoke("monitor:run-manual") as Promise<MonitorResult>,
   quitApp: () => ipcRenderer.invoke("app:quit") as Promise<void>,
   openExternal: (url: string) => ipcRenderer.invoke("app:open-external", url) as Promise<void>,
   clearClipboard: () => ipcRenderer.invoke("app:clear-clipboard") as Promise<void>,

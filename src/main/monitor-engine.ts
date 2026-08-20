@@ -1,19 +1,31 @@
 import { EventEmitter } from "node:events";
-import type { AppSettings, CombinedSnapshot, MonitorResult, QuotaSnapshot, ScrapeResult, ServiceType } from "@shared/types";
+import type {
+  AppSettings,
+  CombinedSnapshot,
+  LowQuotaAlertSource,
+  MonitorResult,
+  QuotaSnapshot,
+  QuotaWindow,
+  ScrapeResult,
+  ServiceType
+} from "@shared/types";
 import { isDuplicateInCooldown } from "@shared/monitor-utils";
+import { buildExhaustedFlex, buildLowQuotaFlex } from "@shared/line-templates";
 import { t } from "@shared/i18n";
 import { alarmService } from "@main/alarm-service";
+import { showAlarmPopup } from "@main/alarm-window";
+import { sendLineBroadcast } from "@main/line-notifier";
 import { scrapeQuota } from "@main/scrapers";
 import { sendDesktopNotification } from "@main/notifiers";
 import { notificationStore, settingsStore, snapshotStore } from "@main/store";
 import { SERVICE_LABELS } from "./config";
 
 type TriggerType = "scheduled" | "manual" | "startup" | "credential";
-type LowQuotaToggleKey = "enableCursorLowQuotaAlert" | "enableClaudeLowQuotaAlert";
 type IntervalKey = "cursorIntervalMinutes" | "claudeIntervalMinutes";
-type ThresholdKey = "cursorLowThresholdPercent" | "claudeLowThresholdPercent";
 
 const nowIso = () => new Date().toISOString();
+
+const clampPercent = (value: number): number => Math.max(0, Math.min(100, value));
 
 const toPercent = (remaining: number | null, total: number | null): number | null => {
   if (remaining === null || total === null || total <= 0) {
@@ -22,12 +34,82 @@ const toPercent = (remaining: number | null, total: number | null): number | nul
   return Math.max(0, Math.min(100, Math.round((remaining / total) * 100)));
 };
 
-const isLowQuota = (percent: number | null, threshold: number): boolean =>
-  percent !== null ? percent <= threshold : false;
+const findWindow = (windows: QuotaWindow[], key: string): QuotaWindow | null =>
+  windows.find((window) => window.key === key) ?? null;
 
-const lowQuotaToggleMap: Record<ServiceType, LowQuotaToggleKey> = {
-  cursor: "enableCursorLowQuotaAlert",
-  claude: "enableClaudeLowQuotaAlert"
+const findClaudeWeeklyWindow = (windows: QuotaWindow[]): QuotaWindow | null =>
+  findWindow(windows, "weekly_all") ?? findWindow(windows, "weekly_scoped") ?? findWindow(windows, "weekly");
+
+// Claude Code windows store `percent` as remaining%; low means it's at or
+// below the threshold, same semantics as the old top-level check.
+const isRemainingLow = (remainingPercent: number | null, threshold: number): boolean =>
+  remainingPercent !== null && remainingPercent <= threshold;
+
+// Cursor's cursor_models/other_models windows store `percent` as used% (see
+// collectors/cursor.ts), so "low remaining" means used% is at or above
+// (100 - threshold).
+const isUsedLow = (usedPercent: number | null, threshold: number): boolean =>
+  usedPercent !== null && clampPercent(100 - usedPercent) <= threshold;
+
+// One window's alert-relevant state. `remainingPercent` is always *remaining*
+// (Cursor's used% is converted here), so downstream notifications and LINE
+// templates never have to care which way round a collector counts.
+interface WindowState {
+  low: boolean;
+  exhausted: boolean;
+  remainingPercent: number | null;
+  resetsAt: string | null;
+}
+
+const cursorWindowState = (window: QuotaWindow | null, threshold: number): WindowState => {
+  const usedPercent = window?.percent ?? null;
+  const remainingPercent = usedPercent === null ? null : clampPercent(100 - usedPercent);
+  return {
+    low: isUsedLow(usedPercent, threshold),
+    exhausted: remainingPercent !== null && remainingPercent <= 0,
+    remainingPercent,
+    resetsAt: window?.resetsAt ?? null
+  };
+};
+
+const claudeWindowState = (window: QuotaWindow | null, threshold: number): WindowState => {
+  const remainingPercent = window?.percent ?? null;
+  return {
+    low: isRemainingLow(remainingPercent, threshold),
+    exhausted: remainingPercent !== null && remainingPercent <= 0,
+    remainingPercent,
+    resetsAt: window?.resetsAt ?? null
+  };
+};
+
+interface CursorLowFlags {
+  advancedModels: WindowState;
+  models: WindowState;
+}
+
+interface ClaudeLowFlags {
+  session: WindowState;
+  weekly: WindowState;
+  // The 5-hour window starts counting from first use (not from exhaustion), so
+  // hitting 0% remaining means the user is locked out until resetsAt — a
+  // distinct state from "getting low", surfaced as its own alert. It recovers
+  // on its own, so it is *not* treated as "quota used up"; only the weekly
+  // window earns that.
+  cooldownActive: boolean;
+}
+
+const evaluateCursorLowFlags = (windows: QuotaWindow[], settings: AppSettings): CursorLowFlags => ({
+  models: cursorWindowState(findWindow(windows, "cursor_models"), settings.cursorModelsLowThresholdPercent),
+  advancedModels: cursorWindowState(findWindow(windows, "other_models"), settings.cursorAdvancedModelsLowThresholdPercent)
+});
+
+const evaluateClaudeLowFlags = (windows: QuotaWindow[], settings: AppSettings): ClaudeLowFlags => {
+  const session = claudeWindowState(findWindow(windows, "session"), settings.claudeSessionLowThresholdPercent);
+  return {
+    session,
+    weekly: claudeWindowState(findClaudeWeeklyWindow(windows), settings.claudeWeeklyLowThresholdPercent),
+    cooldownActive: session.exhausted
+  };
 };
 
 const intervalKeyMap: Record<ServiceType, IntervalKey> = {
@@ -35,42 +117,44 @@ const intervalKeyMap: Record<ServiceType, IntervalKey> = {
   claude: "claudeIntervalMinutes"
 };
 
-const thresholdKeyMap: Record<ServiceType, ThresholdKey> = {
-  cursor: "cursorLowThresholdPercent",
-  claude: "claudeLowThresholdPercent"
-};
-
-const isToggleEnabled = (
-  settings: AppSettings,
-  toggleMap: Record<ServiceType, LowQuotaToggleKey>,
-  service: ServiceType
-): boolean => settings[toggleMap[service]];
-
 const makeQuotaSnapshot = (
   service: ServiceType,
   scrapeResult: ScrapeResult,
-  threshold: number
-): QuotaSnapshot => {
-  const { remaining, total, unit, resetsAt, resetLabel, weeklyResetAt, weeklyResetLabel, windows, message, isError, errorCode } = scrapeResult;
+  settings: AppSettings
+): { snapshot: QuotaSnapshot; cursorFlags: CursorLowFlags | null; claudeFlags: ClaudeLowFlags | null } => {
+  const { remaining, total, unit, resetsAt, resetLabel, weeklyResetAt, weeklyResetLabel, windows, message, isError, errorCode } =
+    scrapeResult;
   const percent = toPercent(remaining, total);
-  const low = isLowQuota(percent, threshold);
-  const status = isError ? "error" : low ? "low" : remaining === null ? "unknown" : "ok";
+
+  const cursorFlags = service === "cursor" ? evaluateCursorLowFlags(windows, settings) : null;
+  const claudeFlags = service === "claude" ? evaluateClaudeLowFlags(windows, settings) : null;
+  const anyLow = cursorFlags
+    ? cursorFlags.advancedModels.low || cursorFlags.models.low
+    : claudeFlags
+      ? claudeFlags.session.low || claudeFlags.weekly.low
+      : false;
+
+  const status = isError ? "error" : anyLow ? "low" : remaining === null ? "unknown" : "ok";
 
   return {
-    service,
-    remaining,
-    total,
-    percent,
-    unit,
-    resetsAt,
-    resetLabel,
-    weeklyResetAt,
-    weeklyResetLabel,
-    windows,
-    status,
-    message,
-    errorCode,
-    fetchedAt: nowIso()
+    snapshot: {
+      service,
+      remaining,
+      total,
+      percent,
+      unit,
+      resetsAt,
+      resetLabel,
+      weeklyResetAt,
+      weeklyResetLabel,
+      windows,
+      status,
+      message,
+      errorCode,
+      fetchedAt: nowIso()
+    },
+    cursorFlags,
+    claudeFlags
   };
 };
 
@@ -158,6 +242,240 @@ export class MonitorEngine extends EventEmitter {
     return snapshotStore.get();
   }
 
+  // Fires one low-quota-style alert independently: its own desktop
+  // notification, its own LINE bubble, and, if enabled, its own alarm popup —
+  // deduped per alert id so it doesn't repeat every poll while the underlying
+  // state is unchanged.
+  private fireLowQuotaAlert(options: {
+    id: LowQuotaAlertSource;
+    service: ServiceType;
+    // "exhausted" picks the red LINE template; everything else is accented
+    // with the service's own colour.
+    kind: "low" | "exhausted";
+    dedupeKey: string;
+    label: string;
+    reason: string;
+    settings: AppSettings;
+    combined: CombinedSnapshot;
+    remainingPercent?: number | null;
+    thresholdPercent?: number;
+    resetAt?: string | null;
+    countdownTarget?: string | null;
+  }): boolean {
+    const { id, service, kind, dedupeKey, label, reason, settings, combined, countdownTarget } = options;
+    if (!this.shouldNotify(`lowquota:${id}`, dedupeKey, settings)) {
+      return false;
+    }
+
+    sendDesktopNotification({ snapshot: combined, reason });
+
+    const templateOptions = {
+      service,
+      serviceLabel: SERVICE_LABELS[service],
+      windowLabel: label,
+      remainingPercent: options.remainingPercent,
+      thresholdPercent: options.thresholdPercent,
+      resetAt: options.resetAt ?? countdownTarget ?? null,
+      lang: settings.language
+    };
+    void sendLineBroadcast(
+      kind === "exhausted" ? buildExhaustedFlex(templateOptions) : buildLowQuotaFlex(templateOptions)
+    );
+
+    if (settings.enableAlarmPopup) {
+      showAlarmPopup({
+        id,
+        service,
+        label,
+        fireAt: nowIso(),
+        soundEnabled: settings.alarmSoundEnabled,
+        language: settings.language,
+        countdownTarget: countdownTarget ?? null
+      });
+    }
+
+    return true;
+  }
+
+  /**
+   * Fires one window's alert, if it has one to fire.
+   *
+   * "Used up" supersedes "running low" for the same window: a spent window is
+   * necessarily under its threshold too, and sending both is the same news
+   * twice. A window with no exhausted id of its own (Claude Code's 5-hour
+   * session, which has the cooldown alert instead) only ever fires the low one.
+   */
+  private fireWindowAlert(options: {
+    service: ServiceType;
+    state: WindowState;
+    lowId: LowQuotaAlertSource;
+    exhaustedId?: LowQuotaAlertSource;
+    label: string;
+    threshold: number;
+    settings: AppSettings;
+    combined: CombinedSnapshot;
+    lang: AppSettings["language"];
+    fallbackResetAt: string | null;
+  }): boolean {
+    const { service, state, lowId, exhaustedId, label, threshold, settings, combined, lang } = options;
+    const resetAt = state.resetsAt ?? options.fallbackResetAt;
+    const serviceLabel = SERVICE_LABELS[service];
+
+    if (exhaustedId && state.exhausted) {
+      return this.fireLowQuotaAlert({
+        id: exhaustedId,
+        service,
+        kind: "exhausted",
+        // Keyed by the reset time rather than the threshold: a window parked at
+        // 0% would otherwise re-alert every notifyCooldownMinutes, while a new
+        // cycle that runs dry again deserves its own alert.
+        dedupeKey: resetAt ?? "exhausted",
+        label,
+        reason: t(lang, "reason.quotaExhaustedNotify", {
+          service: serviceLabel,
+          label,
+          resetTime: resetAt ? new Date(resetAt).toLocaleString(lang === "zh" ? "zh-TW" : "en-US") : t(lang, "app.unknown")
+        }),
+        settings,
+        combined,
+        remainingPercent: 0,
+        resetAt,
+        countdownTarget: resetAt
+      });
+    }
+
+    if (!state.low) {
+      return false;
+    }
+
+    return this.fireLowQuotaAlert({
+      id: lowId,
+      service,
+      kind: "low",
+      dedupeKey: `${threshold}`,
+      label,
+      reason: t(lang, "reason.lowQuotaNotify", { service: `${serviceLabel}·${label}`, threshold }),
+      settings,
+      combined,
+      remainingPercent: state.remainingPercent,
+      thresholdPercent: threshold,
+      resetAt
+    });
+  }
+
+  private handleCursorLowAlerts(
+    flags: CursorLowFlags,
+    settings: AppSettings,
+    combined: CombinedSnapshot,
+    lang: AppSettings["language"]
+  ): boolean {
+    let notified = false;
+    const fallbackResetAt = combined.cursor.resetsAt;
+
+    if (settings.enableCursorAdvancedModelsLowAlert) {
+      notified =
+        this.fireWindowAlert({
+          service: "cursor",
+          state: flags.advancedModels,
+          lowId: "cursor-advanced-models-low",
+          exhaustedId: "cursor-advanced-models-exhausted",
+          label: t(lang, "alertLabel.cursorAdvancedModels"),
+          threshold: settings.cursorAdvancedModelsLowThresholdPercent,
+          settings,
+          combined,
+          lang,
+          fallbackResetAt
+        }) || notified;
+    }
+
+    if (settings.enableCursorModelsLowAlert) {
+      notified =
+        this.fireWindowAlert({
+          service: "cursor",
+          state: flags.models,
+          lowId: "cursor-models-low",
+          exhaustedId: "cursor-models-exhausted",
+          label: t(lang, "alertLabel.cursorModels"),
+          threshold: settings.cursorModelsLowThresholdPercent,
+          settings,
+          combined,
+          lang,
+          fallbackResetAt
+        }) || notified;
+    }
+
+    return notified;
+  }
+
+  private handleClaudeLowAlerts(
+    flags: ClaudeLowFlags,
+    settings: AppSettings,
+    combined: CombinedSnapshot,
+    lang: AppSettings["language"]
+  ): boolean {
+    let notified = false;
+    const claudeSnapshot = combined.claude;
+
+    if (settings.enableClaudeSessionLowAlert) {
+      notified =
+        this.fireWindowAlert({
+          service: "claude",
+          state: flags.session,
+          lowId: "claude-session-low",
+          label: t(lang, "alertLabel.claudeSession"),
+          threshold: settings.claudeSessionLowThresholdPercent,
+          settings,
+          combined,
+          lang,
+          fallbackResetAt: claudeSnapshot.resetsAt
+        }) || notified;
+    }
+
+    if (settings.enableClaudeWeeklyLowAlert) {
+      notified =
+        this.fireWindowAlert({
+          service: "claude",
+          state: flags.weekly,
+          lowId: "claude-weekly-low",
+          exhaustedId: "claude-weekly-exhausted",
+          label: t(lang, "alertLabel.claudeWeekly"),
+          threshold: settings.claudeWeeklyLowThresholdPercent,
+          settings,
+          combined,
+          lang,
+          fallbackResetAt: claudeSnapshot.weeklyResetAt ?? null
+        }) || notified;
+    }
+
+    // Deduped by resetsAt (not by a fixed cooldown window), so a fresh
+    // cooldown period always gets its own popup even if the previous one
+    // notified recently, while re-polling during the *same* cooldown period
+    // still re-reminds at the normal notifyCooldownMinutes cadence.
+    if (settings.enableClaudeCooldownAlert && flags.cooldownActive && claudeSnapshot.resetsAt) {
+      const label = t(lang, "alertLabel.claudeCooldown");
+      notified =
+        this.fireLowQuotaAlert({
+          id: "claude-cooldown",
+          service: "claude",
+          // Service colour, not the red "used up" template: the 5-hour window
+          // refills on its own at resetsAt, nothing is spent for good.
+          kind: "low",
+          dedupeKey: claudeSnapshot.resetsAt,
+          remainingPercent: 0,
+          resetAt: claudeSnapshot.resetsAt,
+          label,
+          reason: t(lang, "reason.claudeCooldownNotify", {
+            resetTime: new Date(claudeSnapshot.resetsAt).toLocaleString()
+          }),
+          settings,
+          combined,
+          countdownTarget: claudeSnapshot.resetsAt
+        }) || notified;
+    }
+
+    return notified;
+  }
+
   private async checkService(service: ServiceType, trigger: TriggerType): Promise<MonitorResult> {
     if (this.isRunning[service]) {
       const current = snapshotStore.get();
@@ -183,8 +501,7 @@ export class MonitorEngine extends EventEmitter {
       const previousServiceSnapshot = previousSnapshot ? previousSnapshot[service] : null;
 
       const scrapeResult = await scrapeQuota(service);
-      const threshold = settings[thresholdKeyMap[service]];
-      const nextServiceSnapshot = makeQuotaSnapshot(service, scrapeResult, threshold);
+      const { snapshot: nextServiceSnapshot, cursorFlags, claudeFlags } = makeQuotaSnapshot(service, scrapeResult, settings);
 
       // Re-read the store *after* the scrape awaits, right before merging and
       // writing back — the other service's independent checkService() call may
@@ -220,15 +537,11 @@ export class MonitorEngine extends EventEmitter {
         }
       }
 
-      if (isLow && isToggleEnabled(settings, lowQuotaToggleMap, service)) {
-        const key = `${service}|${nextServiceSnapshot.remaining}|${nextServiceSnapshot.total}|${nextServiceSnapshot.percent}|${nextServiceSnapshot.status}`;
-        if (this.shouldNotify(`low:${service}`, key, settings)) {
-          sendDesktopNotification({
-            snapshot: combined,
-            reason: t(lang, "reason.lowQuotaNotify", { service: SERVICE_LABELS[service], threshold })
-          });
-          notified = true;
-        }
+      if (cursorFlags) {
+        notified = this.handleCursorLowAlerts(cursorFlags, settings, combined, lang) || notified;
+      }
+      if (claudeFlags) {
+        notified = this.handleClaudeLowAlerts(claudeFlags, settings, combined, lang) || notified;
       }
 
       snapshotStore.set(combined);

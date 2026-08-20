@@ -11,6 +11,7 @@ import {
 import { isDuplicateInCooldown } from "@shared/monitor-utils";
 import { t } from "@shared/i18n";
 import { readClaudeCredential, readCursorCredential, type RawCredential } from "@main/credential-provider";
+import { buildPlainAlertFlex } from "@shared/line-templates";
 import { sendLineBroadcast } from "@main/line-notifier";
 import { sendPlainDesktopNotification } from "@main/notifiers";
 import { credentialStore, notificationStore, settingsStore, type CredentialRecord } from "@main/store";
@@ -225,8 +226,17 @@ export class CredentialMonitor extends EventEmitter {
       service: SERVICE_LABELS[service]
     });
 
-    sendPlainDesktopNotification(t(settings.language, "notification.title"), body);
-    void sendLineBroadcast(`${t(settings.language, "notification.title")}\n${body}`);
+    const title = t(settings.language, "notification.title");
+    sendPlainDesktopNotification(title, body);
+    void sendLineBroadcast(
+      buildPlainAlertFlex({
+        service,
+        serviceLabel: SERVICE_LABELS[service],
+        title,
+        body,
+        lang: settings.language
+      })
+    );
   }
 
   private cachedStatus(service: ServiceType): CredentialStatus {

@@ -194,7 +194,6 @@ const setupIpcHandlers = (): void => {
   );
 
   ipcMain.handle("monitor:get-latest", () => monitor.getLatestSnapshot());
-  ipcMain.handle("monitor:run-manual", () => monitor.runCheck("manual"));
   ipcMain.handle("app:quit", () => {
     app.quit();
   });

@@ -359,6 +359,24 @@ button:disabled {
   text-decoration: underline;
 }
 
+/* License + "free forever" notice: quieter than the credit line above it, but
+   deliberately always visible — it is the app's standing statement, not a tip. */
+.footer p.footer-license {
+  margin: 8px 0 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #6e7681;
+  text-align: center;
+}
+
+.footer p.footer-free {
+  margin: 4px 0 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: #7ee787;
+  text-align: center;
+}
+
 /* --- Timed alarm popup (alarm.html) --- */
 .alarm {
   min-height: 100vh;

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { AlarmPopupPayload, ServiceType } from "@shared/types";
+import { ALARM_POPUP_AUTO_DISMISS_MINUTES, formatCountdown } from "@shared/alarm-utils";
 import { t } from "@shared/i18n";
 
 const serviceNames: Record<ServiceType, string> = {
@@ -46,7 +47,16 @@ const playChime = (context: AudioContext): void => {
 
 export const AlarmApp = () => {
   const [payload, setPayload] = useState<AlarmPopupPayload | null>(null);
+  const [now, setNow] = useState<number>(Date.now());
   const audioContextRef = useRef<AudioContext | null>(null);
+
+  useEffect(() => {
+    if (!payload?.countdownTarget) {
+      return;
+    }
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [payload?.countdownTarget]);
 
   useEffect(() => {
     const unsubscribe = window.usagePulse.onAlarmPayload((next) => {
@@ -95,14 +105,19 @@ export const AlarmApp = () => {
     <main className="alarm">
       <div className="alarm-head">
         <strong className="alarm-title">{t(lang, "alarm.popup.title")}</strong>
-        {payload.catchUp ? <span className="status-tag status-low">{t(lang, "alarm.popup.catchUp")}</span> : null}
       </div>
 
       <p className="alarm-subject">
         {serviceLabel} · {payload.label}
       </p>
-      <p className="alarm-meta">{t(lang, "alarm.popup.firedAt", { time: formatTime(payload.fireAt) })}</p>
-      <p className="alarm-meta">{t(lang, "alarm.autoDismiss", { minutes: payload.autoDismissMinutes })}</p>
+      {payload.countdownTarget ? (
+        <p className="alarm-meta">
+          {t(lang, "alarm.popup.cooldownCountdown", { countdown: formatCountdown(payload.countdownTarget, now, lang) })}
+        </p>
+      ) : (
+        <p className="alarm-meta">{t(lang, "alarm.popup.firedAt", { time: formatTime(payload.fireAt) })}</p>
+      )}
+      <p className="alarm-meta">{t(lang, "alarm.autoDismiss", { minutes: ALARM_POPUP_AUTO_DISMISS_MINUTES })}</p>
 
       <div className="alarm-actions">
         <button type="button" className="warning-btn" onClick={() => window.usagePulse.snoozeAlarm()}>

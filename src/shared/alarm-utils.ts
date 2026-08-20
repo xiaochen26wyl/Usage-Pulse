@@ -12,11 +12,14 @@ import { t } from "./i18n";
 // int, so long waits are clamped here and re-armed by the caller on each tick.
 export const MAX_TIMEOUT_MS = 2 ** 31 - 1;
 
-// A firing this close behind schedule is just timer jitter, not a missed alarm,
-// so it rings normally rather than being labelled a catch-up.
+// A firing this close behind schedule is just timer jitter, not a missed
+// alarm, so it rings normally instead of being dropped as expired.
 export const DUE_GRACE_MS = 60_000;
 
-export type FireClass = "pending" | "due" | "missed" | "expired";
+// The alarm popup always closes itself after this long — not user-configurable.
+export const ALARM_POPUP_AUTO_DISMISS_MINUTES = 1;
+
+export type FireClass = "pending" | "due" | "expired";
 
 type ResetToggleKey = "enableCursorResetAlarm" | "enableClaudeResetAlarm";
 
@@ -35,11 +38,10 @@ export const clampTimeoutMs = (ms: number): number => {
 /**
  * Where a scheduled firing sits relative to now.
  *
- * The old inline logic dropped anything already past (`fireAt <= now`), so a
- * reset that came due while the machine slept vanished without a trace. The
- * `missed` class is what makes those replay after wake instead.
+ * Anything more than DUE_GRACE_MS in the past is treated as expired rather
+ * than replayed — there is no catch-up window to fall back on.
  */
-export const classifyFire = (fireAt: string, nowMs: number, catchUpMinutes: number): FireClass => {
+export const classifyFire = (fireAt: string, nowMs: number): FireClass => {
   const fireAtMs = Date.parse(fireAt);
   if (Number.isNaN(fireAtMs)) {
     return "expired";
@@ -52,10 +54,26 @@ export const classifyFire = (fireAt: string, nowMs: number, catchUpMinutes: numb
   if (lateMs <= DUE_GRACE_MS) {
     return "due";
   }
-  if (lateMs <= Math.max(0, catchUpMinutes) * 60_000) {
-    return "missed";
-  }
   return "expired";
+};
+
+// Shared by the main window (settings countdowns) and the alarm popup
+// (cooldown countdown) so both render the same "Dd HH:MM:SS" format.
+export const formatCountdown = (iso: string | null, nowMs: number, lang: Language): string => {
+  if (!iso) return t(lang, "app.unknown");
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return t(lang, "app.unknown");
+
+  const diff = date.getTime() - nowMs;
+  if (diff <= 0) return t(lang, "app.alreadyReset");
+
+  const seconds = Math.floor(diff / 1000) % 60;
+  const minutes = Math.floor(diff / 60000) % 60;
+  const hours = Math.floor(diff / 3600000) % 24;
+  const days = Math.floor(diff / 86400000);
+
+  if (days > 0) return t(lang, "app.countdown.days", { days, hours, minutes });
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
 };
 
 export const collectAlarmTargets = (

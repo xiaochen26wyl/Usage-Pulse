@@ -5,7 +5,6 @@ import type {
   AuthStatus,
   CombinedSnapshot,
   CredentialStatus,
-  MonitorResult,
   ServiceType
 } from "@shared/types";
 
@@ -15,7 +14,6 @@ interface UsagePulseApi {
   getAuthStatus: () => Promise<AuthStatus>;
   checkAuth: (service: ServiceType) => Promise<CredentialStatus>;
   getLatestSnapshot: () => Promise<CombinedSnapshot | null>;
-  runManualCheck: () => Promise<MonitorResult>;
   quitApp: () => Promise<void>;
   openExternal: (url: string) => Promise<void>;
   clearClipboard: () => Promise<void>;

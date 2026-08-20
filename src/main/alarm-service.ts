@@ -6,10 +6,18 @@ import type {
   AppSettings,
   CombinedSnapshot
 } from "@shared/types";
-import { MAX_TIMEOUT_MS, classifyFire, clampTimeoutMs, collectAlarmTargets, nextTarget } from "@shared/alarm-utils";
+import {
+  MAX_TIMEOUT_MS,
+  classifyFire,
+  clampTimeoutMs,
+  collectAlarmTargets,
+  nextTarget
+} from "@shared/alarm-utils";
 import { t } from "@shared/i18n";
 import { SERVICE_LABELS } from "@main/config";
+import { buildPlainAlertFlex } from "@shared/line-templates";
 import { showAlarmPopup } from "@main/alarm-window";
+import { sendLineBroadcast } from "@main/line-notifier";
 import { sendDesktopNotification } from "@main/notifiers";
 import { alarmStore, notificationStore, settingsStore, snapshotStore } from "@main/store";
 
@@ -51,14 +59,14 @@ export class AlarmService {
     const nowMs = Date.now();
 
     for (const target of targets) {
-      const fireClass = classifyFire(target.fireAt, nowMs, settings.alarmCatchUpMinutes);
+      const fireClass = classifyFire(target.fireAt, nowMs);
 
       if (fireClass === "expired") {
         continue;
       }
 
-      if (fireClass === "due" || fireClass === "missed") {
-        this.fire(target, fireClass === "missed");
+      if (fireClass === "due") {
+        this.fire(target);
         continue;
       }
 
@@ -72,7 +80,7 @@ export class AlarmService {
           this.rearm("clamped");
           return;
         }
-        this.fire(target, false);
+        this.fire(target);
       }, clampTimeoutMs(deltaMs));
 
       this.timers.set(target.id, timer);
@@ -110,20 +118,18 @@ export class AlarmService {
       service: null,
       label: t(settings.language, "alarm.testLabel"),
       fireAt: nowIso(),
-      catchUp: false,
-      autoDismissMinutes: settings.alarmPopupAutoDismissMinutes,
       soundEnabled: settings.alarmSoundEnabled,
       language: settings.language
     });
   }
 
-  private fire(target: AlarmTarget, catchUp: boolean): void {
+  private fire(target: AlarmTarget): void {
     const already = alarmStore.get(target.id);
     if (already && already.fireAt === target.fireAt) {
       return;
     }
 
-    alarmStore.set(target.id, { fireAt: target.fireAt, firedAt: nowIso(), catchUp });
+    alarmStore.set(target.id, { fireAt: target.fireAt, firedAt: nowIso() });
 
     // Re-read settings at firing time rather than closing over the values
     // captured when the timer was scheduled — a timer can outlive several
@@ -142,14 +148,22 @@ export class AlarmService {
       sendDesktopNotification({ snapshot, reason });
     }
 
+    void sendLineBroadcast(
+      buildPlainAlertFlex({
+        service: target.service,
+        serviceLabel: SERVICE_LABELS[target.service],
+        title: t(lang, "alarm.popup.title"),
+        body: reason,
+        lang
+      })
+    );
+
     if (settings.enableAlarmPopup) {
       const payload: AlarmPopupPayload = {
         id: target.id,
         service: target.service,
         label: target.label,
         fireAt: target.fireAt,
-        catchUp,
-        autoDismissMinutes: settings.alarmPopupAutoDismissMinutes,
         soundEnabled: settings.alarmSoundEnabled,
         language: lang
       };

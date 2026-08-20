@@ -11,30 +11,37 @@ import type {
   QuotaWindow,
   ServiceType
 } from "@shared/types";
-import { t } from "@shared/i18n";
+import { ALARM_POPUP_AUTO_DISMISS_MINUTES, formatCountdown } from "@shared/alarm-utils";
+import { t, type TranslationKey } from "@shared/i18n";
 
 const THREADS_URL = "https://www.threads.com/@xiaochen26wyl";
+const LINE_URL = "https://lin.ee/6XYi49XZ";
+
+// Claude Code's 5-hour session window has a fixed duration; only its end
+// (resetsAt) comes from the API, so the countdown bar's fill derives the
+// elapsed fraction from that fixed length.
+const SESSION_WINDOW_MS = 5 * 60 * 60 * 1000;
 
 const defaultSettings: AppSettings = {
   cursorIntervalMinutes: 10,
   claudeIntervalMinutes: 10,
-  cursorLowThresholdPercent: 20,
-  claudeLowThresholdPercent: 20,
+  cursorAdvancedModelsLowThresholdPercent: 20,
+  enableCursorAdvancedModelsLowAlert: true,
+  cursorModelsLowThresholdPercent: 20,
+  enableCursorModelsLowAlert: true,
+  claudeSessionLowThresholdPercent: 20,
+  enableClaudeSessionLowAlert: true,
+  claudeWeeklyLowThresholdPercent: 20,
+  enableClaudeWeeklyLowAlert: true,
+  enableClaudeCooldownAlert: true,
   launchAtLogin: false,
   notifyCooldownMinutes: 15,
   enableCursorResetAlarm: true,
   enableClaudeResetAlarm: true,
-  enableCursorLowQuotaAlert: true,
-  enableClaudeLowQuotaAlert: true,
   language: "zh",
   enableAlarmPopup: true,
   alarmSoundEnabled: true,
-  alarmPopupAutoDismissMinutes: 5,
-  alarmCatchUpMinutes: 30,
-  lineChannelAccessToken: "",
-  lineChannelId: "",
-  lineAssertionKid: "",
-  lineAssertionPrivateKey: ""
+  lineChannelAccessToken: ""
 };
 
 const emptyCredential = (service: ServiceType): CredentialStatus => ({
@@ -107,22 +114,17 @@ const formatResetText = (iso: string | null, lang: Language): string => {
   return date.toLocaleString();
 };
 
-const formatCountdown = (iso: string | null, now: number, lang: Language): string => {
-  if (!iso) return t(lang, "app.unknown");
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return t(lang, "app.unknown");
+type LowQuotaThresholdKey =
+  | "cursorAdvancedModelsLowThresholdPercent"
+  | "cursorModelsLowThresholdPercent"
+  | "claudeSessionLowThresholdPercent"
+  | "claudeWeeklyLowThresholdPercent";
 
-  const diff = date.getTime() - now;
-  if (diff <= 0) return t(lang, "app.alreadyReset");
-
-  const seconds = Math.floor(diff / 1000) % 60;
-  const minutes = Math.floor(diff / 60000) % 60;
-  const hours = Math.floor(diff / 3600000) % 24;
-  const days = Math.floor(diff / 86400000);
-
-  if (days > 0) return t(lang, "app.countdown.days", { days, hours, minutes });
-  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
-};
+type LowQuotaToggleKey =
+  | "enableCursorAdvancedModelsLowAlert"
+  | "enableCursorModelsLowAlert"
+  | "enableClaudeSessionLowAlert"
+  | "enableClaudeWeeklyLowAlert";
 
 const roundToStep = (value: unknown, min: number, max: number, step: number, fallback: number): number => {
   const numeric = Number(value) || fallback;
@@ -138,12 +140,7 @@ export const App = () => {
   const [checkingAuth, setCheckingAuth] = useState<Record<ServiceType, boolean>>({ cursor: false, claude: false });
   const [authMessage, setAuthMessage] = useState<Record<ServiceType, string>>({ cursor: "", claude: "" });
   const [claudeCommandCopied, setClaudeCommandCopied] = useState(false);
-  const [lineFields, setLineFields] = useState({
-    lineChannelAccessToken: "",
-    lineChannelId: "",
-    lineAssertionKid: "",
-    lineAssertionPrivateKey: ""
-  });
+  const [lineToken, setLineToken] = useState("");
   const [savingLineToken, setSavingLineToken] = useState(false);
   const [lineTokenMessage, setLineTokenMessage] = useState("");
   const [now, setNow] = useState<number>(Date.now());
@@ -151,8 +148,6 @@ export const App = () => {
   const [alarmMessage, setAlarmMessage] = useState("");
   const [confirmingAlarm, setConfirmingAlarm] = useState(false);
   const [checkingAlarm, setCheckingAlarm] = useState(false);
-  const [checkingQuota, setCheckingQuota] = useState(false);
-  const [quotaCheckMessage, setQuotaCheckMessage] = useState("");
   const lang = settings.language;
 
   useEffect(() => {
@@ -171,12 +166,7 @@ export const App = () => {
     setAuthStatus(nextAuthStatus);
     setSnapshot(latestSnapshot);
     setAlarmStatus(nextAlarmStatus);
-    setLineFields({
-      lineChannelAccessToken: nextSettings.lineChannelAccessToken,
-      lineChannelId: nextSettings.lineChannelId,
-      lineAssertionKid: nextSettings.lineAssertionKid,
-      lineAssertionPrivateKey: nextSettings.lineAssertionPrivateKey
-    });
+    setLineToken(nextSettings.lineChannelAccessToken);
   };
 
   useEffect(() => {
@@ -202,11 +192,11 @@ export const App = () => {
     ...value,
     cursorIntervalMinutes: roundToStep(value.cursorIntervalMinutes, 5, 60, 5, 10),
     claudeIntervalMinutes: roundToStep(value.claudeIntervalMinutes, 5, 60, 5, 10),
-    cursorLowThresholdPercent: roundToStep(value.cursorLowThresholdPercent, 5, 30, 5, 20),
-    claudeLowThresholdPercent: roundToStep(value.claudeLowThresholdPercent, 5, 30, 5, 20),
-    notifyCooldownMinutes: roundToStep(value.notifyCooldownMinutes, 5, 240, 5, 15),
-    alarmPopupAutoDismissMinutes: roundToStep(value.alarmPopupAutoDismissMinutes, 1, 30, 1, 5),
-    alarmCatchUpMinutes: roundToStep(value.alarmCatchUpMinutes, 5, 180, 5, 30)
+    cursorAdvancedModelsLowThresholdPercent: roundToStep(value.cursorAdvancedModelsLowThresholdPercent, 5, 30, 5, 20),
+    cursorModelsLowThresholdPercent: roundToStep(value.cursorModelsLowThresholdPercent, 5, 30, 5, 20),
+    claudeSessionLowThresholdPercent: roundToStep(value.claudeSessionLowThresholdPercent, 5, 30, 5, 20),
+    claudeWeeklyLowThresholdPercent: roundToStep(value.claudeWeeklyLowThresholdPercent, 5, 30, 5, 20),
+    notifyCooldownMinutes: roundToStep(value.notifyCooldownMinutes, 5, 240, 5, 15)
   });
 
   const handleSaveSettings = async () => {
@@ -293,36 +283,15 @@ export const App = () => {
     setSavingLineToken(true);
     try {
       const next = await window.usagePulse.saveSettings({
-        lineChannelAccessToken: lineFields.lineChannelAccessToken.trim(),
-        lineChannelId: lineFields.lineChannelId.trim(),
-        lineAssertionKid: lineFields.lineAssertionKid.trim(),
-        lineAssertionPrivateKey: lineFields.lineAssertionPrivateKey.trim()
+        lineChannelAccessToken: lineToken.trim()
       });
       setSettings(next);
-      setLineFields({
-        lineChannelAccessToken: next.lineChannelAccessToken,
-        lineChannelId: next.lineChannelId,
-        lineAssertionKid: next.lineAssertionKid,
-        lineAssertionPrivateKey: next.lineAssertionPrivateKey
-      });
+      setLineToken(next.lineChannelAccessToken);
       setLineTokenMessage(t(lang, "line.saved"));
     } catch (error) {
       console.error(error);
     } finally {
       setSavingLineToken(false);
-    }
-  };
-
-  const runManualQuotaCheck = async () => {
-    setCheckingQuota(true);
-    try {
-      const result = await window.usagePulse.runManualCheck();
-      setSnapshot(result.snapshot);
-      setQuotaCheckMessage(result.reason);
-    } catch (error) {
-      setQuotaCheckMessage(error instanceof Error ? error.message : t(lang, "app.authRefreshFailed"));
-    } finally {
-      setCheckingQuota(false);
     }
   };
 
@@ -348,9 +317,9 @@ export const App = () => {
     }
   };
 
-  const openThreads = async () => {
+  const openSupportLink = async (url: string) => {
     try {
-      await window.usagePulse.openExternal(THREADS_URL);
+      await window.usagePulse.openExternal(url);
     } catch {
       // best-effort: opening the support link failing is not worth surfacing.
     }
@@ -426,30 +395,64 @@ export const App = () => {
     </div>
   );
 
-  const renderWindowBar = (window: QuotaWindow, unit: QuotaSnapshot["unit"], service: ServiceType) => (
-    <div className="window-bar" key={window.key}>
-      <div className="quota-header" style={{ marginBottom: "6px" }}>
-        <span className="window-bar-label">{window.label}</span>
-        <span className="meta-text" style={{ margin: 0 }}>
-          {t(lang, "quota.remaining")} {formatValue(window.remaining, unit)} / {formatValue(window.total, unit)}
-        </span>
+  // Claude Code windows store `percent`/`remaining` as remaining%, but the bar
+  // should read as usage (how much has been consumed), so both are inverted here.
+  const renderWindowBar = (
+    window: QuotaWindow,
+    unit: QuotaSnapshot["unit"],
+    service: ServiceType,
+    showCountdownCaption = true
+  ) => {
+    const used = window.remaining !== null && window.total !== null ? window.total - window.remaining : null;
+    const usedPercent = window.percent === null ? 0 : Math.max(0, Math.min(100, 100 - window.percent));
+
+    return (
+      <div className="window-bar" key={window.key}>
+        <div className="quota-header" style={{ marginBottom: "6px" }}>
+          <span className="window-bar-label">{window.label}</span>
+          <span className="meta-text" style={{ margin: 0 }}>
+            {t(lang, "quota.used")} {formatValue(used, unit)} / {formatValue(window.total, unit)}
+          </span>
+        </div>
+        <div className="progress-track">
+          <div className={barClass(service)} style={{ width: `${usedPercent}%` }} />
+        </div>
+        {showCountdownCaption && window.resetsAt && (
+          <p className="meta-text" style={{ margin: "6px 0 0", color: "#8b949e", fontSize: "12px" }}>
+            {t(lang, "app.liveCountdown", {
+              countdown: formatCountdown(window.resetsAt, now, lang),
+              resetTime: formatResetText(window.resetsAt, lang)
+            })}
+          </p>
+        )}
       </div>
-      <div className="progress-track">
-        <div
-          className={barClass(service)}
-          style={{ width: `${window.percent ?? 0}%` }}
-        />
-      </div>
-      {window.resetsAt && (
+    );
+  };
+
+  // A real ticking countdown to the 5-hour session reset — distinct from the
+  // usage bar above it, this one fills as time elapses through the fixed
+  // 5-hour window rather than as quota is consumed.
+  const renderSessionCountdownBar = (resetsAt: string) => {
+    const msRemaining = Date.parse(resetsAt) - now;
+    const elapsedPercent = Number.isNaN(msRemaining)
+      ? 0
+      : Math.max(0, Math.min(100, 100 - (msRemaining / SESSION_WINDOW_MS) * 100));
+
+    return (
+      <div className="window-bar" key="claude-session-countdown">
+        <div className="quota-header" style={{ marginBottom: "6px" }}>
+          <span className="window-bar-label">{t(lang, "window.label.claudeCountdown")}</span>
+          <span className="meta-text" style={{ margin: 0 }}>{formatCountdown(resetsAt, now, lang)}</span>
+        </div>
+        <div className="progress-track">
+          <div className={barClass("claude")} style={{ width: `${elapsedPercent}%` }} />
+        </div>
         <p className="meta-text" style={{ margin: "6px 0 0", color: "#8b949e", fontSize: "12px" }}>
-          {t(lang, "app.liveCountdown", {
-            countdown: formatCountdown(window.resetsAt, now, lang),
-            resetTime: formatResetText(window.resetsAt, lang)
-          })}
+          {t(lang, "window.claudeCountdown.resetAt", { resetTime: formatResetText(resetsAt, lang) })}
         </p>
-      )}
-    </div>
-  );
+      </div>
+    );
+  };
 
   const toggleLanguage = async () => {
     const nextLang: Language = lang === "zh" ? "en" : "zh";
@@ -461,6 +464,49 @@ export const App = () => {
       console.error(error);
     }
   };
+
+  // One threshold slider + notify toggle per independent low-quota alert —
+  // Cursor has two (advanced models, cursor models), Claude Code has two of
+  // these plus a third toggle-only cooldown alert (see renderToggleOnlyRow).
+  const renderLowQuotaRow = (labelKey: TranslationKey, thresholdKey: LowQuotaThresholdKey, toggleKey: LowQuotaToggleKey) => (
+    <div className="alarm-suboption" key={thresholdKey}>
+      <p className="subsection-title">{t(lang, labelKey)}</p>
+      <label className="field">
+        <span>{t(lang, "settings.lowThreshold", { percent: settings[thresholdKey] })}</span>
+        <input
+          type="range"
+          min={5}
+          max={30}
+          step={5}
+          value={settings[thresholdKey]}
+          onChange={(event) =>
+            setSettings((prev) => ({ ...prev, [thresholdKey]: Number(event.target.value) || prev[thresholdKey] }))
+          }
+        />
+      </label>
+      <label className="field switch-row" style={{ marginBottom: 0 }}>
+        <span>{t(lang, "settings.lowQuota.toggleLabel")}</span>
+        <input
+          type="checkbox"
+          className="toggle"
+          checked={settings[toggleKey]}
+          onChange={(event) => setSettings((prev) => ({ ...prev, [toggleKey]: event.target.checked }))}
+        />
+      </label>
+    </div>
+  );
+
+  const renderToggleOnlyRow = (labelKey: TranslationKey, toggleKey: "enableClaudeCooldownAlert") => (
+    <label className="field switch-row" key={toggleKey} style={{ marginTop: "10px" }}>
+      <span>{t(lang, labelKey)}</span>
+      <input
+        type="checkbox"
+        className="toggle"
+        checked={settings[toggleKey]}
+        onChange={(event) => setSettings((prev) => ({ ...prev, [toggleKey]: event.target.checked }))}
+      />
+    </label>
+  );
 
   return (
     <main className="app">
@@ -481,11 +527,7 @@ export const App = () => {
       <section className="panel">
         <div className="quota-header">
           <h2>{t(lang, "section.realtimeQuota")}</h2>
-          <button type="button" className="warning-btn" style={{ width: "auto" }} onClick={runManualQuotaCheck} disabled={checkingQuota}>
-            {checkingQuota ? t(lang, "button.rechecking") : t(lang, "button.recheckNow")}
-          </button>
         </div>
-        {quotaCheckMessage ? <p className="meta-text" style={{ marginBottom: "8px" }}>{quotaCheckMessage}</p> : null}
         <div className="quota-grid">
           {(["claude", "cursor"] as ServiceType[]).map((service) => {
             const item = snapshot?.[service];
@@ -509,7 +551,9 @@ export const App = () => {
                   {renderCredentialRow(service)}
                   {barWindows.length ? (
                     <div className="window-bars">
-                      {barWindows.map((window) => renderWindowBar(window, item!.unit, service))}
+                      {sessionWindow && renderWindowBar(sessionWindow, item!.unit, service, false)}
+                      {sessionWindow?.resetsAt && renderSessionCountdownBar(sessionWindow.resetsAt)}
+                      {weeklyWindow && renderWindowBar(weeklyWindow, item!.unit, service)}
                     </div>
                   ) : (
                     <p className="meta-text" style={{ marginTop: "8px" }}>{item?.message || t(lang, "app.notFetchedYet")}</p>
@@ -603,94 +647,70 @@ export const App = () => {
           />
         </label>
 
-        {(["cursor", "claude"] as ServiceType[]).map((service) => {
-          const thresholdKey: "cursorLowThresholdPercent" | "claudeLowThresholdPercent" =
-            service === "cursor" ? "cursorLowThresholdPercent" : "claudeLowThresholdPercent";
-          const lowQuotaKey: "enableCursorLowQuotaAlert" | "enableClaudeLowQuotaAlert" =
-            service === "cursor" ? "enableCursorLowQuotaAlert" : "enableClaudeLowQuotaAlert";
-          const resetKey: "enableCursorResetAlarm" | "enableClaudeResetAlarm" =
-            service === "cursor" ? "enableCursorResetAlarm" : "enableClaudeResetAlarm";
-          const resetsAt = snapshot?.[service]?.resetsAt ?? null;
-          const weeklyResetAt = service === "claude" ? snapshot?.claude.weeklyResetAt ?? null : null;
+        <div className="quota-card service-block">
+          <div className="quota-header">
+            <strong>{serviceNames.cursor}</strong>
+          </div>
 
-          return (
-            <div className="quota-card service-block" key={service}>
-              <div className="quota-header">
-                <strong>{serviceNames[service]}</strong>
-              </div>
+          {renderLowQuotaRow("alertLabel.cursorAdvancedModels", "cursorAdvancedModelsLowThresholdPercent", "enableCursorAdvancedModelsLowAlert")}
+          {renderLowQuotaRow("alertLabel.cursorModels", "cursorModelsLowThresholdPercent", "enableCursorModelsLowAlert")}
 
-              <label className="field" style={{ marginTop: "10px" }}>
-                <span>{t(lang, "settings.lowThreshold", { percent: settings[thresholdKey] })}</span>
-                <input
-                  type="range"
-                  min={5}
-                  max={30}
-                  step={5}
-                  value={settings[thresholdKey]}
-                  onChange={(event) =>
-                    setSettings((prev) => ({ ...prev, [thresholdKey]: Number(event.target.value) || prev[thresholdKey] }))
-                  }
-                />
-              </label>
-
-              <label className="field switch-row">
-                <span>{t(lang, "settings.lowQuota.toggleLabel")}</span>
-                <input
-                  type="checkbox"
-                  className="toggle"
-                  checked={settings[lowQuotaKey]}
-                  onChange={(event) => setSettings((prev) => ({ ...prev, [lowQuotaKey]: event.target.checked }))}
-                />
-              </label>
-
-              <label className="field switch-row" style={{ marginTop: "10px" }}>
-                <span>{t(lang, "alarm.when.service")}</span>
-                <input
-                  type="checkbox"
-                  className="toggle"
-                  checked={settings[resetKey]}
-                  onChange={(event) => setSettings((prev) => ({ ...prev, [resetKey]: event.target.checked }))}
-                />
-              </label>
-              {settings[resetKey] && resetsAt && (
-                <p className="meta-text" style={{ margin: "2px 0 0", color: "#8b949e", fontSize: "12px" }}>
-                  {t(lang, "settings.resetAlarm.nextFire", {
-                    countdown: formatCountdown(resetsAt, now, lang),
-                    resetTime: formatResetText(resetsAt, lang)
-                  })}
-                </p>
-              )}
-              {settings[resetKey] && weeklyResetAt && (
-                <p className="meta-text" style={{ margin: "2px 0 0", color: "#8b949e", fontSize: "12px" }}>
-                  {t(lang, "settings.resetAlarm.nextFire", {
-                    countdown: formatCountdown(weeklyResetAt, now, lang),
-                    resetTime: formatResetText(weeklyResetAt, lang)
-                  })}
-                </p>
-              )}
-            </div>
-          );
-        })}
-
-        <div className="quota-card service-block" style={{ marginTop: "12px" }}>
-          <label className="field">
-            <span>{t(lang, "alarm.catchUp", { minutes: settings.alarmCatchUpMinutes })}</span>
+          <label className="field switch-row" style={{ marginTop: "10px" }}>
+            <span>{t(lang, "alarm.when.service")}</span>
             <input
-              type="range"
-              min={5}
-              max={180}
-              step={5}
-              value={settings.alarmCatchUpMinutes}
-              onChange={(event) =>
-                setSettings((prev) => ({
-                  ...prev,
-                  alarmCatchUpMinutes: Number(event.target.value) || prev.alarmCatchUpMinutes
-                }))
-              }
+              type="checkbox"
+              className="toggle"
+              checked={settings.enableCursorResetAlarm}
+              onChange={(event) => setSettings((prev) => ({ ...prev, enableCursorResetAlarm: event.target.checked }))}
             />
           </label>
-          <p className="meta-text" style={{ margin: "0 0 8px" }}>{t(lang, "alarm.catchUpHint")}</p>
+          {settings.enableCursorResetAlarm && snapshot?.cursor.resetsAt && (
+            <p className="meta-text" style={{ margin: "2px 0 0", color: "#8b949e", fontSize: "12px" }}>
+              {t(lang, "settings.resetAlarm.nextFire", {
+                countdown: formatCountdown(snapshot.cursor.resetsAt, now, lang),
+                resetTime: formatResetText(snapshot.cursor.resetsAt, lang)
+              })}
+            </p>
+          )}
+        </div>
 
+        <div className="quota-card service-block">
+          <div className="quota-header">
+            <strong>{serviceNames.claude}</strong>
+          </div>
+
+          {renderLowQuotaRow("alertLabel.claudeSession", "claudeSessionLowThresholdPercent", "enableClaudeSessionLowAlert")}
+          {renderLowQuotaRow("alertLabel.claudeWeekly", "claudeWeeklyLowThresholdPercent", "enableClaudeWeeklyLowAlert")}
+          {renderToggleOnlyRow("alertLabel.claudeCooldown", "enableClaudeCooldownAlert")}
+
+          <label className="field switch-row" style={{ marginTop: "10px" }}>
+            <span>{t(lang, "alarm.when.service")}</span>
+            <input
+              type="checkbox"
+              className="toggle"
+              checked={settings.enableClaudeResetAlarm}
+              onChange={(event) => setSettings((prev) => ({ ...prev, enableClaudeResetAlarm: event.target.checked }))}
+            />
+          </label>
+          {settings.enableClaudeResetAlarm && snapshot?.claude.resetsAt && (
+            <p className="meta-text" style={{ margin: "2px 0 0", color: "#8b949e", fontSize: "12px" }}>
+              {t(lang, "settings.resetAlarm.nextFire", {
+                countdown: formatCountdown(snapshot.claude.resetsAt, now, lang),
+                resetTime: formatResetText(snapshot.claude.resetsAt, lang)
+              })}
+            </p>
+          )}
+          {settings.enableClaudeResetAlarm && snapshot?.claude.weeklyResetAt && (
+            <p className="meta-text" style={{ margin: "2px 0 0", color: "#8b949e", fontSize: "12px" }}>
+              {t(lang, "settings.resetAlarm.nextFire", {
+                countdown: formatCountdown(snapshot.claude.weeklyResetAt, now, lang),
+                resetTime: formatResetText(snapshot.claude.weeklyResetAt, lang)
+              })}
+            </p>
+          )}
+        </div>
+
+        <div className="quota-card service-block" style={{ marginTop: "12px" }}>
           <p className="meta-text">
             {alarmStatus?.nextTarget
               ? t(lang, "alarm.nextFire", {
@@ -716,7 +736,7 @@ export const App = () => {
 
           {settings.enableAlarmPopup && (
             <div className="alarm-suboption">
-              <label className="field switch-row">
+              <label className="field switch-row" style={{ marginBottom: 0 }}>
                 <span>{t(lang, "alarm.soundToggle")}</span>
                 <input
                   type="checkbox"
@@ -727,23 +747,9 @@ export const App = () => {
                   }
                 />
               </label>
-
-              <label className="field" style={{ marginBottom: 0 }}>
-                <span>{t(lang, "alarm.autoDismiss", { minutes: settings.alarmPopupAutoDismissMinutes })}</span>
-                <input
-                  type="range"
-                  min={1}
-                  max={30}
-                  step={1}
-                  value={settings.alarmPopupAutoDismissMinutes}
-                  onChange={(event) =>
-                    setSettings((prev) => ({
-                      ...prev,
-                      alarmPopupAutoDismissMinutes: Number(event.target.value) || prev.alarmPopupAutoDismissMinutes
-                    }))
-                  }
-                />
-              </label>
+              <p className="meta-text" style={{ margin: "6px 0 0" }}>
+                {t(lang, "alarm.autoDismiss", { minutes: ALARM_POPUP_AUTO_DISMISS_MINUTES })}
+              </p>
             </div>
           )}
 
@@ -789,58 +795,10 @@ export const App = () => {
             autoComplete="off"
             spellCheck={false}
             placeholder={t(lang, "line.tokenPlaceholder")}
-            value={lineFields.lineChannelAccessToken}
+            value={lineToken}
             onPaste={handleSensitivePaste}
             onChange={(event) => {
-              setLineFields((prev) => ({ ...prev, lineChannelAccessToken: event.target.value }));
-              setLineTokenMessage("");
-            }}
-          />
-        </label>
-
-        <label className="field">
-          <span>{t(lang, "line.channelIdLabel")}</span>
-          <input
-            type="password"
-            autoComplete="off"
-            spellCheck={false}
-            placeholder={t(lang, "line.channelIdPlaceholder")}
-            value={lineFields.lineChannelId}
-            onPaste={handleSensitivePaste}
-            onChange={(event) => {
-              setLineFields((prev) => ({ ...prev, lineChannelId: event.target.value }));
-              setLineTokenMessage("");
-            }}
-          />
-        </label>
-
-        <label className="field">
-          <span>{t(lang, "line.assertionKidLabel")}</span>
-          <input
-            type="password"
-            autoComplete="off"
-            spellCheck={false}
-            placeholder={t(lang, "line.assertionKidPlaceholder")}
-            value={lineFields.lineAssertionKid}
-            onPaste={handleSensitivePaste}
-            onChange={(event) => {
-              setLineFields((prev) => ({ ...prev, lineAssertionKid: event.target.value }));
-              setLineTokenMessage("");
-            }}
-          />
-        </label>
-
-        <label className="field">
-          <span>{t(lang, "line.assertionPrivateKeyLabel")}</span>
-          <input
-            type="password"
-            autoComplete="off"
-            spellCheck={false}
-            placeholder={t(lang, "line.assertionPrivateKeyPlaceholder")}
-            value={lineFields.lineAssertionPrivateKey}
-            onPaste={handleSensitivePaste}
-            onChange={(event) => {
-              setLineFields((prev) => ({ ...prev, lineAssertionPrivateKey: event.target.value }));
+              setLineToken(event.target.value);
               setLineTokenMessage("");
             }}
           />
@@ -860,18 +818,31 @@ export const App = () => {
 
       <footer className="panel footer">
         <p className="footer-credit">
-          {t(lang, "footer.developer")} · {t(lang, "footer.support")} 程小晨{" "}
+          {t(lang, "footer.developer")} · {t(lang, "footer.support")}{" "}
           <a
             href={THREADS_URL}
             className="footer-link"
             onClick={(event) => {
               event.preventDefault();
-              openThreads();
+              openSupportLink(THREADS_URL);
             }}
           >
             Threads
           </a>
+          {" / "}
+          <a
+            href={LINE_URL}
+            className="footer-link"
+            onClick={(event) => {
+              event.preventDefault();
+              openSupportLink(LINE_URL);
+            }}
+          >
+            Line
+          </a>
         </p>
+        <p className="footer-license">{t(lang, "footer.license")}</p>
+        <p className="footer-free">{t(lang, "footer.free")}</p>
       </footer>
     </main>
   );

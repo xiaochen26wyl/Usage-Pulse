@@ -13,12 +13,7 @@ import { decryptSecret, encryptSecret } from "@main/secure-store";
 // Settings fields listed here are encrypted at rest via the OS keychain (see secure-store.ts)
 // whenever they're written to the electron-store JSON file, and decrypted on read. Add future
 // secrets (e.g. additional LINE keys) to this list rather than storing them in plain text.
-const SECRET_SETTINGS_KEYS: Array<keyof AppSettings> = [
-  "lineChannelAccessToken",
-  "lineChannelId",
-  "lineAssertionKid",
-  "lineAssertionPrivateKey"
-];
+const SECRET_SETTINGS_KEYS: Array<keyof AppSettings> = ["lineChannelAccessToken"];
 
 const asStringRecord = (settings: AppSettings) => settings as unknown as Record<string, string>;
 
@@ -98,17 +93,17 @@ export const settingsStore = {
     };
     merged.cursorIntervalMinutes = clamp(Number(merged.cursorIntervalMinutes || 10), 5, 60);
     merged.claudeIntervalMinutes = clamp(Number(merged.claudeIntervalMinutes || 10), 5, 60);
-    merged.cursorLowThresholdPercent = clamp(Number(merged.cursorLowThresholdPercent || 20), 5, 30);
-    merged.claudeLowThresholdPercent = clamp(Number(merged.claudeLowThresholdPercent || 20), 5, 30);
+    merged.cursorAdvancedModelsLowThresholdPercent = clamp(
+      Number(merged.cursorAdvancedModelsLowThresholdPercent || 20),
+      5,
+      30
+    );
+    merged.cursorModelsLowThresholdPercent = clamp(Number(merged.cursorModelsLowThresholdPercent || 20), 5, 30);
+    merged.claudeSessionLowThresholdPercent = clamp(Number(merged.claudeSessionLowThresholdPercent || 20), 5, 30);
+    merged.claudeWeeklyLowThresholdPercent = clamp(Number(merged.claudeWeeklyLowThresholdPercent || 20), 5, 30);
     merged.notifyCooldownMinutes = Number.isFinite(Number(merged.notifyCooldownMinutes))
       ? clamp(Number(merged.notifyCooldownMinutes), 1, 240)
       : 15;
-    merged.alarmPopupAutoDismissMinutes = Number.isFinite(Number(merged.alarmPopupAutoDismissMinutes))
-      ? clamp(Number(merged.alarmPopupAutoDismissMinutes), 1, 30)
-      : 5;
-    merged.alarmCatchUpMinutes = Number.isFinite(Number(merged.alarmCatchUpMinutes))
-      ? clamp(Number(merged.alarmCatchUpMinutes), 5, 180)
-      : 30;
     store.set("settings", encryptSettings(merged));
     return merged;
   }

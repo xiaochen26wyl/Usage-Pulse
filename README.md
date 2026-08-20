@@ -65,6 +65,25 @@ Running `claude` the first time opens a browser to complete OAuth login, which w
 - The app stores general settings (check interval, notification toggles, cooldown time, language) locally via `electron-store`.
 - OAuth tokens are only used in-memory for API requests during runtime and are never written back to the IDE.
 
+### License and important notice
+
+Usage-Pulse is released under the **MIT License with additional terms** (see [`LICENSE`](LICENSE)):
+
+1. **Attribution required.** Any copy, substantial portion, or derivative work that is distributed must keep the copyright notice and clearly credit the original developer, **W.Y. LI**.
+2. **Non-commercial use only.** The software and any derivative of it may **not** be sold, sublicensed, bundled into a paid product or service, or otherwise used to generate revenue without prior written permission from W.Y. LI.
+3. **No sale of copies**, modified or unmodified.
+
+**Why the extra restriction:** Usage-Pulse ships with LINE Messaging API notification support, which means users enter their own LINE channel credentials into the app. Those credentials are encrypted locally, but a modified build distributed by someone else could remove or subvert that protection. Forbidding commercial redistribution is intended to reduce the incentive to repackage this project into a paid, look-alike installer that tricks users into handing over their tokens.
+
+**Only download Usage-Pulse from this repository's official GitHub Releases page.** Builds from any other source are not published by the original developer, and their handling of your credentials cannot be trusted.
+
+**Usage-Pulse is free forever.** The original developer never charges for this software. If anyone asks you to pay for it, it is not the official release.
+
+### Support
+
+- Threads: [@xiaochen26wyl](https://www.threads.com/@xiaochen26wyl)
+- LINE: <https://lin.ee/6XYi49XZ>
+
 ---
 
 ## 繁體中文
@@ -127,3 +146,23 @@ claude
 #### 資料落地
 - 應用程式會在本機 `electron-store` 保存一般設定（檢查頻率、通知開關、冷卻時間、語言）。
 - OAuth token 僅用於執行期間請求 API，不會被回寫到 IDE。
+
+### 授權與重要聲明
+
+Usage-Pulse 採用 **MIT 授權並附加條款**（完整條文見 [`LICENSE`](LICENSE)）：
+
+1. **需標示原作者**：任何散布的副本、實質部分或改作版本，都必須保留著作權聲明，並清楚標示原開發者 **W.Y. LI**。
+2. **僅限非商業使用**：本軟體及其任何改作版本，**不得**販售、再授權、包裝進付費產品或服務，或以任何方式用於營利；如需商業使用，須事先取得 W.Y. LI 的書面同意。
+3. **不得販售副本**：無論是否經過修改，都不得販售本軟體的副本。
+
+**為什麼要加上這條限制：** Usage-Pulse 內建 LINE Messaging API 通知功能，使用者會在 App 內填入自己的 LINE 憑證。這些憑證在本機是加密保存的，但若有人拿走原始碼、做出修改過的版本再散布，就可能移除或繞過這層保護。禁止商業散布的目的，是降低有心人士把本專案重新包裝成付費或仿冒安裝檔、誘導使用者交出 token 的動機。
+
+**請只從本 repo 官方的 GitHub Releases 頁面下載 Usage-Pulse。** 任何其他來源的安裝檔都不是原開發者發佈的版本，無法保證它如何處理你的憑證。
+
+**Usage-Pulse 永久免費。** 原開發者絕不會對本軟體收費；若有人要你付費取得，那就不是官方版本。
+
+### 客服聯繫
+
+- Threads：[@xiaochen26wyl](https://www.threads.com/@xiaochen26wyl)
+- LINE：<https://lin.ee/6XYi49XZ>
+

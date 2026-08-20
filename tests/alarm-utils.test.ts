@@ -17,25 +17,23 @@ const settings = (patch: Partial<AppSettings> = {}): AppSettings =>
   ({
     cursorIntervalMinutes: 10,
     claudeIntervalMinutes: 10,
-    cursorLowThresholdPercent: 20,
-    claudeLowThresholdPercent: 20,
+    cursorAdvancedModelsLowThresholdPercent: 20,
+    enableCursorAdvancedModelsLowAlert: true,
+    cursorModelsLowThresholdPercent: 20,
+    enableCursorModelsLowAlert: true,
+    claudeSessionLowThresholdPercent: 20,
+    enableClaudeSessionLowAlert: true,
+    claudeWeeklyLowThresholdPercent: 20,
+    enableClaudeWeeklyLowAlert: true,
+    enableClaudeCooldownAlert: true,
     launchAtLogin: false,
     notifyCooldownMinutes: 15,
     enableCursorResetAlarm: true,
     enableClaudeResetAlarm: true,
-    enableCursorLowQuotaAlert: true,
-    enableClaudeLowQuotaAlert: true,
     language: "zh",
     enableAlarmPopup: true,
     alarmSoundEnabled: true,
-    alarmPopupAutoDismissMinutes: 5,
-    alarmCatchUpMinutes: 30,
-    enableSystemAlarmWakeApp: false,
-    enableSystemAlarmNative: false,
     lineChannelAccessToken: "",
-    lineChannelId: "",
-    lineAssertionKid: "",
-    lineAssertionPrivateKey: "",
     ...patch
   }) as AppSettings;
 
@@ -61,26 +59,22 @@ const snapshot = (cursor: Partial<QuotaSnapshot>, claude: Partial<QuotaSnapshot>
 });
 
 test("classifyFire treats a future firing as pending", () => {
-  assert.equal(classifyFire(at(60_000), NOW, 30), "pending");
+  assert.equal(classifyFire(at(60_000), NOW), "pending");
 });
 
-test("classifyFire treats a slightly late firing as on time, not a catch-up", () => {
-  assert.equal(classifyFire(at(-1_000), NOW, 30), "due");
-  assert.equal(classifyFire(at(-DUE_GRACE_MS), NOW, 30), "due");
+test("classifyFire treats a slightly late firing as on time", () => {
+  assert.equal(classifyFire(at(-1_000), NOW), "due");
+  assert.equal(classifyFire(at(-DUE_GRACE_MS), NOW), "due");
 });
 
-test("classifyFire replays a firing missed inside the catch-up window", () => {
-  assert.equal(classifyFire(at(-DUE_GRACE_MS - 1), NOW, 30), "missed");
-  assert.equal(classifyFire(at(-30 * 60_000), NOW, 30), "missed");
-});
-
-test("classifyFire drops a firing older than the catch-up window", () => {
-  assert.equal(classifyFire(at(-30 * 60_000 - 1), NOW, 30), "expired");
-  assert.equal(classifyFire(at(-24 * 60 * 60_000), NOW, 30), "expired");
+test("classifyFire drops a firing past the grace window as expired (no catch-up)", () => {
+  assert.equal(classifyFire(at(-DUE_GRACE_MS - 1), NOW), "expired");
+  assert.equal(classifyFire(at(-30 * 60_000), NOW), "expired");
+  assert.equal(classifyFire(at(-24 * 60 * 60_000), NOW), "expired");
 });
 
 test("classifyFire drops an unparseable timestamp", () => {
-  assert.equal(classifyFire("not-a-date", NOW, 30), "expired");
+  assert.equal(classifyFire("not-a-date", NOW), "expired");
 });
 
 test("collectAlarmTargets gathers every enabled reset window", () => {
