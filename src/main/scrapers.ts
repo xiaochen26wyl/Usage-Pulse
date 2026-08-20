@@ -1,9 +1,16 @@
-import type { ScrapeResult, ServiceType } from "@shared/types";
+import type { ErrorCode, ScrapeResult, ServiceType } from "@shared/types";
 import { t } from "@shared/i18n";
 import { SERVICE_LABELS } from "@main/config";
-import { collectClaudeCodeQuota } from "@main/collectors/claude-code";
+import { ClaudeLoginExpiredError, collectClaudeCodeQuota } from "@main/collectors/claude-code";
 import { collectCursorQuota } from "@main/collectors/cursor";
 import { settingsStore } from "@main/store";
+
+const detectErrorCode = (error: unknown): ErrorCode | undefined => {
+  if (error instanceof ClaudeLoginExpiredError) {
+    return "claudeLoginExpired";
+  }
+  return undefined;
+};
 
 export const scrapeQuota = async (service: ServiceType): Promise<ScrapeResult> => {
   try {
@@ -21,7 +28,8 @@ export const scrapeQuota = async (service: ServiceType): Promise<ScrapeResult> =
       resetsAt: null,
       windows: [],
       message: t(lang, "scrape.fetchFailed", { service: SERVICE_LABELS[service], detail }),
-      isError: true
+      isError: true,
+      errorCode: detectErrorCode(error)
     };
   }
 };

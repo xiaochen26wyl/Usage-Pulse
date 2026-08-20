@@ -1,5 +1,12 @@
 import Store from "electron-store";
-import type { AlarmFireRecord, AlarmSource, AppSettings, CombinedSnapshot } from "@shared/types";
+import type {
+  AlarmFireRecord,
+  AlarmSource,
+  AppSettings,
+  CombinedSnapshot,
+  CredentialState,
+  ServiceType
+} from "@shared/types";
 import { DEFAULT_SETTINGS } from "@main/config";
 import { decryptSecret, encryptSecret } from "@main/secure-store";
 
@@ -36,6 +43,17 @@ interface NotificationRecord {
   at: string;
 }
 
+// What the last credential sweep saw for one service. `fingerprint` is a
+// SHA-256 digest, never the token: comparing digests is enough to notice the
+// IDE rotated the credential, and nothing here can be turned back into one.
+export interface CredentialRecord {
+  fingerprint: string;
+  expiresAt: string | null;
+  rotatedAt: string | null;
+  checkedAt: string;
+  state: CredentialState;
+}
+
 interface UsagePulseStore {
   settings: AppSettings;
   lastSnapshot: CombinedSnapshot | null;
@@ -43,6 +61,7 @@ interface UsagePulseStore {
   lastNotificationAt: string;
   notifications: Record<string, NotificationRecord>;
   alarmFires: Record<string, AlarmFireRecord>;
+  credentials: Record<string, CredentialRecord>;
 }
 
 const store = new Store<UsagePulseStore>({
@@ -53,7 +72,8 @@ const store = new Store<UsagePulseStore>({
     lastNotificationKey: "",
     lastNotificationAt: "",
     notifications: {},
-    alarmFires: {}
+    alarmFires: {},
+    credentials: {}
   }
 });
 
@@ -147,5 +167,18 @@ export const alarmStore = {
     const fires = { ...((store.get("alarmFires") as Record<string, AlarmFireRecord> | undefined) ?? {}) };
     delete fires[id];
     store.set("alarmFires", fires);
+  }
+};
+
+// Remembers the last credential sweep per service so the next one can tell a
+// rotation (fingerprint changed) from a stale credential (fingerprint identical
+// but past its expiry), and so a wake-from-sleep knows whether a sweep is due.
+export const credentialStore = {
+  get(service: ServiceType): CredentialRecord | null {
+    const records = store.get("credentials") as Record<string, CredentialRecord> | undefined;
+    return records?.[service] ?? null;
+  },
+  set(service: ServiceType, record: CredentialRecord): void {
+    store.set(`credentials.${service}`, record);
   }
 };

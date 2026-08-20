@@ -22,18 +22,27 @@ const formatQuota = (snapshot: QuotaSnapshot): string => {
   return `${remaining} / ${total}`;
 };
 
-export const sendDesktopNotification = (payload: NotifyPayload): void => {
+/**
+ * The single exit point for desktop notifications.
+ *
+ * Callers that have no quota snapshot to summarise (the credential sweep, for
+ * one) use this directly rather than fabricating a snapshot to satisfy
+ * sendDesktopNotification.
+ */
+export const sendPlainDesktopNotification = (title: string, body: string): void => {
   if (!Notification.isSupported()) {
     return;
   }
 
+  new Notification({ title, body }).show();
+};
+
+export const sendDesktopNotification = (payload: NotifyPayload): void => {
   const lang = settingsStore.get().language;
-  const notification = new Notification({
-    title: t(lang, "notification.title"),
-    body: `${payload.reason}\nCursor: ${formatQuota(payload.snapshot.cursor)} | Claude Code: ${formatQuota(
+  sendPlainDesktopNotification(
+    t(lang, "notification.title"),
+    `${payload.reason}\nCursor: ${formatQuota(payload.snapshot.cursor)} | Claude Code: ${formatQuota(
       payload.snapshot.claude
     )}`
-  });
-
-  notification.show();
+  );
 };

@@ -54,7 +54,63 @@ const pickAccessTokenFromUnknown = (value: unknown): string | null => {
   return null;
 };
 
-const parseTokenFromRawText = (rawText: string): string | null => {
+// Milliseconds-since-epoch expiry advertised alongside the token, when the
+// credential blob carries one. Mirrors pickAccessTokenFromUnknown, which walks
+// the same shapes but keeps only the token itself.
+const pickExpiresAtFromUnknown = (value: unknown): number | null => {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const record = value as Record<string, unknown>;
+  for (const key of ["expiresAt", "expires_at", "expiresAtMs"]) {
+    const candidate = record[key];
+    const numeric = typeof candidate === "string" ? Number(candidate) : candidate;
+    if (typeof numeric === "number" && Number.isFinite(numeric) && numeric > 0) {
+      // Some blobs store seconds rather than milliseconds; anything below this
+      // threshold cannot be a sane millisecond timestamp.
+      return numeric < 1e12 ? numeric * 1000 : numeric;
+    }
+  }
+
+  const claudeOauth = record.claudeAiOauth as Record<string, unknown> | undefined;
+  return claudeOauth ? pickExpiresAtFromUnknown(claudeOauth) : null;
+};
+
+// Expiry carried inside the token itself. Both providers hand out JWTs, so a
+// blob with no explicit expiry field still yields one from the `exp` claim.
+const decodeJwtExpiryMs = (token: string): number | null => {
+  const segments = token.split(".");
+  if (segments.length < 2) {
+    return null;
+  }
+
+  try {
+    const payloadJson = Buffer.from(segments[1].replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf-8");
+    const payload = JSON.parse(payloadJson) as Record<string, unknown>;
+    const exp = payload.exp;
+    return typeof exp === "number" && Number.isFinite(exp) && exp > 0 ? exp * 1000 : null;
+  } catch {
+    return null;
+  }
+};
+
+const toIsoOrNull = (ms: number | null): string | null =>
+  ms === null ? null : new Date(ms).toISOString();
+
+// A token plus whatever expiry we could derive for it. `expiresAt` is null when
+// neither the surrounding blob nor the token's own claims declare one.
+export interface RawCredential {
+  token: string;
+  expiresAt: string | null;
+}
+
+const toCredential = (token: string, explicitExpiryMs: number | null): RawCredential => ({
+  token,
+  expiresAt: toIsoOrNull(explicitExpiryMs ?? decodeJwtExpiryMs(token))
+});
+
+const parseCredentialFromRawText = (rawText: string): RawCredential | null => {
   const trimmed = rawText.trim();
   if (!trimmed) {
     return null;
@@ -62,9 +118,11 @@ const parseTokenFromRawText = (rawText: string): string | null => {
 
   try {
     const parsed = JSON.parse(trimmed) as unknown;
-    return pickAccessTokenFromUnknown(parsed);
+    const token = pickAccessTokenFromUnknown(parsed);
+    return token ? toCredential(token, pickExpiresAtFromUnknown(parsed)) : null;
   } catch {
-    return pickAccessTokenFromUnknown(trimmed);
+    const token = pickAccessTokenFromUnknown(trimmed);
+    return token ? toCredential(token, null) : null;
   }
 };
 
@@ -134,23 +192,26 @@ const readValueFromLargeStateDb = async (dbPath: string, key: string, sizeBytes:
   }
 };
 
-export const readCursorTokenFromStateDbPath = async (dbPath: string): Promise<string> => {
+export const readCursorCredentialFromStateDbPath = async (dbPath: string): Promise<RawCredential> => {
   const { size } = await stat(dbPath);
   const raw =
     size > CURSOR_STATE_DB_LARGE_FILE_THRESHOLD_BYTES
       ? await readValueFromLargeStateDb(dbPath, CURSOR_ACCESS_TOKEN_KEY, size)
       : await runReadOnlySqliteQuery(dbPath, CURSOR_ACCESS_TOKEN_KEY);
-  const token = parseTokenFromRawText(raw);
-  if (!token) {
+  const credential = parseCredentialFromRawText(raw);
+  if (!credential) {
     throw new Error("找不到 Cursor access token，請先在 Cursor Desktop 登入。");
   }
-  return token;
+  return credential;
 };
 
-const readCursorTokenFromStateDb = async (): Promise<string> => {
+export const readCursorTokenFromStateDbPath = async (dbPath: string): Promise<string> =>
+  (await readCursorCredentialFromStateDbPath(dbPath)).token;
+
+const readCursorCredentialFromStateDb = async (): Promise<RawCredential> => {
   const dbPath = resolveCursorStateDbPath();
   try {
-    return await readCursorTokenFromStateDbPath(dbPath);
+    return await readCursorCredentialFromStateDbPath(dbPath);
   } catch (error) {
     if (error instanceof CursorStateDbTooLargeError) {
       throw error;
@@ -159,7 +220,7 @@ const readCursorTokenFromStateDb = async (): Promise<string> => {
   }
 };
 
-const readClaudeTokenFromKeychain = async (): Promise<string | null> => {
+const readClaudeCredentialFromKeychain = async (): Promise<RawCredential | null> => {
   if (process.platform !== "darwin") {
     return null;
   }
@@ -171,7 +232,7 @@ const readClaudeTokenFromKeychain = async (): Promise<string | null> => {
       CLAUDE_KEYCHAIN_SERVICE,
       "-w"
     ]);
-    return parseTokenFromRawText(stdout);
+    return parseCredentialFromRawText(stdout);
   } catch {
     return null;
   }
@@ -189,34 +250,33 @@ const resolveClaudeCredentialsPath = (): string => {
   return join(homedir(), ".claude", ".credentials.json");
 };
 
-const readClaudeTokenFromCredentialsFile = async (): Promise<string | null> => {
+const readClaudeCredentialFromFile = async (): Promise<RawCredential | null> => {
   try {
     const raw = await readFile(resolveClaudeCredentialsPath(), "utf-8");
-    const parsed = JSON.parse(raw) as unknown;
-    return pickAccessTokenFromUnknown(parsed);
+    return parseCredentialFromRawText(raw);
   } catch {
     return null;
   }
 };
 
-export const getCursorAccessToken = async (): Promise<string> => {
-  return readCursorTokenFromStateDb();
+export const readCursorCredential = async (): Promise<RawCredential> => {
+  return readCursorCredentialFromStateDb();
 };
 
-export const getClaudeCodeOAuthToken = async (): Promise<string> => {
+export const readClaudeCredential = async (): Promise<RawCredential> => {
   const envToken = process.env.CLAUDE_CODE_OAUTH_TOKEN?.trim();
   if (envToken) {
-    return envToken;
+    return toCredential(envToken, null);
   }
 
-  const keychainToken = await readClaudeTokenFromKeychain();
-  if (keychainToken) {
-    return keychainToken;
+  const fromKeychain = await readClaudeCredentialFromKeychain();
+  if (fromKeychain) {
+    return fromKeychain;
   }
 
-  const fileToken = await readClaudeTokenFromCredentialsFile();
-  if (fileToken) {
-    return fileToken;
+  const fromFile = await readClaudeCredentialFromFile();
+  if (fromFile) {
+    return fromFile;
   }
 
   if (process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN) {
@@ -224,6 +284,14 @@ export const getClaudeCodeOAuthToken = async (): Promise<string> => {
   }
 
   throw new Error("找不到 Claude Code OAuth 憑證，請先在終端機執行 claude 登入。");
+};
+
+export const getCursorAccessToken = async (): Promise<string> => {
+  return (await readCursorCredential()).token;
+};
+
+export const getClaudeCodeOAuthToken = async (): Promise<string> => {
+  return (await readClaudeCredential()).token;
 };
 
 export const hasCursorAccessToken = async (): Promise<boolean> => {

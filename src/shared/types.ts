@@ -28,8 +28,11 @@ export interface QuotaSnapshot {
   windows: QuotaWindow[];
   status: QuotaStatus;
   message: string;
+  errorCode?: ErrorCode;
   fetchedAt: string;
 }
+
+export type ErrorCode = "claudeLoginExpired";
 
 export interface CombinedSnapshot {
   cursor: QuotaSnapshot;
@@ -37,9 +40,27 @@ export interface CombinedSnapshot {
   fetchedAt: string;
 }
 
+// How healthy the locally-stored credential for one service is right now.
+// "missing" means no credential was found at all; "error" means one exists but
+// could not be read (unreadable state.vscdb, API-key-only mode, and so on).
+export type CredentialState = "ok" | "expiring" | "expired" | "missing" | "error";
+
+// Derived credential facts safe to hand to the renderer. Deliberately carries
+// no token and no fingerprint: raw credential material never crosses IPC.
+export interface CredentialStatus {
+  service: ServiceType;
+  state: CredentialState;
+  // Null whenever the credential carries no parseable expiry.
+  expiresAt: string | null;
+  // When the credential last changed underneath us (i.e. the IDE refreshed it).
+  rotatedAt: string | null;
+  checkedAt: string;
+  message?: string;
+}
+
 export interface AuthStatus {
-  cursor: boolean;
-  claude: boolean;
+  cursor: CredentialStatus;
+  claude: CredentialStatus;
 }
 
 export interface AppSettings {
@@ -58,8 +79,6 @@ export interface AppSettings {
   alarmSoundEnabled: boolean;
   alarmPopupAutoDismissMinutes: number;
   alarmCatchUpMinutes: number;
-  enableSystemAlarmWakeApp: boolean;
-  enableSystemAlarmNative: boolean;
   lineChannelAccessToken: string;
   lineChannelId: string;
   lineAssertionKid: string;
@@ -85,6 +104,7 @@ export interface ScrapeResult {
   windows: QuotaWindow[];
   message: string;
   isError?: boolean;
+  errorCode?: ErrorCode;
 }
 
 export interface NotifyPayload {
@@ -121,27 +141,6 @@ export interface AlarmPopupPayload {
   language: Language;
 }
 
-export type SystemAlarmKind = "wake-app" | "native";
-
-export type SystemAlarmState =
-  | "unsupported"
-  | "disabled"
-  | "not-installed"
-  | "armed"
-  | "stale"
-  | "error";
-
-export interface SystemAlarmStatus {
-  kind: SystemAlarmKind;
-  state: SystemAlarmState;
-  fireAt: string | null;
-  // When this status was actually verified against the OS. Never a cached flag:
-  // every probe() shells out and asks the scheduler what it really holds.
-  verifiedAt: string;
-  message?: string;
-}
-
 export interface AlarmStatusReport {
   nextTarget: AlarmTarget | null;
-  system: SystemAlarmStatus[];
 }

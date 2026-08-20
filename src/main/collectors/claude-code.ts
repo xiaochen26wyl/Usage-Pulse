@@ -6,6 +6,8 @@ import { settingsStore } from "@main/store";
 
 const CLAUDE_USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
 
+export class ClaudeLoginExpiredError extends Error {}
+
 interface NormalizedLimit {
   key: string;
   label: string;
@@ -201,7 +203,7 @@ export const collectClaudeCodeQuota = async (): Promise<ScrapeResult> => {
   } catch (error) {
     if (axios.isAxiosError(error)) {
       if (error.response?.status === 401) {
-        throw new Error(t(lang, "error.claudeLoginExpired"));
+        throw new ClaudeLoginExpiredError(t(lang, "error.claudeLoginExpired"));
       }
       if (error.response?.status === 429) {
         throw new Error(t(lang, "error.claudeRateLimited"));
@@ -238,7 +240,10 @@ export const collectClaudeCodeQuota = async (): Promise<ScrapeResult> => {
   const { session, weekly } = selectPrimaryLimits(limits);
   const sessionUsed = session?.usedPercent ?? null;
   const weeklyUsed = weekly?.usedPercent ?? null;
-  const primaryUsed = Math.max(sessionUsed ?? 0, weeklyUsed ?? 0);
+  // "Low quota" for Claude Code means the 5-hour session window specifically,
+  // not whichever of session/weekly happens to be worse — weekly is only a
+  // fallback for when the session window itself has no data.
+  const primaryUsed = sessionUsed ?? weeklyUsed ?? 0;
   const hasPrimary = sessionUsed !== null || weeklyUsed !== null;
   const remaining = hasPrimary ? clampPercent(100 - primaryUsed) : null;
   const resetsAt = session?.resetsAt ?? weekly?.resetsAt ?? null;

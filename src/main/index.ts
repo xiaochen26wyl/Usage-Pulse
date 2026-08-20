@@ -1,6 +1,4 @@
 import { join } from "node:path";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import { app, clipboard, ipcMain, Menu, powerMonitor, shell } from "electron";
 import { menubar } from "menubar";
 import type { AlarmStatusReport, CombinedSnapshot, QuotaSnapshot } from "@shared/types";
@@ -10,12 +8,10 @@ import { destroyAlarmWindow, closeAlarmPopup, getAlarmPayload, snoozeAlarmPopup 
 import { getAuthStatus } from "@main/auth-service";
 import { MonitorEngine } from "@main/monitor-engine";
 import { settingsStore } from "@main/store";
-import { probeSystemAlarms, syncSystemAlarms } from "@main/system-alarm";
 import { destroyTrayRenderer, initTrayRenderer, renderTrayImage } from "@main/tray-icon-renderer";
 
 const isMac = process.platform === "darwin";
 const isDev = Boolean(process.env.ELECTRON_RENDERER_URL);
-const execFileAsync = promisify(execFile);
 
 if (process.platform === "win32") {
   app.setAppUserModelId("com.xiaochen26wyl.usagepulse");
@@ -183,9 +179,6 @@ const setupIpcHandlers = (): void => {
     const next = settingsStore.update(patch);
     applyAutoLaunch(next.launchAtLogin);
     monitor.reschedule();
-    syncSystemAlarms(next, alarmService.nextTarget()).catch((error) => {
-      console.error("[Usage-Pulse] failed to sync system alarms", error);
-    });
     const latest = monitor.getLatestSnapshot();
     if (latest) {
       updateTrayText(latest);
@@ -196,6 +189,7 @@ const setupIpcHandlers = (): void => {
   ipcMain.handle("auth:status", () => getAuthStatus());
 
   ipcMain.handle("monitor:get-latest", () => monitor.getLatestSnapshot());
+  ipcMain.handle("monitor:run-manual", () => monitor.runCheck("manual"));
   ipcMain.handle("app:quit", () => {
     app.quit();
   });
@@ -204,30 +198,17 @@ const setupIpcHandlers = (): void => {
       return shell.openExternal(url);
     }
   });
-  ipcMain.handle("app:open-clock", async () => {
-    if (!isMac) {
-      throw new Error("app:open-clock is macOS-only");
-    }
-    await execFileAsync("open", ["-a", "Clock"]);
-  });
   ipcMain.handle("app:clear-clipboard", () => {
     clipboard.clear();
   });
-  ipcMain.handle("app:open-shortcuts", async () => {
-    if (!isMac) {
-      throw new Error("app:open-shortcuts is macOS-only");
-    }
-    await execFileAsync("open", ["-a", "Shortcuts"]);
+  ipcMain.handle("app:copy-to-clipboard", (_event, text: string) => {
+    clipboard.writeText(text);
   });
 
-  ipcMain.handle("alarm:get-status", async (): Promise<AlarmStatusReport> => {
-    const system = await probeSystemAlarms(settingsStore.get());
-    return alarmService.getReport(system);
-  });
+  ipcMain.handle("alarm:get-status", async (): Promise<AlarmStatusReport> => alarmService.getReport());
   ipcMain.handle("alarm:rearm", async (): Promise<AlarmStatusReport> => {
     alarmService.rearm("manual");
-    const system = await syncSystemAlarms(settingsStore.get(), alarmService.nextTarget());
-    return alarmService.getReport(system);
+    return alarmService.getReport();
   });
   ipcMain.handle("alarm:test-popup", () => {
     alarmService.showTestPopup();

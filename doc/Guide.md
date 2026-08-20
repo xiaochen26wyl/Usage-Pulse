@@ -38,22 +38,25 @@
 - Local credential detection + API quota fetching
 - Background scheduled monitoring (default: every 10 minutes)
 - Desktop notifications (quota change / low quota / reset alerts)
-- Timed alarm: an always-on-top popup at reset time, with catch-up for alarms missed during sleep
-- Optional system alarm (macOS LaunchAgent / Shortcuts, Windows Task Scheduler) with OS-verified status
+- Timed alarm: an always-on-top popup in the top-right corner at reset time, with catch-up for alarms missed during sleep
 - Bilingual UI (Traditional Chinese / English), switchable in Settings
 - GitHub Actions Release (tag-triggered `.dmg` / `.exe`)
 - CI quality gates (typecheck, readonly guard, unit tests, build, smoke build)
 
 
-### Timed alarm (L0) and system alarm (L1)
+### Timed alarm
 
-The alarm is deliberately layered, because every layer that leans on the OS adds a permission
-surface that can silently stop working.
+Usage-Pulse never touches any OS-level alarm or scheduler — the only reminder mechanism is an
+in-app popup, which needs no permission of any kind. At the reset time `alarm-service.ts` opens a
+frameless, always-on-top window (`alarm.html`) with a synthesised chime, positioned in the
+**top-right corner** of the primary display (recomputed on every show, so a resolution or
+monitor-arrangement change never leaves it off-screen). It is shown with `showInactive()` so it
+never steals the keystroke you are in the middle of typing, and closes itself after
+`alarmPopupAutoDismissMinutes` (default 5).
 
-**L0 — in-app popup. No permission of any kind.** At the reset time `alarm-service.ts` opens a
-frameless, always-on-top window (`alarm.html`) with a synthesised chime, shown with `showInactive()`
-so it never steals the keystroke you are in the middle of typing. It closes itself after
-`alarmPopupAutoDismissMinutes` (default 5). Nothing in System Settings can switch this off.
+Settings shows the popup toggle, sound toggle, auto-dismiss and catch-up sliders, and the reset
+reminder switch for each service (Cursor / Claude Code) alongside its low-quota alert threshold —
+no separate "Reset Alarm" card, no OS-level configuration.
 
 Two failure modes of the old reset alert are fixed here:
 
@@ -62,44 +65,6 @@ Two failure modes of the old reset alert are fixed here:
   `alarmFires` in the store records which `fireAt` already rang, so re-arming never double-fires.
 - **Sleep and wake.** `powerMonitor` `resume` / `unlock-screen` rebuild the schedule, because
   Chromium timers do not advance while the machine is asleep.
-
-**L1 — system alarm. Optional, off by default, two independent switches.**
-
-| | Wake app | Native alarm |
-|---|---|---|
-| macOS | LaunchAgent in `~/Library/LaunchAgents` | Shortcuts → Clock app alarm |
-| Windows | `schtasks` task launching the app | `schtasks` task raising a looping toast |
-
-Status is **always probed against the OS** — `launchctl print`, `shortcuts run`, `schtasks /Query` —
-never read from a cached flag, and the UI shows when it was last verified. Use **Re-arm system
-alarm** in Settings whenever the light is not green; a reboot, a manual deletion in the Clock app,
-or a revoked permission all show up as `stale`.
-
-Note that neither the LaunchAgent nor a Shortcuts alarm wakes a sleeping Mac reliably — treat L1 as
-"works when the app is closed", not as "works when the machine is asleep".
-
-#### Installing the macOS shortcuts (required for the native alarm)
-
-The `shortcuts` CLI can only run and sign shortcuts, not create them, so these three must be built
-once by hand in the Shortcuts app. The names must match exactly.
-
-1. **`Usage-Pulse Set Alarm`** — accepts text input (an ISO 8601 timestamp):
-   - Find Alarms where Name is `Usage-Pulse`
-   - Delete Alarm (the result of the previous step)
-   - Create Alarm — Time: parsed from the input, Name: `Usage-Pulse`, Repeat: Never, Snooze: Off
-2. **`Usage-Pulse Clear Alarm`** — Find Alarms where Name is `Usage-Pulse` → Delete Alarm
-3. **`Usage-Pulse Check Alarm`** — Find Alarms where Name is `Usage-Pulse` → output the alarm time
-   as text (empty output means no alarm)
-
-Shortcut 1 deletes before creating, which is what keeps exactly one Usage-Pulse alarm in the Clock
-app no matter how often it is re-armed.
-
-#### Known limitation: the app is unsigned
-
-`package.json` sets `mac.identity: null`. macOS ties TCC (Automation) grants to a code signature, so
-an unsigned build is treated as a different app after every rebuild and previously granted
-permissions are voided. This is why the native alarm goes through Shortcuts (App Intents) rather
-than Calendar AppleScript, which would need Automation access. Signing the app is the long-term fix.
 
 
 ### Security constraints
@@ -173,64 +138,31 @@ than Calendar AppleScript, which would need Automation access. Signing the app i
 - 本機憑證偵測 + API 配額抓取
 - 背景抓取與排程監控（預設 10 分鐘）
 - 桌面通知（配額變化 / 低額度 / 重置提醒）
-- 到點鬧鐘：重置時間到點彈出置頂視窗，睡眠期間錯過的提醒會補發
-- 選配系統鬧鐘（macOS LaunchAgent／捷徑、Windows 工作排程器），狀態向作業系統實查
+- 到點提醒：重置時間到點在螢幕右上角彈出置頂視窗，睡眠期間錯過的提醒會補發
 - 中英雙語介面，可在設定內切換
 - GitHub Actions Release（tag 觸發 `.dmg` / `.exe`）
 - CI 品質檢查（typecheck、readonly guard、unit test、build、smoke build）
 
 
-### 到點鬧鐘（L0）與系統鬧鐘（L1）
+### 到點提醒
 
-鬧鐘刻意分成兩層，因為每多依賴作業系統一分，就多一份會靜默失效的權限風險。
+Usage-Pulse 完全不碰任何作業系統層級的鬧鐘或排程器——唯一的提醒方式是 App 內彈窗，不需要任何
+權限。重置時間到點時，`alarm-service.ts` 會開啟一個無邊框、置頂的視窗（`alarm.html`）並播放
+合成提示音，顯示位置固定在主螢幕的**右上角**（每次顯示時都會重新計算座標，所以解析度或多螢幕
+排列變動也不會讓視窗跑到畫面外）。用 `showInactive()` 顯示，所以不會搶走你正在輸入的鍵盤焦點。
+經過 `alarmPopupAutoDismissMinutes`（預設 5 分鐘）後自動關閉。
 
-**L0 — 應用內彈窗，不需要任何權限。** 重置時間到點時，`alarm-service.ts` 會開啟一個無邊框、
-置頂的視窗（`alarm.html`）並播放合成提示音；用 `showInactive()` 顯示，所以不會搶走你正在輸入的
-鍵盤焦點。經過 `alarmPopupAutoDismissMinutes`（預設 5 分鐘）後自動關閉。系統設定裡沒有任何開關
-能讓這一層失效。
+「提醒設定」面板裡是彈窗開關、提示音開關、自動關閉與補發視窗分鐘數的滑桿，以及 Cursor／Claude
+Code 各自的「到點提醒」開關（跟該服務的低額度預警閾值放在同一張卡片裡）——沒有獨立的「重置鬧鐘」
+卡片，也沒有任何作業系統層級的設定。
 
-這一層同時修掉舊版重置提醒的兩個缺陷：
+這個機制同時修掉舊版重置提醒的兩個缺陷：
 
 - **補發**：過去只要到點時機器在睡覺，那次提醒就直接被丟棄。現在只要還在 `alarmCatchUpMinutes`
   （預設 30 分鐘）之內就會補發一次並標記為補發。store 的 `alarmFires` 記錄哪個 `fireAt` 已經響過，
   所以重新排程不會重複觸發。
 - **睡眠與喚醒**：`powerMonitor` 的 `resume` / `unlock-screen` 會重建排程——Chromium 的計時器在系統
   睡眠期間不會前進。
-
-**L1 — 系統鬧鐘，選配、預設關閉、兩個獨立開關。**
-
-| | 喚醒 App | 原生鬧鐘 |
-|---|---|---|
-| macOS | `~/Library/LaunchAgents` 的 LaunchAgent | 捷徑 → 時鐘 App 鬧鐘 |
-| Windows | `schtasks` 任務啟動 App | `schtasks` 任務發出循環響鈴通知 |
-
-狀態**一律向作業系統實查**——`launchctl print`、`shortcuts run`、`schtasks /Query`——絕不讀取快取
-旗標，介面上會顯示最後查證時間。只要燈號不是綠的，就按設定裡的**「重新設置系統鬧鐘」**。重開機、
-在時鐘 App 手動刪掉鬧鐘、權限被收回，都會顯示為 `stale`（已失效）。
-
-請注意：LaunchAgent 與捷徑鬧鐘都不保證能喚醒睡眠中的 Mac。L1 的定位是「App 沒開也會提醒」，
-不是「電腦睡著也會提醒」。
-
-#### 安裝 macOS 捷徑（原生鬧鐘必需）
-
-`shortcuts` CLI 只能執行與簽署捷徑，不能建立捷徑，所以這三個必須在「捷徑」App 裡手動建一次，
-**名稱必須完全一致**。
-
-1. **`Usage-Pulse Set Alarm`** — 接收文字輸入（ISO 8601 時間字串）：
-   - 尋找鬧鐘，條件為名稱是 `Usage-Pulse`
-   - 刪除鬧鐘（上一步的結果）
-   - 建立鬧鐘 — 時間：由輸入解析，名稱：`Usage-Pulse`，重複：永不，貪睡：關閉
-2. **`Usage-Pulse Clear Alarm`** — 尋找名稱為 `Usage-Pulse` 的鬧鐘 → 刪除鬧鐘
-3. **`Usage-Pulse Check Alarm`** — 尋找名稱為 `Usage-Pulse` 的鬧鐘 → 以文字輸出鬧鐘時間
-   （輸出為空代表沒有鬧鐘）
-
-第 1 個捷徑「先刪再建」，這就是不論重新設置幾次，時鐘 App 裡永遠只有一顆 Usage-Pulse 鬧鐘的原因。
-
-#### 已知限制：App 未簽名
-
-`package.json` 目前是 `mac.identity: null`。macOS 的 TCC（自動化）授權綁定程式碼簽章，未簽名的
-build 每次重新編譯都會被當成不同的 app，先前授予的權限直接作廢。這正是原生鬧鐘走捷徑
-（App Intents）而不是走需要自動化授權的 Calendar AppleScript 的原因。長期解法是替 app 簽名。
 
 
 ### 安全約束

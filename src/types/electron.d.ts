@@ -3,7 +3,8 @@ import type {
   AlarmStatusReport,
   AppSettings,
   AuthStatus,
-  CombinedSnapshot
+  CombinedSnapshot,
+  MonitorResult
 } from "@shared/types";
 
 interface UsagePulseApi {
@@ -11,11 +12,11 @@ interface UsagePulseApi {
   saveSettings: (settings: Partial<AppSettings>) => Promise<AppSettings>;
   getAuthStatus: () => Promise<AuthStatus>;
   getLatestSnapshot: () => Promise<CombinedSnapshot | null>;
+  runManualCheck: () => Promise<MonitorResult>;
   quitApp: () => Promise<void>;
   openExternal: (url: string) => Promise<void>;
-  openClockApp: () => Promise<void>;
   clearClipboard: () => Promise<void>;
-  openShortcutsApp: () => Promise<void>;
+  copyToClipboard: (text: string) => Promise<void>;
   getAlarmStatus: () => Promise<AlarmStatusReport>;
   rearmAlarm: () => Promise<AlarmStatusReport>;
   testAlarmPopup: () => Promise<void>;

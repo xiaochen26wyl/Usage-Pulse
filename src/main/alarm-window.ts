@@ -1,10 +1,24 @@
 import { join } from "node:path";
-import { app, BrowserWindow } from "electron";
+import { app, BrowserWindow, screen } from "electron";
 import type { AlarmPopupPayload } from "@shared/types";
 
 const isDev = Boolean(process.env.ELECTRON_RENDERER_URL);
 
 const SNOOZE_MS = 5 * 60_000;
+const WINDOW_WIDTH = 380;
+const WINDOW_HEIGHT = 240;
+const EDGE_MARGIN = 16;
+
+// Always the primary display's top-right corner, recomputed on every show so a
+// resolution or monitor-arrangement change since the last popup doesn't leave
+// the window parked off-screen or in the wrong place.
+const topRightPosition = (): { x: number; y: number } => {
+  const workArea = screen.getPrimaryDisplay().workArea;
+  return {
+    x: workArea.x + workArea.width - WINDOW_WIDTH - EDGE_MARGIN,
+    y: workArea.y + EDGE_MARGIN
+  };
+};
 
 let popup: BrowserWindow | null = null;
 let currentPayload: AlarmPopupPayload | null = null;
@@ -29,11 +43,15 @@ const armAutoDismiss = (minutes: number): void => {
 };
 
 const createPopup = (): BrowserWindow => {
+  const { x, y } = topRightPosition();
+
   // Deliberately a window of its own rather than the menubar popover: that one
   // hides itself on blur, which is exactly the wrong behaviour for an alarm.
   const window = new BrowserWindow({
-    width: 380,
-    height: 240,
+    width: WINDOW_WIDTH,
+    height: WINDOW_HEIGHT,
+    x,
+    y,
     resizable: false,
     frame: false,
     show: false,
@@ -78,6 +96,8 @@ export const showAlarmPopup = (payload: AlarmPopupPayload): void => {
     popup = createPopup();
   } else {
     popup.webContents.send("alarm:payload", payload);
+    const { x, y } = topRightPosition();
+    popup.setPosition(x, y);
   }
 
   popup.setAlwaysOnTop(true, "screen-saver");

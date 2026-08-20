@@ -21,8 +21,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   alarmSoundEnabled: true,
   alarmPopupAutoDismissMinutes: 5,
   alarmCatchUpMinutes: 30,
-  enableSystemAlarmWakeApp: false,
-  enableSystemAlarmNative: false,
   lineChannelAccessToken: "",
   lineChannelId: "",
   lineAssertionKid: "",

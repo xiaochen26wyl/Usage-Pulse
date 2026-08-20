@@ -85,13 +85,12 @@ export class AlarmService {
     return targets;
   }
 
-  getReport(system: AlarmStatusReport["system"]): AlarmStatusReport {
+  getReport(): AlarmStatusReport {
     const settings = settingsStore.get();
     const snapshot = snapshotStore.get();
     const targets = snapshot ? collectAlarmTargets(snapshot, settings, settings.language) : [];
     return {
-      nextTarget: nextTarget(targets, Date.now()),
-      system
+      nextTarget: nextTarget(targets, Date.now())
     };
   }
 

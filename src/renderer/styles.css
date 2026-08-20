@@ -164,6 +164,25 @@ h2 {
   color: var(--color-text);
 }
 
+/* Sub-options that only make sense while their parent switch is on. */
+.alarm-suboption {
+  margin: 0 0 12px 2px;
+  padding-left: 12px;
+  border-left: 2px solid var(--color-border);
+}
+
+/* Secondary alarm actions share one row; overrides the .warning-btn full width. */
+.alarm-actions-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.alarm-actions-row button {
+  flex: 1;
+  width: auto;
+}
+
 .field {
   display: flex;
   flex-direction: column;
@@ -325,6 +344,13 @@ button:disabled {
   color: #ffd699;
   font-size: 13px;
   line-height: 1.5;
+}
+
+.callout-warning code {
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-size: 13px;
 }
 
 .service-block {

@@ -7,8 +7,7 @@ import type {
   Language,
   QuotaSnapshot,
   QuotaWindow,
-  ServiceType,
-  SystemAlarmState
+  ServiceType
 } from "@shared/types";
 import { t } from "@shared/i18n";
 
@@ -30,8 +29,6 @@ const defaultSettings: AppSettings = {
   alarmSoundEnabled: true,
   alarmPopupAutoDismissMinutes: 5,
   alarmCatchUpMinutes: 30,
-  enableSystemAlarmWakeApp: false,
-  enableSystemAlarmNative: false,
   lineChannelAccessToken: "",
   lineChannelId: "",
   lineAssertionKid: "",
@@ -94,36 +91,6 @@ const formatCountdown = (iso: string | null, now: number, lang: Language): strin
   return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
 };
 
-const systemAlarmStateLabel = (state: SystemAlarmState, lang: Language): string => {
-  switch (state) {
-    case "armed":
-      return t(lang, "systemAlarm.state.armed");
-    case "stale":
-      return t(lang, "systemAlarm.state.stale");
-    case "not-installed":
-      return t(lang, "systemAlarm.state.notInstalled");
-    case "disabled":
-      return t(lang, "systemAlarm.state.disabled");
-    case "unsupported":
-      return t(lang, "systemAlarm.state.unsupported");
-    default:
-      return t(lang, "systemAlarm.state.error");
-  }
-};
-
-const systemAlarmTagClass = (state: SystemAlarmState): string => {
-  if (state === "armed") {
-    return "status-ok";
-  }
-  if (state === "stale" || state === "not-installed") {
-    return "status-low";
-  }
-  if (state === "error") {
-    return "status-error";
-  }
-  return "status-unknown";
-};
-
 const roundToStep = (value: unknown, min: number, max: number, step: number, fallback: number): number => {
   const numeric = Number(value) || fallback;
   const clamped = Math.min(max, Math.max(min, numeric));
@@ -137,6 +104,7 @@ export const App = () => {
   const [savingSettings, setSavingSettings] = useState(false);
   const [checkingAuth, setCheckingAuth] = useState(false);
   const [authMessage, setAuthMessage] = useState("");
+  const [claudeCommandCopied, setClaudeCommandCopied] = useState(false);
   const [lineFields, setLineFields] = useState({
     lineChannelAccessToken: "",
     lineChannelId: "",
@@ -148,8 +116,10 @@ export const App = () => {
   const [now, setNow] = useState<number>(Date.now());
   const [alarmStatus, setAlarmStatus] = useState<AlarmStatusReport | null>(null);
   const [alarmMessage, setAlarmMessage] = useState("");
-  const [rearmingAlarm, setRearmingAlarm] = useState(false);
+  const [confirmingAlarm, setConfirmingAlarm] = useState(false);
   const [checkingAlarm, setCheckingAlarm] = useState(false);
+  const [checkingQuota, setCheckingQuota] = useState(false);
+  const [quotaCheckMessage, setQuotaCheckMessage] = useState("");
   const lang = settings.language;
 
   useEffect(() => {
@@ -221,24 +191,36 @@ export const App = () => {
       setAlarmMessage("");
     } catch (error) {
       setAlarmMessage(
-        t(lang, "systemAlarm.checkFailed", { message: error instanceof Error ? error.message : String(error) })
+        t(lang, "alarm.checkFailed", { message: error instanceof Error ? error.message : String(error) })
       );
     } finally {
       setCheckingAlarm(false);
     }
   };
 
-  const rearmSystemAlarm = async () => {
-    setRearmingAlarm(true);
+  // The one action that makes the whole alarm section true: persist what the
+  // user just toggled, rebuild the in-app timers, re-sync the OS schedulers and
+  // re-probe them — then report back when the next alarm actually rings.
+  const confirmAlarmSettings = async () => {
+    setConfirmingAlarm(true);
     try {
-      setAlarmStatus(await window.usagePulse.rearmAlarm());
-      setAlarmMessage(t(lang, "systemAlarm.rearmed"));
+      setSettings(await window.usagePulse.saveSettings(clampSettings(settings)));
+      const report = await window.usagePulse.rearmAlarm();
+      setAlarmStatus(report);
+      setAlarmMessage(
+        report.nextTarget
+          ? t(lang, "alarm.confirmed", {
+              countdown: formatCountdown(report.nextTarget.fireAt, Date.now(), lang),
+              resetTime: formatResetText(report.nextTarget.fireAt, lang)
+            })
+          : t(lang, "alarm.confirmedNoTarget")
+      );
     } catch (error) {
       setAlarmMessage(
-        t(lang, "systemAlarm.rearmFailed", { message: error instanceof Error ? error.message : String(error) })
+        t(lang, "alarm.confirmFailed", { message: error instanceof Error ? error.message : String(error) })
       );
     } finally {
-      setRearmingAlarm(false);
+      setConfirmingAlarm(false);
     }
   };
 
@@ -248,14 +230,6 @@ export const App = () => {
       setAlarmMessage("");
     } catch (error) {
       setAlarmMessage(error instanceof Error ? error.message : t(lang, "alarm.testFailed"));
-    }
-  };
-
-  const openShortcutsApp = async () => {
-    try {
-      await window.usagePulse.openShortcutsApp();
-    } catch (error) {
-      setAlarmMessage(error instanceof Error ? error.message : t(lang, "settings.resetAlarm.openClockUnsupported"));
     }
   };
 
@@ -296,6 +270,29 @@ export const App = () => {
     }
   };
 
+  const runManualQuotaCheck = async () => {
+    setCheckingQuota(true);
+    try {
+      const result = await window.usagePulse.runManualCheck();
+      setSnapshot(result.snapshot);
+      setQuotaCheckMessage(result.reason);
+    } catch (error) {
+      setQuotaCheckMessage(error instanceof Error ? error.message : t(lang, "app.authRefreshFailed"));
+    } finally {
+      setCheckingQuota(false);
+    }
+  };
+
+  const copyClaudeLoginCommand = async () => {
+    try {
+      await window.usagePulse.copyToClipboard("claude");
+      setClaudeCommandCopied(true);
+      setTimeout(() => setClaudeCommandCopied(false), 3000);
+    } catch (error) {
+      console.error(error);
+    }
+  };
+
   const handleSensitivePaste = () => {
     window.usagePulse.clearClipboard().catch((error: unknown) => console.error(error));
   };
@@ -313,15 +310,6 @@ export const App = () => {
       await window.usagePulse.openExternal(THREADS_URL);
     } catch {
       // best-effort: opening the support link failing is not worth surfacing.
-    }
-  };
-
-  const openClockApp = async () => {
-    try {
-      await window.usagePulse.openClockApp();
-    } catch (error) {
-      const isUnsupported = error instanceof Error && error.message.includes("macOS-only");
-      console.error(t(lang, isUnsupported ? "settings.resetAlarm.openClockUnsupported" : "settings.resetAlarm.openClockFailed"));
     }
   };
 
@@ -398,7 +386,13 @@ export const App = () => {
       </section>
 
       <section className="panel">
-        <h2>{t(lang, "section.realtimeQuota")}</h2>
+        <div className="quota-header">
+          <h2>{t(lang, "section.realtimeQuota")}</h2>
+          <button type="button" className="warning-btn" style={{ width: "auto" }} onClick={runManualQuotaCheck} disabled={checkingQuota}>
+            {checkingQuota ? t(lang, "button.rechecking") : t(lang, "button.recheckNow")}
+          </button>
+        </div>
+        {quotaCheckMessage ? <p className="meta-text" style={{ marginBottom: "8px" }}>{quotaCheckMessage}</p> : null}
         <div className="quota-grid">
           {(["claude", "cursor"] as ServiceType[]).map((service) => {
             const item = snapshot?.[service];
@@ -426,6 +420,22 @@ export const App = () => {
                   ) : (
                     <p className="meta-text" style={{ marginTop: "8px" }}>{item?.message || t(lang, "app.notFetchedYet")}</p>
                   )}
+                  {item?.errorCode === "claudeLoginExpired" ? (
+                    <div className="callout-warning" style={{ marginTop: "8px" }}>
+                      <p style={{ margin: 0 }}>{t(lang, "auth.claude.reloginCta")}</p>
+                      <div style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "8px" }}>
+                        <code>claude</code>
+                        <button
+                          type="button"
+                          className="warning-btn"
+                          style={{ width: "auto" }}
+                          onClick={copyClaudeLoginCommand}
+                        >
+                          {claudeCommandCopied ? t(lang, "auth.claude.copied") : t(lang, "auth.claude.copyCommand")}
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
               );
             }
@@ -539,8 +549,8 @@ export const App = () => {
                 />
               </label>
 
-              <label className="field switch-row">
-                <span>{t(lang, "settings.resetAlarm.toggleLabel")}</span>
+              <label className="field switch-row" style={{ marginTop: "10px" }}>
+                <span>{t(lang, "alarm.when.service")}</span>
                 <input
                   type="checkbox"
                   className="toggle"
@@ -569,52 +579,6 @@ export const App = () => {
         })}
 
         <div className="quota-card service-block" style={{ marginTop: "12px" }}>
-          <div className="quota-header">
-            <strong>{t(lang, "alarm.title")}</strong>
-          </div>
-          <p className="meta-text" style={{ margin: "6px 0 10px" }}>{t(lang, "alarm.desc")}</p>
-
-          <label className="field switch-row">
-            <span>{t(lang, "alarm.popupToggle")}</span>
-            <input
-              type="checkbox"
-              className="toggle"
-              checked={settings.enableAlarmPopup}
-              onChange={(event) =>
-                setSettings((prev) => ({ ...prev, enableAlarmPopup: event.target.checked }))
-              }
-            />
-          </label>
-
-          <label className="field switch-row">
-            <span>{t(lang, "alarm.soundToggle")}</span>
-            <input
-              type="checkbox"
-              className="toggle"
-              checked={settings.alarmSoundEnabled}
-              onChange={(event) =>
-                setSettings((prev) => ({ ...prev, alarmSoundEnabled: event.target.checked }))
-              }
-            />
-          </label>
-
-          <label className="field">
-            <span>{t(lang, "alarm.autoDismiss", { minutes: settings.alarmPopupAutoDismissMinutes })}</span>
-            <input
-              type="range"
-              min={1}
-              max={30}
-              step={1}
-              value={settings.alarmPopupAutoDismissMinutes}
-              onChange={(event) =>
-                setSettings((prev) => ({
-                  ...prev,
-                  alarmPopupAutoDismissMinutes: Number(event.target.value) || prev.alarmPopupAutoDismissMinutes
-                }))
-              }
-            />
-          </label>
-
           <label className="field">
             <span>{t(lang, "alarm.catchUp", { minutes: settings.alarmCatchUpMinutes })}</span>
             <input
@@ -642,90 +606,69 @@ export const App = () => {
               : t(lang, "alarm.noTarget")}
           </p>
 
-          <button type="button" className="warning-btn" style={{ marginTop: "8px" }} onClick={testAlarmPopup}>
-            {t(lang, "alarm.testPopup")}
-          </button>
-        </div>
+          <p className="subsection-title">{t(lang, "alarm.how.title")}</p>
 
-        <div className="quota-card service-block" style={{ marginTop: "12px" }}>
-          <div className="quota-header">
-            <strong>{t(lang, "systemAlarm.title")}</strong>
-          </div>
-          <p className="meta-text" style={{ margin: "6px 0 4px" }}>{t(lang, "systemAlarm.desc")}</p>
+          <label className="field switch-row">
+            <span>{t(lang, "alarm.popupToggle")}</span>
+            <input
+              type="checkbox"
+              className="toggle"
+              checked={settings.enableAlarmPopup}
+              onChange={(event) =>
+                setSettings((prev) => ({ ...prev, enableAlarmPopup: event.target.checked }))
+              }
+            />
+          </label>
 
-          {(alarmStatus?.system ?? []).map((status) => {
-            const isWakeApp = status.kind === "wake-app";
-            const enabled = isWakeApp ? settings.enableSystemAlarmWakeApp : settings.enableSystemAlarmNative;
+          {settings.enableAlarmPopup && (
+            <div className="alarm-suboption">
+              <label className="field switch-row">
+                <span>{t(lang, "alarm.soundToggle")}</span>
+                <input
+                  type="checkbox"
+                  className="toggle"
+                  checked={settings.alarmSoundEnabled}
+                  onChange={(event) =>
+                    setSettings((prev) => ({ ...prev, alarmSoundEnabled: event.target.checked }))
+                  }
+                />
+              </label>
 
-            return (
-              <div key={status.kind} style={{ marginTop: "12px" }}>
-                <label className="field switch-row" style={{ marginBottom: "4px" }}>
-                  <span>{t(lang, isWakeApp ? "systemAlarm.wakeApp.label" : "systemAlarm.native.label")}</span>
-                  <input
-                    type="checkbox"
-                    className="toggle"
-                    checked={enabled}
-                    disabled={status.state === "unsupported"}
-                    onChange={(event) => {
-                      const checked = event.target.checked;
-                      setSettings((prev) =>
-                        isWakeApp
-                          ? { ...prev, enableSystemAlarmWakeApp: checked }
-                          : { ...prev, enableSystemAlarmNative: checked }
-                      );
-                    }}
-                  />
-                </label>
-
-                <div className="quota-header" style={{ marginBottom: "4px" }}>
-                  <span className="meta-text">
-                    {t(lang, isWakeApp ? "systemAlarm.wakeApp.hint" : "systemAlarm.native.hint")}
-                  </span>
-                  <span className={`status-tag ${systemAlarmTagClass(status.state)}`}>
-                    {systemAlarmStateLabel(status.state, lang)}
-                  </span>
-                </div>
-
-                {status.message ? <p className="meta-text">{status.message}</p> : null}
-                <p className="meta-text">
-                  {t(lang, "systemAlarm.verifiedAt", {
-                    time: new Date(status.verifiedAt).toLocaleTimeString()
-                  })}
-                </p>
-
-                {status.state === "not-installed" ? (
-                  <button
-                    type="button"
-                    className="warning-btn"
-                    style={{ marginTop: "6px" }}
-                    onClick={openShortcutsApp}
-                  >
-                    {t(lang, "systemAlarm.installShortcuts")}
-                  </button>
-                ) : null}
-              </div>
-            );
-          })}
-
-          <p className="meta-text" style={{ marginTop: "10px" }}>{t(lang, "systemAlarm.sleepHint")}</p>
+              <label className="field" style={{ marginBottom: 0 }}>
+                <span>{t(lang, "alarm.autoDismiss", { minutes: settings.alarmPopupAutoDismissMinutes })}</span>
+                <input
+                  type="range"
+                  min={1}
+                  max={30}
+                  step={1}
+                  value={settings.alarmPopupAutoDismissMinutes}
+                  onChange={(event) =>
+                    setSettings((prev) => ({
+                      ...prev,
+                      alarmPopupAutoDismissMinutes: Number(event.target.value) || prev.alarmPopupAutoDismissMinutes
+                    }))
+                  }
+                />
+              </label>
+            </div>
+          )}
 
           <button
             className="primary-btn"
-            style={{ marginTop: "8px" }}
-            onClick={rearmSystemAlarm}
-            disabled={rearmingAlarm}
+            style={{ marginTop: "12px" }}
+            onClick={confirmAlarmSettings}
+            disabled={confirmingAlarm}
           >
-            {rearmingAlarm ? t(lang, "systemAlarm.rearming") : t(lang, "systemAlarm.rearm")}
+            {confirmingAlarm ? t(lang, "alarm.confirming") : t(lang, "alarm.confirm")}
           </button>
-          <button
-            type="button"
-            className="warning-btn"
-            style={{ marginTop: "6px" }}
-            onClick={refreshAlarmStatus}
-            disabled={checkingAlarm}
-          >
-            {checkingAlarm ? t(lang, "systemAlarm.checking") : t(lang, "systemAlarm.check")}
-          </button>
+          <div className="alarm-actions-row">
+            <button type="button" className="warning-btn" onClick={refreshAlarmStatus} disabled={checkingAlarm}>
+              {checkingAlarm ? t(lang, "alarm.checking") : t(lang, "alarm.check")}
+            </button>
+            <button type="button" className="warning-btn" onClick={testAlarmPopup}>
+              {t(lang, "alarm.testRing")}
+            </button>
+          </div>
           {alarmMessage ? <p className="meta-text">{alarmMessage}</p> : null}
         </div>
 
@@ -736,9 +679,6 @@ export const App = () => {
           disabled={savingSettings}
         >
           {savingSettings ? t(lang, "button.saving") : t(lang, "button.saveSettings")}
-        </button>
-        <button type="button" className="warning-btn" style={{ marginTop: "8px" }} onClick={openClockApp}>
-          {t(lang, "settings.resetAlarm.openClock")}
         </button>
       </section>
 

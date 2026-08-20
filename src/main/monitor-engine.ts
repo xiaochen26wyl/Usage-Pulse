@@ -8,7 +8,7 @@ import { sendDesktopNotification } from "@main/notifiers";
 import { notificationStore, settingsStore, snapshotStore } from "@main/store";
 import { SERVICE_LABELS } from "./config";
 
-type TriggerType = "scheduled" | "manual" | "startup";
+type TriggerType = "scheduled" | "manual" | "startup" | "credential";
 type LowQuotaToggleKey = "enableCursorLowQuotaAlert" | "enableClaudeLowQuotaAlert";
 type IntervalKey = "cursorIntervalMinutes" | "claudeIntervalMinutes";
 type ThresholdKey = "cursorLowThresholdPercent" | "claudeLowThresholdPercent";
@@ -51,7 +51,7 @@ const makeQuotaSnapshot = (
   scrapeResult: ScrapeResult,
   threshold: number
 ): QuotaSnapshot => {
-  const { remaining, total, unit, resetsAt, resetLabel, weeklyResetAt, weeklyResetLabel, windows, message, isError } = scrapeResult;
+  const { remaining, total, unit, resetsAt, resetLabel, weeklyResetAt, weeklyResetLabel, windows, message, isError, errorCode } = scrapeResult;
   const percent = toPercent(remaining, total);
   const low = isLowQuota(percent, threshold);
   const status = isError ? "error" : low ? "low" : remaining === null ? "unknown" : "ok";
@@ -69,6 +69,7 @@ const makeQuotaSnapshot = (
     windows,
     status,
     message,
+    errorCode,
     fetchedAt: nowIso()
   };
 };
@@ -246,6 +247,17 @@ export class MonitorEngine extends EventEmitter {
     } finally {
       this.isRunning[service] = false;
     }
+  }
+
+  /**
+   * Runs one service's check on its own.
+   *
+   * The credential sweep uses this to give a rotated or expired credential an
+   * immediate chance to prove itself before anyone is notified; running both
+   * services there would double the API traffic for no reason.
+   */
+  async runServiceCheck(service: ServiceType, trigger: TriggerType): Promise<MonitorResult> {
+    return this.checkService(service, trigger);
   }
 
   async runCheck(trigger: TriggerType): Promise<MonitorResult> {
