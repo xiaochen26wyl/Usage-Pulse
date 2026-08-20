@@ -1,5 +1,5 @@
 import Store from "electron-store";
-import type { AppSettings, CombinedSnapshot } from "@shared/types";
+import type { AlarmFireRecord, AlarmSource, AppSettings, CombinedSnapshot } from "@shared/types";
 import { DEFAULT_SETTINGS } from "@main/config";
 import { decryptSecret, encryptSecret } from "@main/secure-store";
 
@@ -42,6 +42,7 @@ interface UsagePulseStore {
   lastNotificationKey: string;
   lastNotificationAt: string;
   notifications: Record<string, NotificationRecord>;
+  alarmFires: Record<string, AlarmFireRecord>;
 }
 
 const store = new Store<UsagePulseStore>({
@@ -51,7 +52,8 @@ const store = new Store<UsagePulseStore>({
     lastSnapshot: null,
     lastNotificationKey: "",
     lastNotificationAt: "",
-    notifications: {}
+    notifications: {},
+    alarmFires: {}
   }
 });
 
@@ -81,6 +83,12 @@ export const settingsStore = {
     merged.notifyCooldownMinutes = Number.isFinite(Number(merged.notifyCooldownMinutes))
       ? clamp(Number(merged.notifyCooldownMinutes), 1, 240)
       : 15;
+    merged.alarmPopupAutoDismissMinutes = Number.isFinite(Number(merged.alarmPopupAutoDismissMinutes))
+      ? clamp(Number(merged.alarmPopupAutoDismissMinutes), 1, 30)
+      : 5;
+    merged.alarmCatchUpMinutes = Number.isFinite(Number(merged.alarmCatchUpMinutes))
+      ? clamp(Number(merged.alarmCatchUpMinutes), 5, 180)
+      : 30;
     store.set("settings", encryptSettings(merged));
     return merged;
   }
@@ -121,5 +129,23 @@ export const notificationStore = {
       store.set("lastNotificationKey", key);
       store.set("lastNotificationAt", at);
     }
+  }
+};
+
+// Remembers which fireAt already rang for each alarm source. Every re-arm
+// (poll, wake, restart) consults this before replaying a missed firing, so a
+// catch-up happens exactly once no matter how often the schedule is rebuilt.
+export const alarmStore = {
+  get(id: AlarmSource): AlarmFireRecord | null {
+    const fires = store.get("alarmFires") as Record<string, AlarmFireRecord> | undefined;
+    return fires?.[id] ?? null;
+  },
+  set(id: AlarmSource, record: AlarmFireRecord): void {
+    store.set(`alarmFires.${id}`, record);
+  },
+  clear(id: AlarmSource): void {
+    const fires = { ...((store.get("alarmFires") as Record<string, AlarmFireRecord> | undefined) ?? {}) };
+    delete fires[id];
+    store.set("alarmFires", fires);
   }
 };

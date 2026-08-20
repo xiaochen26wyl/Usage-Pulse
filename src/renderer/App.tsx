@@ -1,12 +1,14 @@
 import { useEffect, useState } from "react";
 import type {
+  AlarmStatusReport,
   AppSettings,
   AuthStatus,
   CombinedSnapshot,
   Language,
   QuotaSnapshot,
   QuotaWindow,
-  ServiceType
+  ServiceType,
+  SystemAlarmState
 } from "@shared/types";
 import { t } from "@shared/i18n";
 
@@ -24,6 +26,12 @@ const defaultSettings: AppSettings = {
   enableCursorLowQuotaAlert: true,
   enableClaudeLowQuotaAlert: true,
   language: "zh",
+  enableAlarmPopup: true,
+  alarmSoundEnabled: true,
+  alarmPopupAutoDismissMinutes: 5,
+  alarmCatchUpMinutes: 30,
+  enableSystemAlarmWakeApp: false,
+  enableSystemAlarmNative: false,
   lineChannelAccessToken: "",
   lineChannelId: "",
   lineAssertionKid: "",
@@ -86,6 +94,36 @@ const formatCountdown = (iso: string | null, now: number, lang: Language): strin
   return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
 };
 
+const systemAlarmStateLabel = (state: SystemAlarmState, lang: Language): string => {
+  switch (state) {
+    case "armed":
+      return t(lang, "systemAlarm.state.armed");
+    case "stale":
+      return t(lang, "systemAlarm.state.stale");
+    case "not-installed":
+      return t(lang, "systemAlarm.state.notInstalled");
+    case "disabled":
+      return t(lang, "systemAlarm.state.disabled");
+    case "unsupported":
+      return t(lang, "systemAlarm.state.unsupported");
+    default:
+      return t(lang, "systemAlarm.state.error");
+  }
+};
+
+const systemAlarmTagClass = (state: SystemAlarmState): string => {
+  if (state === "armed") {
+    return "status-ok";
+  }
+  if (state === "stale" || state === "not-installed") {
+    return "status-low";
+  }
+  if (state === "error") {
+    return "status-error";
+  }
+  return "status-unknown";
+};
+
 const roundToStep = (value: unknown, min: number, max: number, step: number, fallback: number): number => {
   const numeric = Number(value) || fallback;
   const clamped = Math.min(max, Math.max(min, numeric));
@@ -108,6 +146,10 @@ export const App = () => {
   const [savingLineToken, setSavingLineToken] = useState(false);
   const [lineTokenMessage, setLineTokenMessage] = useState("");
   const [now, setNow] = useState<number>(Date.now());
+  const [alarmStatus, setAlarmStatus] = useState<AlarmStatusReport | null>(null);
+  const [alarmMessage, setAlarmMessage] = useState("");
+  const [rearmingAlarm, setRearmingAlarm] = useState(false);
+  const [checkingAlarm, setCheckingAlarm] = useState(false);
   const lang = settings.language;
 
   useEffect(() => {
@@ -116,14 +158,16 @@ export const App = () => {
   }, []);
 
   const refreshBaseData = async () => {
-    const [nextSettings, nextAuthStatus, latestSnapshot] = await Promise.all([
+    const [nextSettings, nextAuthStatus, latestSnapshot, nextAlarmStatus] = await Promise.all([
       window.usagePulse.getSettings(),
       window.usagePulse.getAuthStatus(),
-      window.usagePulse.getLatestSnapshot()
+      window.usagePulse.getLatestSnapshot(),
+      window.usagePulse.getAlarmStatus()
     ]);
     setSettings(nextSettings);
     setAuthStatus(nextAuthStatus);
     setSnapshot(latestSnapshot);
+    setAlarmStatus(nextAlarmStatus);
     setLineFields({
       lineChannelAccessToken: nextSettings.lineChannelAccessToken,
       lineChannelId: nextSettings.lineChannelId,
@@ -152,7 +196,9 @@ export const App = () => {
     claudeIntervalMinutes: roundToStep(value.claudeIntervalMinutes, 5, 60, 5, 10),
     cursorLowThresholdPercent: roundToStep(value.cursorLowThresholdPercent, 5, 30, 5, 20),
     claudeLowThresholdPercent: roundToStep(value.claudeLowThresholdPercent, 5, 30, 5, 20),
-    notifyCooldownMinutes: roundToStep(value.notifyCooldownMinutes, 5, 240, 5, 15)
+    notifyCooldownMinutes: roundToStep(value.notifyCooldownMinutes, 5, 240, 5, 15),
+    alarmPopupAutoDismissMinutes: roundToStep(value.alarmPopupAutoDismissMinutes, 1, 30, 1, 5),
+    alarmCatchUpMinutes: roundToStep(value.alarmCatchUpMinutes, 5, 180, 5, 30)
   });
 
   const handleSaveSettings = async () => {
@@ -160,10 +206,56 @@ export const App = () => {
     try {
       const next = await window.usagePulse.saveSettings(clampSettings(settings));
       setSettings(next);
+      setAlarmStatus(await window.usagePulse.getAlarmStatus());
     } catch (error) {
       console.error(error);
     } finally {
       setSavingSettings(false);
+    }
+  };
+
+  const refreshAlarmStatus = async () => {
+    setCheckingAlarm(true);
+    try {
+      setAlarmStatus(await window.usagePulse.getAlarmStatus());
+      setAlarmMessage("");
+    } catch (error) {
+      setAlarmMessage(
+        t(lang, "systemAlarm.checkFailed", { message: error instanceof Error ? error.message : String(error) })
+      );
+    } finally {
+      setCheckingAlarm(false);
+    }
+  };
+
+  const rearmSystemAlarm = async () => {
+    setRearmingAlarm(true);
+    try {
+      setAlarmStatus(await window.usagePulse.rearmAlarm());
+      setAlarmMessage(t(lang, "systemAlarm.rearmed"));
+    } catch (error) {
+      setAlarmMessage(
+        t(lang, "systemAlarm.rearmFailed", { message: error instanceof Error ? error.message : String(error) })
+      );
+    } finally {
+      setRearmingAlarm(false);
+    }
+  };
+
+  const testAlarmPopup = async () => {
+    try {
+      await window.usagePulse.testAlarmPopup();
+      setAlarmMessage("");
+    } catch (error) {
+      setAlarmMessage(error instanceof Error ? error.message : t(lang, "alarm.testFailed"));
+    }
+  };
+
+  const openShortcutsApp = async () => {
+    try {
+      await window.usagePulse.openShortcutsApp();
+    } catch (error) {
+      setAlarmMessage(error instanceof Error ? error.message : t(lang, "settings.resetAlarm.openClockUnsupported"));
     }
   };
 
@@ -332,7 +424,7 @@ export const App = () => {
                       {barWindows.map((window) => renderWindowBar(window, item!.unit, item?.status === "low"))}
                     </div>
                   ) : (
-                    <p className="meta-text" style={{ marginTop: "8px" }}>{t(lang, "app.notFetchedYet")}</p>
+                    <p className="meta-text" style={{ marginTop: "8px" }}>{item?.message || t(lang, "app.notFetchedYet")}</p>
                   )}
                 </div>
               );
@@ -475,6 +567,167 @@ export const App = () => {
             </div>
           );
         })}
+
+        <div className="quota-card service-block" style={{ marginTop: "12px" }}>
+          <div className="quota-header">
+            <strong>{t(lang, "alarm.title")}</strong>
+          </div>
+          <p className="meta-text" style={{ margin: "6px 0 10px" }}>{t(lang, "alarm.desc")}</p>
+
+          <label className="field switch-row">
+            <span>{t(lang, "alarm.popupToggle")}</span>
+            <input
+              type="checkbox"
+              className="toggle"
+              checked={settings.enableAlarmPopup}
+              onChange={(event) =>
+                setSettings((prev) => ({ ...prev, enableAlarmPopup: event.target.checked }))
+              }
+            />
+          </label>
+
+          <label className="field switch-row">
+            <span>{t(lang, "alarm.soundToggle")}</span>
+            <input
+              type="checkbox"
+              className="toggle"
+              checked={settings.alarmSoundEnabled}
+              onChange={(event) =>
+                setSettings((prev) => ({ ...prev, alarmSoundEnabled: event.target.checked }))
+              }
+            />
+          </label>
+
+          <label className="field">
+            <span>{t(lang, "alarm.autoDismiss", { minutes: settings.alarmPopupAutoDismissMinutes })}</span>
+            <input
+              type="range"
+              min={1}
+              max={30}
+              step={1}
+              value={settings.alarmPopupAutoDismissMinutes}
+              onChange={(event) =>
+                setSettings((prev) => ({
+                  ...prev,
+                  alarmPopupAutoDismissMinutes: Number(event.target.value) || prev.alarmPopupAutoDismissMinutes
+                }))
+              }
+            />
+          </label>
+
+          <label className="field">
+            <span>{t(lang, "alarm.catchUp", { minutes: settings.alarmCatchUpMinutes })}</span>
+            <input
+              type="range"
+              min={5}
+              max={180}
+              step={5}
+              value={settings.alarmCatchUpMinutes}
+              onChange={(event) =>
+                setSettings((prev) => ({
+                  ...prev,
+                  alarmCatchUpMinutes: Number(event.target.value) || prev.alarmCatchUpMinutes
+                }))
+              }
+            />
+          </label>
+          <p className="meta-text" style={{ margin: "0 0 8px" }}>{t(lang, "alarm.catchUpHint")}</p>
+
+          <p className="meta-text">
+            {alarmStatus?.nextTarget
+              ? t(lang, "alarm.nextFire", {
+                  countdown: formatCountdown(alarmStatus.nextTarget.fireAt, now, lang),
+                  resetTime: formatResetText(alarmStatus.nextTarget.fireAt, lang)
+                })
+              : t(lang, "alarm.noTarget")}
+          </p>
+
+          <button type="button" className="warning-btn" style={{ marginTop: "8px" }} onClick={testAlarmPopup}>
+            {t(lang, "alarm.testPopup")}
+          </button>
+        </div>
+
+        <div className="quota-card service-block" style={{ marginTop: "12px" }}>
+          <div className="quota-header">
+            <strong>{t(lang, "systemAlarm.title")}</strong>
+          </div>
+          <p className="meta-text" style={{ margin: "6px 0 4px" }}>{t(lang, "systemAlarm.desc")}</p>
+
+          {(alarmStatus?.system ?? []).map((status) => {
+            const isWakeApp = status.kind === "wake-app";
+            const enabled = isWakeApp ? settings.enableSystemAlarmWakeApp : settings.enableSystemAlarmNative;
+
+            return (
+              <div key={status.kind} style={{ marginTop: "12px" }}>
+                <label className="field switch-row" style={{ marginBottom: "4px" }}>
+                  <span>{t(lang, isWakeApp ? "systemAlarm.wakeApp.label" : "systemAlarm.native.label")}</span>
+                  <input
+                    type="checkbox"
+                    className="toggle"
+                    checked={enabled}
+                    disabled={status.state === "unsupported"}
+                    onChange={(event) => {
+                      const checked = event.target.checked;
+                      setSettings((prev) =>
+                        isWakeApp
+                          ? { ...prev, enableSystemAlarmWakeApp: checked }
+                          : { ...prev, enableSystemAlarmNative: checked }
+                      );
+                    }}
+                  />
+                </label>
+
+                <div className="quota-header" style={{ marginBottom: "4px" }}>
+                  <span className="meta-text">
+                    {t(lang, isWakeApp ? "systemAlarm.wakeApp.hint" : "systemAlarm.native.hint")}
+                  </span>
+                  <span className={`status-tag ${systemAlarmTagClass(status.state)}`}>
+                    {systemAlarmStateLabel(status.state, lang)}
+                  </span>
+                </div>
+
+                {status.message ? <p className="meta-text">{status.message}</p> : null}
+                <p className="meta-text">
+                  {t(lang, "systemAlarm.verifiedAt", {
+                    time: new Date(status.verifiedAt).toLocaleTimeString()
+                  })}
+                </p>
+
+                {status.state === "not-installed" ? (
+                  <button
+                    type="button"
+                    className="warning-btn"
+                    style={{ marginTop: "6px" }}
+                    onClick={openShortcutsApp}
+                  >
+                    {t(lang, "systemAlarm.installShortcuts")}
+                  </button>
+                ) : null}
+              </div>
+            );
+          })}
+
+          <p className="meta-text" style={{ marginTop: "10px" }}>{t(lang, "systemAlarm.sleepHint")}</p>
+
+          <button
+            className="primary-btn"
+            style={{ marginTop: "8px" }}
+            onClick={rearmSystemAlarm}
+            disabled={rearmingAlarm}
+          >
+            {rearmingAlarm ? t(lang, "systemAlarm.rearming") : t(lang, "systemAlarm.rearm")}
+          </button>
+          <button
+            type="button"
+            className="warning-btn"
+            style={{ marginTop: "6px" }}
+            onClick={refreshAlarmStatus}
+            disabled={checkingAlarm}
+          >
+            {checkingAlarm ? t(lang, "systemAlarm.checking") : t(lang, "systemAlarm.check")}
+          </button>
+          {alarmMessage ? <p className="meta-text">{alarmMessage}</p> : null}
+        </div>
 
         <button
           className="primary-btn"

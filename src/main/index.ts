@@ -1,13 +1,16 @@
 import { join } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { app, clipboard, ipcMain, Menu, shell } from "electron";
+import { app, clipboard, ipcMain, Menu, powerMonitor, shell } from "electron";
 import { menubar } from "menubar";
-import type { CombinedSnapshot, QuotaSnapshot } from "@shared/types";
+import type { AlarmStatusReport, CombinedSnapshot, QuotaSnapshot } from "@shared/types";
 import { t } from "@shared/i18n";
+import { alarmService } from "@main/alarm-service";
+import { destroyAlarmWindow, closeAlarmPopup, getAlarmPayload, snoozeAlarmPopup } from "@main/alarm-window";
 import { getAuthStatus } from "@main/auth-service";
 import { MonitorEngine } from "@main/monitor-engine";
 import { settingsStore } from "@main/store";
+import { probeSystemAlarms, syncSystemAlarms } from "@main/system-alarm";
 import { destroyTrayRenderer, initTrayRenderer, renderTrayImage } from "@main/tray-icon-renderer";
 
 const isMac = process.platform === "darwin";
@@ -15,7 +18,16 @@ const isDev = Boolean(process.env.ELECTRON_RENDERER_URL);
 const execFileAsync = promisify(execFile);
 
 if (process.platform === "win32") {
-  app.setAppUserModelId("com.zorawl.usagepulse");
+  app.setAppUserModelId("com.xiaochen26wyl.usagepulse");
+}
+
+// The "wake app" system alarm fires by launching this binary again. Without a
+// single-instance lock that would start a second copy instead of alerting the
+// one already sitting in the menu bar.
+const isAlarmLaunch = (argv: string[]): boolean => argv.some((arg) => arg.startsWith("--alarm-fired="));
+
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
 }
 
 const monitor = new MonitorEngine();
@@ -171,6 +183,9 @@ const setupIpcHandlers = (): void => {
     const next = settingsStore.update(patch);
     applyAutoLaunch(next.launchAtLogin);
     monitor.reschedule();
+    syncSystemAlarms(next, alarmService.nextTarget()).catch((error) => {
+      console.error("[Usage-Pulse] failed to sync system alarms", error);
+    });
     const latest = monitor.getLatestSnapshot();
     if (latest) {
       updateTrayText(latest);
@@ -198,6 +213,32 @@ const setupIpcHandlers = (): void => {
   ipcMain.handle("app:clear-clipboard", () => {
     clipboard.clear();
   });
+  ipcMain.handle("app:open-shortcuts", async () => {
+    if (!isMac) {
+      throw new Error("app:open-shortcuts is macOS-only");
+    }
+    await execFileAsync("open", ["-a", "Shortcuts"]);
+  });
+
+  ipcMain.handle("alarm:get-status", async (): Promise<AlarmStatusReport> => {
+    const system = await probeSystemAlarms(settingsStore.get());
+    return alarmService.getReport(system);
+  });
+  ipcMain.handle("alarm:rearm", async (): Promise<AlarmStatusReport> => {
+    alarmService.rearm("manual");
+    const system = await syncSystemAlarms(settingsStore.get(), alarmService.nextTarget());
+    return alarmService.getReport(system);
+  });
+  ipcMain.handle("alarm:test-popup", () => {
+    alarmService.showTestPopup();
+  });
+  ipcMain.handle("alarm:request-payload", () => getAlarmPayload());
+  ipcMain.handle("alarm:dismiss", () => {
+    closeAlarmPopup();
+  });
+  ipcMain.handle("alarm:snooze", () => {
+    snoozeAlarmPopup();
+  });
 };
 
 app.whenReady().then(async () => {
@@ -214,6 +255,20 @@ app.whenReady().then(async () => {
 
   monitor.on("error", (error: Error) => {
     console.error("[Usage-Pulse]", error.message);
+  });
+
+  // Chromium timers do not advance while the machine sleeps, so a timer armed
+  // before a sleep comes back late — or, for an alarm already past, not at all.
+  // Re-arming on wake is what lets the catch-up window replay it.
+  powerMonitor.on("resume", () => alarmService.rearm("resume"));
+  powerMonitor.on("unlock-screen", () => alarmService.rearm("unlock"));
+
+  app.on("second-instance", (_event, argv) => {
+    if (isAlarmLaunch(argv)) {
+      alarmService.rearm("manual");
+      return;
+    }
+    trayApp.showWindow();
   });
 
   trayApp.on("ready", async () => {
@@ -236,6 +291,13 @@ app.whenReady().then(async () => {
       }
     }
 
+    // Before the refresh, not after: a successful check moves resetsAt forward
+    // to the next cycle, which would erase the very firing we need to catch up.
+    alarmService.rearm("startup");
+    if (isAlarmLaunch(process.argv)) {
+      console.log("[Usage-Pulse] launched by a system alarm");
+    }
+
     await monitor.runCheck("startup").catch((error) => {
       console.error("[Usage-Pulse] startup check failed", error);
     });
@@ -245,6 +307,7 @@ app.whenReady().then(async () => {
 
 app.on("before-quit", () => {
   monitor.stop();
+  destroyAlarmWindow();
   destroyTrayRenderer();
 });
 

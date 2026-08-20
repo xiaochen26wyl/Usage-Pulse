@@ -2,6 +2,7 @@ import { EventEmitter } from "node:events";
 import type { AppSettings, CombinedSnapshot, MonitorResult, QuotaSnapshot, ScrapeResult, ServiceType } from "@shared/types";
 import { isDuplicateInCooldown } from "@shared/monitor-utils";
 import { t } from "@shared/i18n";
+import { alarmService } from "@main/alarm-service";
 import { scrapeQuota } from "@main/scrapers";
 import { sendDesktopNotification } from "@main/notifiers";
 import { notificationStore, settingsStore, snapshotStore } from "@main/store";
@@ -9,7 +10,6 @@ import { SERVICE_LABELS } from "./config";
 
 type TriggerType = "scheduled" | "manual" | "startup";
 type LowQuotaToggleKey = "enableCursorLowQuotaAlert" | "enableClaudeLowQuotaAlert";
-type ResetToggleKey = "enableCursorResetAlarm" | "enableClaudeResetAlarm";
 type IntervalKey = "cursorIntervalMinutes" | "claudeIntervalMinutes";
 type ThresholdKey = "cursorLowThresholdPercent" | "claudeLowThresholdPercent";
 
@@ -30,11 +30,6 @@ const lowQuotaToggleMap: Record<ServiceType, LowQuotaToggleKey> = {
   claude: "enableClaudeLowQuotaAlert"
 };
 
-const resetToggleMap: Record<ServiceType, ResetToggleKey> = {
-  cursor: "enableCursorResetAlarm",
-  claude: "enableClaudeResetAlarm"
-};
-
 const intervalKeyMap: Record<ServiceType, IntervalKey> = {
   cursor: "cursorIntervalMinutes",
   claude: "claudeIntervalMinutes"
@@ -47,7 +42,7 @@ const thresholdKeyMap: Record<ServiceType, ThresholdKey> = {
 
 const isToggleEnabled = (
   settings: AppSettings,
-  toggleMap: Record<ServiceType, LowQuotaToggleKey | ResetToggleKey>,
+  toggleMap: Record<ServiceType, LowQuotaToggleKey>,
   service: ServiceType
 ): boolean => settings[toggleMap[service]];
 
@@ -114,7 +109,6 @@ const SERVICES: ServiceType[] = ["cursor", "claude"];
 export class MonitorEngine extends EventEmitter {
   private timers: Record<ServiceType, NodeJS.Timeout | null> = { cursor: null, claude: null };
   private isRunning: Record<ServiceType, boolean> = { cursor: false, claude: false };
-  private resetAlarmTimers = new Map<string, NodeJS.Timeout>();
 
   private shouldNotify(scope: string, key: string, settings: AppSettings): boolean {
     const cooldownMs = settings.notifyCooldownMinutes * 60_000;
@@ -139,10 +133,7 @@ export class MonitorEngine extends EventEmitter {
         this.timers[service] = null;
       }
     }
-    for (const [, timer] of this.resetAlarmTimers.entries()) {
-      clearTimeout(timer);
-    }
-    this.resetAlarmTimers.clear();
+    alarmService.stop();
   }
 
   reschedule(): void {
@@ -159,69 +150,11 @@ export class MonitorEngine extends EventEmitter {
     }
 
     // Reapply alarms based on new settings
-    const current = snapshotStore.get();
-    if (current) {
-      this.updateAlarms(current, settings).catch((e) => console.error("[Usage-Pulse] Failed to reapply alarms", e));
-    }
+    alarmService.rearm("settings");
   }
 
   getLatestSnapshot(): CombinedSnapshot | null {
     return snapshotStore.get();
-  }
-
-  private async updateAlarms(snapshot: CombinedSnapshot, settings: AppSettings) {
-    for (const timer of this.resetAlarmTimers.values()) {
-      clearTimeout(timer);
-    }
-    this.resetAlarmTimers.clear();
-
-    const lang = settings.language;
-    const resetTargets = [
-      {
-        id: "cursor-billing",
-        service: "cursor" as const,
-        resetAt: snapshot.cursor.resetsAt,
-        label: snapshot.cursor.resetLabel || t(lang, "fallback.billingCycle")
-      },
-      {
-        id: "claude-session",
-        service: "claude" as const,
-        resetAt: snapshot.claude.resetsAt,
-        label: snapshot.claude.resetLabel || t(lang, "window.label.session")
-      },
-      {
-        id: "claude-weekly",
-        service: "claude" as const,
-        resetAt: snapshot.claude.weeklyResetAt,
-        label: snapshot.claude.weeklyResetLabel || t(lang, "window.label.weekly")
-      }
-    ];
-
-    for (const target of resetTargets) {
-      if (!isToggleEnabled(settings, resetToggleMap, target.service) || !target.resetAt) {
-        continue;
-      }
-
-      const fireAtMs = Date.parse(target.resetAt);
-      if (Number.isNaN(fireAtMs) || fireAtMs <= Date.now()) {
-        continue;
-      }
-
-      const timer = setTimeout(() => {
-        const latest = snapshotStore.get() ?? snapshot;
-        const scope = `reset:${target.id}`;
-        const key = `${target.id}|${target.resetAt}`;
-        if (!this.shouldNotify(scope, key, settings)) {
-          return;
-        }
-        sendDesktopNotification({
-          snapshot: latest,
-          reason: t(lang, "reason.resetFired", { service: SERVICE_LABELS[target.service], label: target.label })
-        });
-      }, fireAtMs - Date.now());
-
-      this.resetAlarmTimers.set(target.id, timer);
-    }
   }
 
   private async checkService(service: ServiceType, trigger: TriggerType): Promise<MonitorResult> {
@@ -301,7 +234,7 @@ export class MonitorEngine extends EventEmitter {
       this.emit("snapshot", combined);
 
       // Update alarms with the latest combined snapshot
-      await this.updateAlarms(combined, settings);
+      alarmService.rearm("poll");
 
       return {
         snapshot: combined,

@@ -346,3 +346,54 @@ button:disabled {
 .footer-link:hover {
   text-decoration: underline;
 }
+
+/* --- Timed alarm popup (alarm.html) --- */
+.alarm {
+  min-height: 100vh;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: #181d25;
+  border: 1px solid var(--color-border);
+  border-radius: 14px;
+}
+
+.alarm-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  -webkit-app-region: drag;
+}
+
+.alarm-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #ffffff;
+}
+
+.alarm-subject {
+  margin: 6px 0 0;
+  font-size: 14px;
+  color: var(--color-text);
+}
+
+.alarm-meta {
+  margin: 0;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.alarm-actions {
+  margin-top: auto;
+  padding-top: 12px;
+  display: flex;
+  gap: 8px;
+  -webkit-app-region: no-drag;
+}
+
+.alarm-actions button {
+  flex: 1;
+  margin: 0;
+}

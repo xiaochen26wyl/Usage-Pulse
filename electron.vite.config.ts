@@ -44,7 +44,10 @@ export default defineConfig({
     build: {
       outDir: "dist/renderer",
       rollupOptions: {
-        input: resolve("index.html")
+        input: {
+          index: resolve("index.html"),
+          alarm: resolve("alarm.html")
+        }
       }
     },
     resolve: {
