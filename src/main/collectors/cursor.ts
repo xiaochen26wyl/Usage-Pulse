@@ -180,7 +180,8 @@ export const collectCursorQuota = async (): Promise<ScrapeResult> => {
       unit: "usd",
       resetsAt,
       windows,
-      message: t(lang, "error.cursorMissingFields")
+      message: t(lang, "error.cursorMissingFields"),
+      source: "api"
     };
   }
 
@@ -195,6 +196,7 @@ export const collectCursorQuota = async (): Promise<ScrapeResult> => {
     unit: "usd",
     resetsAt,
     windows,
-    message: t(lang, "message.cursorSummary", { remaining: remainingText, total: totalText, suffix })
+    message: t(lang, "message.cursorSummary", { remaining: remainingText, total: totalText, suffix }),
+    source: "api"
   };
 };

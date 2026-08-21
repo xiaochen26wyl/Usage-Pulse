@@ -24,5 +24,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   language: "zh",
   enableAlarmPopup: true,
   alarmSoundEnabled: true,
-  lineChannelAccessToken: ""
+  lineChannelAccessToken: "",
+  claudeManualOAuthToken: "",
+  claudeUseCliActivityPolling: true,
+  claudeIdleIntervalMinutes: 30,
+  claudeUseLocalSessionLogs: true
 };

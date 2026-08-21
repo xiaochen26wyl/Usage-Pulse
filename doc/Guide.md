@@ -27,10 +27,37 @@
 #### Claude Code
 - Local source (priority order):
   - `CLAUDE_CODE_OAUTH_TOKEN`
+  - A token the user pasted in by hand (`claude setup-token`), stored encrypted
   - macOS Keychain `Claude Code-credentials`
   - `~/.claude/.credentials.json` (or `CLAUDE_CONFIG_DIR/.credentials.json`)
 - Remote source: `https://api.anthropic.com/api/oauth/usage`
+- Corroborating local source: `~/.claude/projects/**/*.jsonl`, read-only, only the
+  `quotaLimits` records — see "Restraint on the usage API" below
 - Metrics: remaining percentage for the 5-hour window and weekly quota
+
+#### Manual credential entry (CLI users)
+Automatic detection gets two goes before the user is interrupted. After two
+consecutive sweeps conclude the Claude Code credential is unusable, a focusable
+window opens with the `claude setup-token` command and a field to paste the
+result into. The token is verified against the usage API before it is stored,
+never written if it fails, encrypted at rest, and never handed back to a
+renderer — `settings:get` returns a placeholder. Settings has a button to
+reopen the window or clear the stored token.
+
+### Restraint on the usage API
+
+Usage-Pulse deliberately keeps its request volume to Anthropic low.
+
+- **Activity-driven polling.** Claude Code re-arms a timeout after each tick
+  rather than running on a fixed interval. If neither the CLI's session logs nor
+  the credential have changed since the last fetch, the request is skipped
+  entirely and the next tick is pushed out to the idle interval (default 30 min).
+- **A single rate floor.** Every automatic trigger — the schedule, the credential
+  sweep's self-heal, a rotation — passes through one minimum gap (5 minutes).
+  Only an explicit user action and the single-shot confirmation re-read may pass.
+- **Local corroboration first.** When a held alert needs a second opinion, the
+  CLI's own `quotaLimits` records are consulted before any request is made; a
+  rejection recorded for the same window settles it for free.
 
 ### Completed features
 - Electron + React + TypeScript project skeleton
@@ -43,6 +70,26 @@
 - GitHub Actions Release (tag-triggered `.dmg` / `.exe`)
 - CI quality gates (typecheck, readonly guard, unit tests, build, smoke build)
 
+
+### Alarm trigger precision
+
+An alarm is only raised from a reading the app can stand behind.
+
+- **Cold readings are held.** A reading is "cold" when it, or the reading before
+  it, was a failed fetch, an unparseable payload, or no data at all. A credential
+  that could not be read looks exactly like a quota that ran out, so a cold
+  reading raises nothing on any channel — no popup, no LINE bubble, no desktop
+  notification. If it nevertheless looks like an emergency, one confirmation is
+  scheduled 90 seconds later; the alert fires only if the state survives it.
+- **A reset alarm only rings for a firing it watched.** A `fireAt` is recorded
+  when it is first seen while still in the future, and only such a `fireAt` may
+  ring. A reset time first seen when it was already past is a gap in the app's
+  own observation — the machine was off, the credential was unreadable — not a
+  reset that just happened. Sleep and restart catch-up is unaffected, because the
+  previous session recorded the firing as pending.
+- **An outage does not disarm a real alarm.** A failed fetch blanks `resetsAt`,
+  which used to silently cancel a pending alarm. The last trustworthy reset time
+  per source is remembered and armed from instead.
 
 ### Timed alarm
 
@@ -127,10 +174,31 @@ Two failure modes of the old reset alert are fixed here:
 #### Claude Code
 - 本機來源（優先序）：
   - `CLAUDE_CODE_OAUTH_TOKEN`
+  - 使用者手動貼上的 token（`claude setup-token`），加密存放
   - macOS Keychain `Claude Code-credentials`
   - `~/.claude/.credentials.json`（或 `CLAUDE_CONFIG_DIR/.credentials.json`）
 - 遠端來源：`https://api.anthropic.com/api/oauth/usage`
+- 佐證用本機來源：`~/.claude/projects/**/*.jsonl`，唯讀，且只取 `quotaLimits`
+  紀錄——詳見下方「對 usage API 的節制」
 - 指標：5 小時視窗與每週配額剩餘百分比
+
+#### 手動輸入憑證（CLI 使用者）
+自動偵測會先試兩次才打擾使用者。連續兩輪掃描都判定 Claude Code 憑證不可用之後，才會彈出一個
+可聚焦的視窗，裡面有 `claude setup-token` 指令與貼上結果的輸入格。token 會先向 usage API 驗證
+過才儲存，驗證失敗一律不寫入；存放時加密，而且永遠不會回傳給任何 renderer——`settings:get`
+只回一個佔位字串。設定頁有按鈕可以重新叫出這個視窗或清除已存的 token。
+
+### 對 usage API 的節制
+
+Usage-Pulse 刻意把送往 Anthropic 的請求次數壓到最低。
+
+- **活動驅動輪詢**：Claude Code 不跑固定 interval，而是每次 tick 後自行重排。若 CLI 的 session
+  紀錄與憑證自上次抓取以來都沒有動靜，就**完全跳過**這次請求，並把下一次 tick 推到閒置間隔
+  （預設 30 分鐘）。
+- **單一最小間隔**：排程、憑證掃描的自我修復、憑證輪替等所有自動觸發，都要通過同一道 5 分鐘的
+  最小間隔；只有使用者明確操作與那一次單發的補確認可以通過。
+- **先查本機再打 API**：被暫緩的警告需要第二意見時，先看 CLI 自己的 `quotaLimits` 紀錄；同一個
+  視窗有被拒絕的紀錄就直接成立，一個請求都不用花。
 
 ### 已完成功能
 - Electron + React + TypeScript 專案骨架
@@ -143,6 +211,20 @@ Two failure modes of the old reset alert are fixed here:
 - GitHub Actions Release（tag 觸發 `.dmg` / `.exe`）
 - CI 品質檢查（typecheck、readonly guard、unit test、build、smoke build）
 
+
+### 警告觸發精確度
+
+只有站得住腳的資料才會觸發警告。
+
+- **冷讀一律暫緩**：當這一筆、或前一筆是抓取失敗、無法解析、或根本沒資料時，這次讀數就算「冷讀」。
+  讀不到憑證跟配額真的用完長得一模一樣，所以冷讀不會從任何管道發出東西——沒有彈窗、沒有 LINE、
+  沒有桌面通知。若它看起來仍像緊急狀況，會在 90 秒後安排一次補確認，狀態撐過去才真的發警告。
+- **到點鬧鐘只為自己看著跑完的那一次響**：某個 `fireAt` 要在還沒到期時被觀察到才會被記錄，也只有
+  被記錄過的 `fireAt` 才有資格響。第一次看到就已經是過去式的重置時間，是我們自己觀察上的空窗
+  （機器關著、憑證讀不到），不是剛剛發生了重置。睡眠與重啟的補發不受影響，因為上一輪 session
+  早就把它記成 pending 了。
+- **中斷不會把真的鬧鐘解除掉**：抓取失敗會讓 `resetsAt` 變成 null，過去這會靜靜取消一個待響的
+  鬧鐘。現在每個來源最後一次可信的重置時間都會被記住，中斷期間改用它來排程。
 
 ### 到點提醒
 

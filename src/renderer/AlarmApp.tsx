@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { AlarmPopupPayload, ServiceType } from "@shared/types";
 import { ALARM_POPUP_AUTO_DISMISS_MINUTES, formatCountdown } from "@shared/alarm-utils";
-import { t } from "@shared/i18n";
+import { t, type TranslationKey } from "@shared/i18n";
 
 const serviceNames: Record<ServiceType, string> = {
   cursor: "Cursor",
@@ -43,6 +43,24 @@ const playChime = (context: AudioContext): void => {
     oscillator.start(begin);
     oscillator.stop(begin + 0.34);
   }
+};
+
+/**
+ * The popup used to announce "Quota reset" whatever it was actually about, so a
+ * low-quota or used-up warning claimed a reset that had not happened. The title
+ * now follows the alert that opened it.
+ */
+const alarmTitleKey = (id: AlarmPopupPayload["id"]): TranslationKey => {
+  if (id === "claude-cooldown") {
+    return "alarm.popup.title.cooldown";
+  }
+  if (id.endsWith("-exhausted")) {
+    return "alarm.popup.title.exhausted";
+  }
+  if (id.endsWith("-low")) {
+    return "alarm.popup.title.low";
+  }
+  return "alarm.popup.title";
 };
 
 export const AlarmApp = () => {
@@ -104,7 +122,7 @@ export const AlarmApp = () => {
   return (
     <main className="alarm">
       <div className="alarm-head">
-        <strong className="alarm-title">{t(lang, "alarm.popup.title")}</strong>
+        <strong className="alarm-title">{t(lang, alarmTitleKey(payload.id))}</strong>
       </div>
 
       <p className="alarm-subject">

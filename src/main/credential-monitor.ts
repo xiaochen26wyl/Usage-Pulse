@@ -6,12 +6,15 @@ import {
   EXPIRING_SOON_MS,
   classifyCredentialState,
   isCredentialCheckDue,
-  isCredentialUnusable
+  isCredentialUnusable,
+  nextAutoFailureCount,
+  shouldOfferManualEntry
 } from "@shared/credential-utils";
 import { isDuplicateInCooldown } from "@shared/monitor-utils";
 import { t } from "@shared/i18n";
 import { readClaudeCredential, readCursorCredential, type RawCredential } from "@main/credential-provider";
 import { buildPlainAlertFlex } from "@shared/line-templates";
+import { showManualCredentialWindow } from "@main/credential-window";
 import { sendLineBroadcast } from "@main/line-notifier";
 import { sendPlainDesktopNotification } from "@main/notifiers";
 import { credentialStore, notificationStore, settingsStore, type CredentialRecord } from "@main/store";
@@ -139,6 +142,7 @@ export class CredentialMonitor extends EventEmitter {
 
     if (isCredentialUnusable(settled.state)) {
       this.notifyUnusable(service, settled);
+      this.maybeOfferManualEntry(service, settled);
     }
 
     this.emit("auth", this.getStatus());
@@ -176,7 +180,15 @@ export class CredentialMonitor extends EventEmitter {
     const rotatedAt = rotated ? checkedAt : previous?.rotatedAt ?? null;
 
     return {
-      record: { fingerprint: digest, expiresAt: result.expiresAt, rotatedAt, checkedAt, state },
+      record: {
+        fingerprint: digest,
+        expiresAt: result.expiresAt,
+        rotatedAt,
+        checkedAt,
+        state,
+        autoFailureCount: nextAutoFailureCount(previous?.autoFailureCount, isCredentialUnusable(state)),
+        manualPromptShownAt: previous?.manualPromptShownAt ?? null
+      },
       status: { service, state, expiresAt: result.expiresAt, rotatedAt, checkedAt }
     };
   }
@@ -196,7 +208,12 @@ export class CredentialMonitor extends EventEmitter {
       expiresAt: null,
       rotatedAt: probe.status.rotatedAt,
       checkedAt: probe.status.checkedAt,
-      state: probe.status.state
+      state: probe.status.state,
+      autoFailureCount: nextAutoFailureCount(
+        previous?.autoFailureCount,
+        isCredentialUnusable(probe.status.state)
+      ),
+      manualPromptShownAt: previous?.manualPromptShownAt ?? null
     });
     return probe.status;
   }
@@ -211,6 +228,65 @@ export class CredentialMonitor extends EventEmitter {
       // A failed quota call is itself evidence the credential is dead; the
       // re-probe that follows is what decides whether to notify.
     }
+  }
+
+  /**
+   * Offers the paste-a-token window, but only once automatic detection has
+   * genuinely had two goes at it.
+   *
+   * Claude Code only: Cursor's credential lives in a database the user cannot
+   * reasonably transcribe, so there is no manual equivalent to offer.
+   */
+  private maybeOfferManualEntry(service: ServiceType, status: CredentialStatus): void {
+    if (service !== "claude") {
+      return;
+    }
+    const record = credentialStore.get(service);
+    const failureCount = record?.autoFailureCount ?? 0;
+    if (!shouldOfferManualEntry(failureCount, record?.manualPromptShownAt, Date.now())) {
+      return;
+    }
+    this.openManualEntry(service, status);
+  }
+
+  /**
+   * Opens the window and stamps the prompt, so a credential that stays broken
+   * does not reopen it on every sweep. Also the entry point for the user asking
+   * for it from Settings, which is why it is public and skips the streak test.
+   */
+  openManualEntry(service: ServiceType, status?: CredentialStatus): void {
+    const settings = settingsStore.get();
+    const current = status ?? this.cachedStatus(service);
+    const record = credentialStore.get(service);
+
+    credentialStore.set(service, {
+      fingerprint: record?.fingerprint ?? "",
+      expiresAt: record?.expiresAt ?? null,
+      rotatedAt: record?.rotatedAt ?? null,
+      checkedAt: record?.checkedAt ?? nowIso(),
+      state: record?.state ?? current.state,
+      autoFailureCount: record?.autoFailureCount ?? 0,
+      manualPromptShownAt: nowIso()
+    });
+
+    showManualCredentialWindow({
+      service,
+      state: current.state,
+      message: current.message ?? t(settings.language, "notification.credentialExpired", {
+        service: SERVICE_LABELS[service]
+      }),
+      language: settings.language,
+      hasStoredToken: Boolean(settings.claudeManualOAuthToken)
+    });
+  }
+
+  /** Clears the failure streak after a manual token has proved itself. */
+  resetFailureStreak(service: ServiceType): void {
+    const record = credentialStore.get(service);
+    if (!record) {
+      return;
+    }
+    credentialStore.set(service, { ...record, autoFailureCount: 0 });
   }
 
   private notifyUnusable(service: ServiceType, status: CredentialStatus): void {

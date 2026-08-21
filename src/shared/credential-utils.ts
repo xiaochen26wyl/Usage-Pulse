@@ -64,3 +64,45 @@ export const isCredentialCheckDue = (
 // opposed to one that is merely approaching its refresh.
 export const isCredentialUnusable = (state: CredentialState): boolean =>
   state === "expired" || state === "missing" || state === "error";
+
+// How many *completed* sweeps must conclude "unusable" before the app stops
+// trying on its own and asks the user to paste a token. Two, because automatic
+// detection deserves a genuine second attempt: a single failure is routinely a
+// Keychain prompt that timed out or an IDE mid-rotation, and interrupting for
+// that would be worse than waiting one more cycle.
+export const MANUAL_PROMPT_MIN_FAILURES = 2;
+
+// A credential that stays broken must not reopen the window on every sweep.
+export const MANUAL_PROMPT_REPEAT_MS = 24 * 60 * 60_000;
+
+/**
+ * The running count of consecutive failed automatic attempts.
+ *
+ * Any usable read resets it: the point is to count a *streak* of failures, not
+ * failures ever seen. Note that one sweep is one attempt even though it retries
+ * internally (read → poke the API → re-read); the streak counts conclusions.
+ */
+export const nextAutoFailureCount = (previous: number | undefined, unusable: boolean): number =>
+  unusable ? (previous ?? 0) + 1 : 0;
+
+/**
+ * Whether to put the manual-token window in front of the user right now.
+ */
+export const shouldOfferManualEntry = (
+  failureCount: number,
+  lastPromptedAt: string | null | undefined,
+  nowMs: number,
+  repeatMs: number = MANUAL_PROMPT_REPEAT_MS
+): boolean => {
+  if (failureCount < MANUAL_PROMPT_MIN_FAILURES) {
+    return false;
+  }
+  if (!lastPromptedAt) {
+    return true;
+  }
+  const lastMs = Date.parse(lastPromptedAt);
+  if (Number.isNaN(lastMs)) {
+    return true;
+  }
+  return nowMs - lastMs >= repeatMs;
+};

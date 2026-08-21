@@ -11,15 +11,24 @@ import {
   classifyFire,
   clampTimeoutMs,
   collectAlarmTargets,
+  mayFire,
   nextTarget
 } from "@shared/alarm-utils";
+import { isTrusted } from "@shared/snapshot-trust";
 import { t } from "@shared/i18n";
 import { SERVICE_LABELS } from "@main/config";
 import { buildPlainAlertFlex } from "@shared/line-templates";
 import { showAlarmPopup } from "@main/alarm-window";
 import { sendLineBroadcast } from "@main/line-notifier";
 import { sendDesktopNotification } from "@main/notifiers";
-import { alarmStore, notificationStore, settingsStore, snapshotStore } from "@main/store";
+import {
+  alarmLastGoodStore,
+  alarmPendingStore,
+  alarmStore,
+  notificationStore,
+  settingsStore,
+  snapshotStore
+} from "@main/store";
 
 export type RearmReason = "startup" | "settings" | "poll" | "resume" | "unlock" | "manual" | "clamped";
 
@@ -55,10 +64,16 @@ export class AlarmService {
       return [];
     }
 
-    const targets = collectAlarmTargets(snapshot, settings, settings.language);
+    const targets = collectAlarmTargets(snapshot, settings, settings.language, alarmLastGoodStore.getAll());
     const nowMs = Date.now();
 
     for (const target of targets) {
+      // Remember every reset time we saw while its snapshot was healthy, so a
+      // later credential outage cannot blank it out from under a pending alarm.
+      if (isTrusted(snapshot[target.service])) {
+        alarmLastGoodStore.set(target.id, target.fireAt, nowIso());
+      }
+
       const fireClass = classifyFire(target.fireAt, nowMs);
 
       if (fireClass === "expired") {
@@ -66,9 +81,21 @@ export class AlarmService {
       }
 
       if (fireClass === "due") {
+        if (!mayFire(target.fireAt, alarmPendingStore.get(target.id)?.fireAt)) {
+          // First sighting, and it is already past. Consume it so a later
+          // re-arm does not keep reconsidering it, but stay quiet: we never
+          // watched this window run down, so we cannot claim it just reset.
+          alarmStore.set(target.id, { fireAt: target.fireAt, firedAt: nowIso() });
+          console.log(`[Usage-Pulse] alarm ${target.id} skipped: fireAt was never observed pending`);
+          continue;
+        }
         this.fire(target);
         continue;
       }
+
+      // Still in the future: this is the observation that earns it the right to
+      // ring later.
+      alarmPendingStore.set(target.id, { fireAt: target.fireAt, seenAt: nowIso() });
 
       const deltaMs = Date.parse(target.fireAt) - nowMs;
       // A wait longer than a signed 32-bit int would fire instantly, so park on
@@ -96,7 +123,9 @@ export class AlarmService {
   getReport(): AlarmStatusReport {
     const settings = settingsStore.get();
     const snapshot = snapshotStore.get();
-    const targets = snapshot ? collectAlarmTargets(snapshot, settings, settings.language) : [];
+    const targets = snapshot
+      ? collectAlarmTargets(snapshot, settings, settings.language, alarmLastGoodStore.getAll())
+      : [];
     return {
       nextTarget: nextTarget(targets, Date.now())
     };
@@ -108,7 +137,10 @@ export class AlarmService {
     if (!snapshot) {
       return null;
     }
-    return nextTarget(collectAlarmTargets(snapshot, settings, settings.language), Date.now());
+    return nextTarget(
+      collectAlarmTargets(snapshot, settings, settings.language, alarmLastGoodStore.getAll()),
+      Date.now()
+    );
   }
 
   showTestPopup(): void {

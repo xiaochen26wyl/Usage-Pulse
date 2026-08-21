@@ -4,7 +4,16 @@ import { join } from "node:path";
 const root = process.cwd();
 const targetDir = join(root, "src", "main");
 
-const sensitiveHints = ["state.vscdb", ".credentials.json", "claude code-credentials", "cursorauth/accesstoken"];
+const sensitiveHints = [
+  "state.vscdb",
+  ".credentials.json",
+  "claude code-credentials",
+  "cursorauth/accesstoken",
+  // The Claude Code CLI session logs. Not a credential, but the same rule
+  // applies: Usage-Pulse reads the IDE's own files and never writes to them.
+  "claude_config_dir",
+  ".jsonl"
+];
 const writeHints = [
   "writefile(",
   "writefilesync(",

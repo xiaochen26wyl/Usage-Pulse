@@ -6,6 +6,8 @@ import type {
   AuthStatus,
   CombinedSnapshot,
   CredentialStatus,
+  ManualCredentialContext,
+  ManualTokenResult,
   ServiceType
 } from "@shared/types";
 
@@ -16,6 +18,17 @@ const api = {
   getAuthStatus: () => ipcRenderer.invoke("auth:status") as Promise<AuthStatus>,
   checkAuth: (service: ServiceType) => ipcRenderer.invoke("auth:check", service) as Promise<CredentialStatus>,
   getLatestSnapshot: () => ipcRenderer.invoke("monitor:get-latest") as Promise<CombinedSnapshot | null>,
+  openManualCredential: (service: ServiceType) =>
+    ipcRenderer.invoke("credential:open-manual", service) as Promise<void>,
+  requestManualCredentialContext: () =>
+    ipcRenderer.invoke("credential:request-manual-context") as Promise<ManualCredentialContext | null>,
+  // One-way only: the token goes to main to be verified and stored, and no
+  // channel exists to read it back.
+  submitManualToken: (token: string) =>
+    ipcRenderer.invoke("credential:submit-manual-token", token) as Promise<ManualTokenResult>,
+  dismissManualCredential: () => ipcRenderer.invoke("credential:dismiss-manual") as Promise<void>,
+  clearManualCredential: (service: ServiceType) =>
+    ipcRenderer.invoke("credential:clear-manual", service) as Promise<void>,
   quitApp: () => ipcRenderer.invoke("app:quit") as Promise<void>,
   openExternal: (url: string) => ipcRenderer.invoke("app:open-external", url) as Promise<void>,
   clearClipboard: () => ipcRenderer.invoke("app:clear-clipboard") as Promise<void>,
@@ -31,6 +44,13 @@ const api = {
     ipcRenderer.on("alarm:payload", listener);
     return () => {
       ipcRenderer.removeListener("alarm:payload", listener);
+    };
+  },
+  onManualCredentialContext: (handler: (context: ManualCredentialContext) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, context: ManualCredentialContext) => handler(context);
+    ipcRenderer.on("credential:manual-context", listener);
+    return () => {
+      ipcRenderer.removeListener("credential:manual-context", listener);
     };
   },
   onAuthUpdated: (handler: (status: AuthStatus) => void) => {

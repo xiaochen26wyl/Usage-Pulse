@@ -1,37 +1,25 @@
-import { readFileSync } from "node:fs";
-import { extname } from "node:path";
 import { BrowserWindow, nativeImage, type NativeImage } from "electron";
 
 // macOS's Tray.setTitle() can't reliably fit two stacked lines: on the
 // classic ~22pt menu bar row (external displays, non-notched Macs) the
 // system font is too tall and the top line renders off the top edge of the
-// screen. Rendering the icon and the two lines ourselves onto a small canvas
-// and handing Tray.setImage() the resulting bitmap gives full control over
-// layout so it always fits, regardless of the host Mac's menu bar height.
+// screen. Rendering the two lines ourselves onto a small canvas and handing
+// Tray.setImage() the resulting bitmap gives full control over layout so it
+// always fits, regardless of the host Mac's menu bar height. Text only, no
+// icon glyph — at menu-bar scale any icon derived from the app's artwork
+// either loses legibility or leaves an oversized gap before the text.
 const CANVAS_WIDTH = 190;
 const CANVAS_HEIGHT = 40;
 const SCALE_FACTOR = 2;
-const ICON_SIZE = 26;
 const PADDING = 6;
-const ICON_TEXT_GAP = 3;
 
 let rendererWindow: BrowserWindow | null = null;
 let loadPromise: Promise<void> | null = null;
-let iconLoadPromise: Promise<void> | null = null;
 
 const RENDERER_HTML = `<!DOCTYPE html>
 <html><body style="margin:0">
 <canvas id="c" width="${CANVAS_WIDTH}" height="${CANVAS_HEIGHT}"></canvas>
 <script>
-let iconImg = null;
-
-window.loadIcon = (dataUrl) => new Promise((resolve) => {
-  const img = new Image();
-  img.onload = () => { iconImg = img; resolve(true); };
-  img.onerror = () => { iconImg = null; resolve(false); };
-  img.src = dataUrl;
-});
-
 window.renderTray = (line1, line2) => {
   const canvas = document.getElementById("c");
   const ctx = canvas.getContext("2d");
@@ -43,14 +31,7 @@ window.renderTray = (line1, line2) => {
   ctx.textBaseline = "middle";
 
   const padding = ${PADDING};
-  const iconSize = ${ICON_SIZE};
-  const iconTextGap = ${ICON_TEXT_GAP};
-  let textStartX = padding;
-  if (iconImg) {
-    const iconY = (canvas.height - iconSize) / 2;
-    ctx.drawImage(iconImg, padding, iconY, iconSize, iconSize);
-    textStartX = padding + iconSize + iconTextGap;
-  }
+  const textStartX = padding;
 
   const maxWidth = canvas.width - textStartX - padding;
   const textCenterX = textStartX + maxWidth / 2;
@@ -103,36 +84,8 @@ const ensureRendererWindow = async (): Promise<BrowserWindow> => {
   return rendererWindow;
 };
 
-const mimeTypeFor = (path: string): string => {
-  const ext = extname(path).toLowerCase();
-  if (ext === ".jpg" || ext === ".jpeg") {
-    return "image/jpeg";
-  }
-  if (ext === ".gif") {
-    return "image/gif";
-  }
-  return "image/png";
-};
-
-// Preloads the app's tray icon into the offscreen canvas once so every
-// renderTray() call afterwards can draw it synchronously alongside the text.
-export const initTrayRenderer = async (iconPath: string): Promise<void> => {
-  const win = await ensureRendererWindow();
-  const buffer = readFileSync(iconPath);
-  const dataUrl = `data:${mimeTypeFor(iconPath)};base64,${buffer.toString("base64")}`;
-  iconLoadPromise = win.webContents
-    .executeJavaScript(`window.loadIcon(${JSON.stringify(dataUrl)})`)
-    .then(() => undefined);
-  await iconLoadPromise.catch((error) => {
-    console.error("[Usage-Pulse] tray icon preload failed", error);
-  });
-};
-
 export const renderTrayImage = async (line1: string, line2: string): Promise<NativeImage> => {
   const win = await ensureRendererWindow();
-  if (iconLoadPromise) {
-    await iconLoadPromise.catch(() => undefined);
-  }
   const dataUrl = (await win.webContents.executeJavaScript(
     `window.renderTray(${JSON.stringify(line1)}, ${JSON.stringify(line2)})`
   )) as string;
@@ -146,5 +99,4 @@ export const destroyTrayRenderer = (): void => {
   }
   rendererWindow = null;
   loadPromise = null;
-  iconLoadPromise = null;
 };

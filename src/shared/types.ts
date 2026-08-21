@@ -15,6 +15,11 @@ export interface QuotaWindow {
   message?: string;
 }
 
+// Where a snapshot's numbers came from. "api" is the official usage endpoint;
+// "cli-log" is the local Claude Code session log, which can corroborate a
+// lockout without spending an API request.
+export type QuotaSource = "api" | "cli-log";
+
 export interface QuotaSnapshot {
   service: ServiceType;
   remaining: number | null;
@@ -29,6 +34,7 @@ export interface QuotaSnapshot {
   status: QuotaStatus;
   message: string;
   errorCode?: ErrorCode;
+  source?: QuotaSource;
   fetchedAt: string;
 }
 
@@ -94,7 +100,25 @@ export interface AppSettings {
   enableAlarmPopup: boolean;
   alarmSoundEnabled: boolean;
   lineChannelAccessToken: string;
+  // A Claude Code OAuth token the user pasted in themselves (`claude
+  // setup-token`), used when automatic detection cannot reach the Keychain or
+  // the credentials file. Stored encrypted and never handed back to a renderer
+  // in cleartext — see CLAUDE_MANUAL_TOKEN_MASK.
+  claudeManualOAuthToken: string;
+  // Poll Claude Code only when its CLI has actually been active since the last
+  // successful fetch, stretching to claudeIdleIntervalMinutes when it has not.
+  // This exists to *reduce* request volume, not to increase it.
+  claudeUseCliActivityPolling: boolean;
+  claudeIdleIntervalMinutes: number;
+  // Read quota events out of the local Claude Code session logs. Credential-free
+  // and costs no API request, but the log directory also holds conversation
+  // content, so it is opt-outable.
+  claudeUseLocalSessionLogs: boolean;
 }
+
+// What a renderer sees in place of a stored manual token. The renderer only
+// ever needs to know whether one is set, so the value itself never crosses IPC.
+export const CLAUDE_MANUAL_TOKEN_MASK = "__stored__";
 
 export interface MonitorResult {
   snapshot: CombinedSnapshot;
@@ -116,6 +140,7 @@ export interface ScrapeResult {
   message: string;
   isError?: boolean;
   errorCode?: ErrorCode;
+  source?: QuotaSource;
 }
 
 export interface NotifyPayload {
@@ -138,6 +163,24 @@ export interface AlarmTarget {
 export interface AlarmFireRecord {
   fireAt: string;
   firedAt: string;
+}
+
+// Records that a given fireAt was observed while it was still in the future.
+// An alarm only rings for a fireAt it has seen pending: a reset time we first
+// laid eyes on when it was already past is a gap in our own observation, not a
+// reset that just happened, and ringing for it is how a freshly recovered
+// credential used to manufacture a bogus alarm.
+export interface AlarmObservation {
+  fireAt: string;
+  seenAt: string;
+}
+
+// The last reset time each alarm source was seen carrying while its snapshot
+// was still trustworthy. A credential outage blanks resetsAt, which would
+// otherwise silently disarm a real pending alarm.
+export interface AlarmLastGoodRecord {
+  fireAt: string;
+  observedAt: string;
 }
 
 // Ids for the independent low-quota-style popups, one per alert configured in
@@ -171,4 +214,21 @@ export interface AlarmPopupPayload {
 
 export interface AlarmStatusReport {
   nextTarget: AlarmTarget | null;
+}
+
+
+// What the manual-credential window needs to render itself: which service is
+// stuck and why automatic detection gave up.
+export interface ManualCredentialContext {
+  service: ServiceType;
+  state: CredentialState;
+  message: string;
+  language: Language;
+  hasStoredToken: boolean;
+}
+
+// The outcome of validating a pasted token. `message` is already localized.
+export interface ManualTokenResult {
+  ok: boolean;
+  message: string;
 }

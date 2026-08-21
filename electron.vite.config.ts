@@ -46,7 +46,8 @@ export default defineConfig({
       rollupOptions: {
         input: {
           index: resolve("index.html"),
-          alarm: resolve("alarm.html")
+          alarm: resolve("alarm.html"),
+          credential: resolve("credential.html")
         }
       }
     },

@@ -1,6 +1,8 @@
 import Store from "electron-store";
 import type {
   AlarmFireRecord,
+  AlarmLastGoodRecord,
+  AlarmObservation,
   AlarmSource,
   AppSettings,
   CombinedSnapshot,
@@ -13,7 +15,7 @@ import { decryptSecret, encryptSecret } from "@main/secure-store";
 // Settings fields listed here are encrypted at rest via the OS keychain (see secure-store.ts)
 // whenever they're written to the electron-store JSON file, and decrypted on read. Add future
 // secrets (e.g. additional LINE keys) to this list rather than storing them in plain text.
-const SECRET_SETTINGS_KEYS: Array<keyof AppSettings> = ["lineChannelAccessToken"];
+const SECRET_SETTINGS_KEYS: Array<keyof AppSettings> = ["lineChannelAccessToken", "claudeManualOAuthToken"];
 
 const asStringRecord = (settings: AppSettings) => settings as unknown as Record<string, string>;
 
@@ -47,6 +49,13 @@ export interface CredentialRecord {
   rotatedAt: string | null;
   checkedAt: string;
   state: CredentialState;
+  // How many *completed* sweeps in a row concluded the credential is unusable.
+  // Reset to 0 by any usable read. The manual-entry window is only offered once
+  // automatic detection has genuinely failed twice.
+  autoFailureCount?: number;
+  // When the manual-entry window was last put in front of the user, so a
+  // persistently broken credential does not reopen it on every sweep.
+  manualPromptShownAt?: string | null;
 }
 
 interface UsagePulseStore {
@@ -56,6 +65,8 @@ interface UsagePulseStore {
   lastNotificationAt: string;
   notifications: Record<string, NotificationRecord>;
   alarmFires: Record<string, AlarmFireRecord>;
+  alarmPending: Record<string, AlarmObservation>;
+  alarmLastGood: Record<string, AlarmLastGoodRecord>;
   credentials: Record<string, CredentialRecord>;
 }
 
@@ -68,6 +79,8 @@ const store = new Store<UsagePulseStore>({
     lastNotificationAt: "",
     notifications: {},
     alarmFires: {},
+    alarmPending: {},
+    alarmLastGood: {},
     credentials: {}
   }
 });
@@ -101,6 +114,7 @@ export const settingsStore = {
     merged.cursorModelsLowThresholdPercent = clamp(Number(merged.cursorModelsLowThresholdPercent || 20), 5, 30);
     merged.claudeSessionLowThresholdPercent = clamp(Number(merged.claudeSessionLowThresholdPercent || 20), 5, 30);
     merged.claudeWeeklyLowThresholdPercent = clamp(Number(merged.claudeWeeklyLowThresholdPercent || 20), 5, 30);
+    merged.claudeIdleIntervalMinutes = clamp(Number(merged.claudeIdleIntervalMinutes || 30), 10, 120);
     merged.notifyCooldownMinutes = Number.isFinite(Number(merged.notifyCooldownMinutes))
       ? clamp(Number(merged.notifyCooldownMinutes), 1, 240)
       : 15;
@@ -162,6 +176,36 @@ export const alarmStore = {
     const fires = { ...((store.get("alarmFires") as Record<string, AlarmFireRecord> | undefined) ?? {}) };
     delete fires[id];
     store.set("alarmFires", fires);
+  }
+};
+
+// Remembers which fireAt was seen while still pending, per alarm source. An
+// alarm only rings for a fireAt recorded here: see AlarmObservation.
+export const alarmPendingStore = {
+  get(id: AlarmSource): AlarmObservation | null {
+    const seen = store.get("alarmPending") as Record<string, AlarmObservation> | undefined;
+    return seen?.[id] ?? null;
+  },
+  set(id: AlarmSource, record: AlarmObservation): void {
+    store.set(`alarmPending.${id}`, record);
+  }
+};
+
+// Remembers the last trustworthy reset time per alarm source, so a credential
+// outage that blanks resetsAt cannot silently disarm a real pending alarm.
+export const alarmLastGoodStore = {
+  getAll(): Partial<Record<AlarmSource, string>> {
+    const records = store.get("alarmLastGood") as Record<string, AlarmLastGoodRecord> | undefined;
+    const result: Partial<Record<AlarmSource, string>> = {};
+    for (const [id, record] of Object.entries(records ?? {})) {
+      if (record?.fireAt) {
+        result[id as AlarmSource] = record.fireAt;
+      }
+    }
+    return result;
+  },
+  set(id: AlarmSource, fireAt: string, observedAt: string): void {
+    store.set(`alarmLastGood.${id}`, { fireAt, observedAt });
   }
 };
 

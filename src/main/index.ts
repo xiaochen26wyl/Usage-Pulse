@@ -1,14 +1,28 @@
 import { join } from "node:path";
 import { app, clipboard, ipcMain, Menu, powerMonitor, shell } from "electron";
 import { menubar } from "menubar";
-import type { AlarmStatusReport, AuthStatus, CombinedSnapshot, CredentialStatus, QuotaSnapshot, ServiceType } from "@shared/types";
+import type {
+  AlarmStatusReport,
+  AppSettings,
+  AuthStatus,
+  CombinedSnapshot,
+  CredentialStatus,
+  ManualCredentialContext,
+  ManualTokenResult,
+  QuotaSnapshot,
+  ServiceType
+} from "@shared/types";
+import { CLAUDE_MANUAL_TOKEN_MASK } from "@shared/types";
 import { t } from "@shared/i18n";
 import { alarmService } from "@main/alarm-service";
 import { destroyAlarmWindow, closeAlarmPopup, getAlarmPayload, snoozeAlarmPopup } from "@main/alarm-window";
+import { validateClaudeOAuthToken } from "@main/collectors/claude-code";
 import { credentialMonitor } from "@main/credential-monitor";
+import { setManualClaudeTokenProvider } from "@main/credential-provider";
+import { closeManualCredentialWindow, getManualCredentialContext } from "@main/credential-window";
 import { MonitorEngine } from "@main/monitor-engine";
 import { settingsStore } from "@main/store";
-import { destroyTrayRenderer, initTrayRenderer, renderTrayImage } from "@main/tray-icon-renderer";
+import { destroyTrayRenderer, renderTrayImage } from "@main/tray-icon-renderer";
 
 const isMac = process.platform === "darwin";
 const isDev = Boolean(process.env.ELECTRON_RENDERER_URL);
@@ -27,6 +41,11 @@ if (!app.requestSingleInstanceLock()) {
 }
 
 const monitor = new MonitorEngine();
+
+// Wired before anything can read a credential: the hand-entered token has to be
+// visible to the provider from the very first sweep, not only after the first
+// settings save.
+setManualClaudeTokenProvider(() => settingsStore.get().claudeManualOAuthToken);
 
 // Explicit icon path: menubar's own default-icon fallback resolves via a
 // __dirname-relative lookup that breaks once menubar is bundled into
@@ -173,17 +192,35 @@ const buildTrayMenu = (): Menu =>
     }
   ]);
 
+// The manual Claude Code token is the one secret a renderer never gets to see.
+// It is a working credential for the usage API, and the UI only ever needs to
+// know whether one is stored, so it leaves the main process as a placeholder.
+const maskSecrets = (settings: AppSettings): AppSettings => ({
+  ...settings,
+  claudeManualOAuthToken: settings.claudeManualOAuthToken ? CLAUDE_MANUAL_TOKEN_MASK : ""
+});
+
+// ...and a patch carrying the placeholder back is a no-op, not an instruction
+// to overwrite the real token with the mask.
+const stripMaskedSecrets = (patch: Partial<AppSettings>): Partial<AppSettings> => {
+  if (patch.claudeManualOAuthToken !== CLAUDE_MANUAL_TOKEN_MASK) {
+    return patch;
+  }
+  const { claudeManualOAuthToken: _masked, ...rest } = patch;
+  return rest;
+};
+
 const setupIpcHandlers = (): void => {
-  ipcMain.handle("settings:get", () => settingsStore.get());
-  ipcMain.handle("settings:save", (_event, patch) => {
-    const next = settingsStore.update(patch);
+  ipcMain.handle("settings:get", () => maskSecrets(settingsStore.get()));
+  ipcMain.handle("settings:save", (_event, patch: Partial<AppSettings>) => {
+    const next = settingsStore.update(stripMaskedSecrets(patch));
     applyAutoLaunch(next.launchAtLogin);
     monitor.reschedule();
     const latest = monitor.getLatestSnapshot();
     if (latest) {
       updateTrayText(latest);
     }
-    return next;
+    return maskSecrets(next);
   });
 
   ipcMain.handle("auth:status", (): AuthStatus => credentialMonitor.getStatus());
@@ -192,6 +229,51 @@ const setupIpcHandlers = (): void => {
   ipcMain.handle("auth:check", (_event, service: ServiceType): Promise<CredentialStatus> =>
     credentialMonitor.check(service)
   );
+
+  // The manual-token flow. Only reachable after automatic detection has failed
+  // twice, or when the user asks for it from Settings.
+  ipcMain.handle("credential:open-manual", (_event, service: ServiceType) => {
+    credentialMonitor.openManualEntry(service);
+  });
+  ipcMain.handle(
+    "credential:request-manual-context",
+    (): ManualCredentialContext | null => getManualCredentialContext()
+  );
+  ipcMain.handle("credential:dismiss-manual", () => {
+    closeManualCredentialWindow();
+  });
+  ipcMain.handle("credential:clear-manual", async (_event, service: ServiceType) => {
+    if (service !== "claude") {
+      return;
+    }
+    settingsStore.update({ claudeManualOAuthToken: "" });
+    await credentialMonitor.check("claude");
+  });
+  // Validate first, store second: a token that cannot fetch is never written,
+  // so a typo can never outrank the automatic sources.
+  ipcMain.handle("credential:submit-manual-token", async (_event, token: string): Promise<ManualTokenResult> => {
+    const lang = settingsStore.get().language;
+    const trimmed = typeof token === "string" ? token.trim() : "";
+    if (!trimmed) {
+      return { ok: false, message: t(lang, "manualToken.error.empty") };
+    }
+
+    try {
+      await validateClaudeOAuthToken(trimmed);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : t(lang, "scrape.unknownError");
+      return { ok: false, message: detail };
+    }
+
+    settingsStore.update({ claudeManualOAuthToken: trimmed });
+    credentialMonitor.resetFailureStreak("claude");
+    closeManualCredentialWindow();
+    await credentialMonitor.check("claude");
+    await monitor.runServiceCheck("claude", "manual").catch((error) => {
+      console.error("[Usage-Pulse] refresh after manual token failed", error);
+    });
+    return { ok: true, message: t(lang, "manualToken.saved") };
+  });
 
   ipcMain.handle("monitor:get-latest", () => monitor.getLatestSnapshot());
   ipcMain.handle("app:quit", () => {
@@ -282,10 +364,6 @@ app.whenReady().then(async () => {
     trayApp.tray?.on("right-click", () => {
       trayApp.tray?.popUpContextMenu(buildTrayMenu());
     });
-
-    if (isMac) {
-      await initTrayRenderer(trayIconPath);
-    }
 
     const latest = monitor.getLatestSnapshot();
     if (latest) {

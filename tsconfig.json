@@ -7,5 +7,15 @@
     {
       "path": "./tsconfig.web.json"
     }
-  ]
+  ],
+  // Not used for compilation (files is empty; the referenced projects carry
+  // their own paths). This is here so the test runner, which reads the root
+  // tsconfig, can resolve the same @shared/@main aliases the app uses.
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@shared/*": ["./src/shared/*"],
+      "@main/*": ["./src/main/*"]
+    }
+  }
 }

@@ -62,6 +62,23 @@ h2 {
   color: var(--color-text-muted);
 }
 
+.app-title-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.app-logo {
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+}
+
+.app-title-text {
+  flex: 1;
+  min-width: 0;
+}
+
 .quota-grid {
   display: grid;
   grid-template-columns: 1fr;
@@ -289,6 +306,11 @@ button:disabled {
   border-color: var(--color-primary-strong);
 }
 
+/* The neutral counterpart to .primary-btn: base button styling, no accent. */
+.ghost-btn {
+  width: 100%;
+}
+
 .danger-btn {
   width: 100%;
   color: var(--color-danger);
@@ -332,6 +354,14 @@ button:disabled {
   line-height: 1.5;
 }
 
+/* Validation message under a form field — same size as .meta-text, but in the
+   danger colour so a refused save is not mistaken for a success notice. */
+.form-error {
+  margin: 8px 0 0;
+  color: var(--color-danger);
+  font-size: 13px;
+}
+
 .callout-warning code {
   background: rgba(0, 0, 0, 0.25);
   border-radius: 6px;
@@ -359,14 +389,15 @@ button:disabled {
   text-decoration: underline;
 }
 
-/* License + "free forever" notice: quieter than the credit line above it, but
-   deliberately always visible — it is the app's standing statement, not a tip. */
+/* License notice: same brightness as the credit line above it — it's a
+   standing statement, not a de-emphasized footnote. Left-aligned and placed
+   after the "free forever" line. */
 .footer p.footer-license {
-  margin: 8px 0 0;
+  margin: 4px 0 0;
   font-size: 11px;
   line-height: 1.5;
-  color: #6e7681;
-  text-align: center;
+  color: #8b949e;
+  text-align: left;
 }
 
 .footer p.footer-free {
@@ -424,6 +455,101 @@ button:disabled {
 }
 
 .alarm-actions button {
+  flex: 1;
+  margin: 0;
+}
+
+/* --- Manual credential entry (credential.html) --- */
+.manual-token {
+  min-height: 100vh;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: #181d25;
+}
+
+.manual-token-title {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+  color: #ffffff;
+}
+
+.manual-token-intro {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-text);
+}
+
+.manual-token-reason {
+  margin: 0 0 4px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--color-border);
+  background: rgba(255, 187, 85, 0.08);
+  font-size: 12px;
+  color: var(--color-warning);
+}
+
+.manual-token-step {
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: var(--color-text);
+}
+
+.manual-token-command {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.manual-token-command code {
+  flex: 1;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--color-border);
+  background: #10141b;
+  font-size: 13px;
+  color: var(--color-text);
+}
+
+.manual-token-command button {
+  width: auto;
+  margin: 0;
+  white-space: nowrap;
+}
+
+.manual-token-input {
+  width: 100%;
+  padding: 9px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--color-border);
+  background: #10141b;
+  color: var(--color-text);
+  font-size: 13px;
+}
+
+.manual-token-meta {
+  margin: 0;
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+
+.manual-token-error {
+  margin: 0;
+  font-size: 12px;
+  color: var(--color-danger);
+}
+
+.manual-token-actions {
+  margin-top: auto;
+  padding-top: 12px;
+  display: flex;
+  gap: 8px;
+}
+
+.manual-token-actions button {
   flex: 1;
   margin: 0;
 }

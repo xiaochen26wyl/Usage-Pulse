@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ClipboardEvent, type KeyboardEvent } from "react";
 import type {
   AlarmStatusReport,
   AppSettings,
@@ -13,6 +13,13 @@ import type {
 } from "@shared/types";
 import { ALARM_POPUP_AUTO_DISMISS_MINUTES, formatCountdown } from "@shared/alarm-utils";
 import { t, type TranslationKey } from "@shared/i18n";
+import appLogo from "./assets/app-logo.png";
+
+// The token is masked with a fixed-length run of asterisks rather than one per
+// character: a channel access token is ~170 characters, and echoing its real
+// length both overflows the field and leaks something about the secret.
+const TOKEN_MASK_MAX = 10;
+const maskToken = (token: string): string => "*".repeat(Math.min(token.length, TOKEN_MASK_MAX));
 
 const THREADS_URL = "https://www.threads.com/@xiaochen26wyl";
 const LINE_URL = "https://lin.ee/6XYi49XZ";
@@ -41,7 +48,11 @@ const defaultSettings: AppSettings = {
   language: "zh",
   enableAlarmPopup: true,
   alarmSoundEnabled: true,
-  lineChannelAccessToken: ""
+  lineChannelAccessToken: "",
+  claudeManualOAuthToken: "",
+  claudeUseCliActivityPolling: true,
+  claudeIdleIntervalMinutes: 30,
+  claudeUseLocalSessionLogs: true
 };
 
 const emptyCredential = (service: ServiceType): CredentialStatus => ({
@@ -142,7 +153,10 @@ export const App = () => {
   const [claudeCommandCopied, setClaudeCommandCopied] = useState(false);
   const [lineToken, setLineToken] = useState("");
   const [savingLineToken, setSavingLineToken] = useState(false);
-  const [lineTokenMessage, setLineTokenMessage] = useState("");
+  const [lineTokenMessage, setLineTokenMessage] = useState<{ text: string; isError: boolean }>({
+    text: "",
+    isError: false
+  });
   const [now, setNow] = useState<number>(Date.now());
   const [alarmStatus, setAlarmStatus] = useState<AlarmStatusReport | null>(null);
   const [alarmMessage, setAlarmMessage] = useState("");
@@ -196,6 +210,7 @@ export const App = () => {
     cursorModelsLowThresholdPercent: roundToStep(value.cursorModelsLowThresholdPercent, 5, 30, 5, 20),
     claudeSessionLowThresholdPercent: roundToStep(value.claudeSessionLowThresholdPercent, 5, 30, 5, 20),
     claudeWeeklyLowThresholdPercent: roundToStep(value.claudeWeeklyLowThresholdPercent, 5, 30, 5, 20),
+    claudeIdleIntervalMinutes: roundToStep(value.claudeIdleIntervalMinutes, 10, 120, 10, 30),
     notifyCooldownMinutes: roundToStep(value.notifyCooldownMinutes, 5, 240, 5, 15)
   });
 
@@ -280,6 +295,11 @@ export const App = () => {
   };
 
   const handleSaveLineCredentials = async () => {
+    if (!lineToken.trim()) {
+      setLineTokenMessage({ text: t(lang, "line.missing"), isError: true });
+      return;
+    }
+
     setSavingLineToken(true);
     try {
       const next = await window.usagePulse.saveSettings({
@@ -287,7 +307,7 @@ export const App = () => {
       });
       setSettings(next);
       setLineToken(next.lineChannelAccessToken);
-      setLineTokenMessage(t(lang, "line.saved"));
+      setLineTokenMessage({ text: t(lang, "line.saved"), isError: false });
     } catch (error) {
       console.error(error);
     } finally {
@@ -305,8 +325,61 @@ export const App = () => {
     }
   };
 
-  const handleSensitivePaste = () => {
+  const clearSystemClipboard = () => {
     window.usagePulse.clearClipboard().catch((error: unknown) => console.error(error));
+  };
+
+  // The pasted text is applied by hand instead of letting the browser do it:
+  // clearing the system clipboard raced the default paste action, which is why
+  // pasting a token used to leave the field empty.
+  const handleTokenPaste = (event: ClipboardEvent<HTMLInputElement>) => {
+    event.preventDefault();
+    const pasted = event.clipboardData.getData("text").trim();
+    if (pasted) {
+      setLineToken(pasted);
+      setLineTokenMessage({ text: "", isError: false });
+    }
+    clearSystemClipboard();
+  };
+
+  // The field shows the mask, not the token, so every edit is applied to the
+  // real value held in state rather than to what is on screen.
+  const handleTokenKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    // Let the shortcuts through: cmd+V arrives as a paste event, and cmd+A has
+    // to reach the field so "select all, then retype" can clear a long token —
+    // backspacing a 170-character token one asterisk at a time is no way out.
+    if (event.metaKey || event.ctrlKey || event.altKey) {
+      return;
+    }
+
+    const field = event.currentTarget;
+    const wholeMaskSelected =
+      field.selectionStart === 0 && field.selectionEnd === field.value.length && field.value.length > 0;
+
+    if (event.key === "Backspace" || event.key === "Delete") {
+      event.preventDefault();
+      setLineToken((prev) => (wholeMaskSelected ? "" : prev.slice(0, -1)));
+      setLineTokenMessage({ text: "", isError: false });
+      return;
+    }
+    if (event.key.length === 1) {
+      event.preventDefault();
+      setLineToken((prev) => (wholeMaskSelected ? event.key : prev + event.key));
+      setLineTokenMessage({ text: "", isError: false });
+    }
+  };
+
+  // settings:get hands back a placeholder for the manual token, never the token
+  // itself, so all the UI can know is whether one is stored.
+  const hasManualToken = Boolean(settings.claudeManualOAuthToken);
+
+  const clearManualToken = async () => {
+    try {
+      await window.usagePulse.clearManualCredential("claude");
+      await refreshBaseData();
+    } catch (error) {
+      console.error(error);
+    }
   };
 
   const quitApp = async () => {
@@ -371,9 +444,35 @@ export const App = () => {
           <p className="meta-text" style={{ margin: "2px 0 0" }}>{credential.message}</p>
         ) : null}
         {message ? <p className="meta-text" style={{ margin: "2px 0 0" }}>{message}</p> : null}
+        {service === "claude" ? renderManualCredentialRow() : null}
       </div>
     );
   };
+
+  // Claude Code only. The window this opens is normally offered on its own once
+  // automatic detection has failed twice; this is the way back to it for anyone
+  // who dismissed it, or who wants to swap the stored token out.
+  const renderManualCredentialRow = () => (
+    <div className="quota-header" style={{ marginTop: "8px", gap: "8px" }}>
+      <span className="meta-text" style={{ margin: 0 }}>
+        {hasManualToken ? t(lang, "manualToken.inUse") : ""}
+      </span>
+      <div style={{ display: "flex", gap: "8px" }}>
+        <button
+          type="button"
+          style={{ width: "auto" }}
+          onClick={() => window.usagePulse.openManualCredential("claude")}
+        >
+          {t(lang, "manualToken.openButton")}
+        </button>
+        {hasManualToken ? (
+          <button type="button" className="danger-btn" style={{ width: "auto" }} onClick={clearManualToken}>
+            {t(lang, "manualToken.clearButton")}
+          </button>
+        ) : null}
+      </div>
+    </div>
+  );
 
   const renderUsagePercentBar = (window: QuotaWindow, service: ServiceType) => (
     <div className="window-bar" key={window.key}>
@@ -511,17 +610,22 @@ export const App = () => {
   return (
     <main className="app">
       <section className="panel">
-        <div className="quota-header">
-          <h1>Usage-Pulse</h1>
-          <button
-            className="lang-toggle"
-            onClick={toggleLanguage}
-            title={t(lang, "settings.language")}
-          >
-            {lang === "zh" ? "EN" : "中文"}
-          </button>
+        <div className="app-title-row">
+          <img src={appLogo} alt="" className="app-logo" />
+          <div className="app-title-text">
+            <div className="quota-header">
+              <h1>Usage-Pulse</h1>
+              <button
+                className="lang-toggle"
+                onClick={toggleLanguage}
+                title={t(lang, "settings.language")}
+              >
+                {lang === "zh" ? "EN" : "中文"}
+              </button>
+            </div>
+            <p className="subtitle">{t(lang, "app.subtitle")}</p>
+          </div>
         </div>
-        <p className="subtitle">{t(lang, "app.subtitle")}</p>
       </section>
 
       <section className="panel">
@@ -684,6 +788,56 @@ export const App = () => {
           {renderToggleOnlyRow("alertLabel.claudeCooldown", "enableClaudeCooldownAlert")}
 
           <label className="field switch-row" style={{ marginTop: "10px" }}>
+            <span>{t(lang, "settings.claudeActivityPolling")}</span>
+            <input
+              type="checkbox"
+              className="toggle"
+              checked={settings.claudeUseCliActivityPolling}
+              onChange={(event) =>
+                setSettings((prev) => ({ ...prev, claudeUseCliActivityPolling: event.target.checked }))
+              }
+            />
+          </label>
+          {settings.claudeUseCliActivityPolling ? (
+            <>
+              <p className="meta-text" style={{ margin: "2px 0 0", color: "#8b949e", fontSize: "12px" }}>
+                {t(lang, "settings.claudeActivityPolling.hint", { minutes: settings.claudeIdleIntervalMinutes })}
+              </p>
+              <label className="field">
+                <span>{t(lang, "settings.claudeIdleInterval", { minutes: settings.claudeIdleIntervalMinutes })}</span>
+                <input
+                  type="range"
+                  min={10}
+                  max={120}
+                  step={10}
+                  value={settings.claudeIdleIntervalMinutes}
+                  onChange={(event) =>
+                    setSettings((prev) => ({
+                      ...prev,
+                      claudeIdleIntervalMinutes: Number(event.target.value) || prev.claudeIdleIntervalMinutes
+                    }))
+                  }
+                />
+              </label>
+            </>
+          ) : null}
+
+          <label className="field switch-row" style={{ marginTop: "10px" }}>
+            <span>{t(lang, "settings.claudeLocalLogs")}</span>
+            <input
+              type="checkbox"
+              className="toggle"
+              checked={settings.claudeUseLocalSessionLogs}
+              onChange={(event) =>
+                setSettings((prev) => ({ ...prev, claudeUseLocalSessionLogs: event.target.checked }))
+              }
+            />
+          </label>
+          <p className="meta-text" style={{ margin: "2px 0 0", color: "#8b949e", fontSize: "12px" }}>
+            {t(lang, "settings.claudeLocalLogs.hint")}
+          </p>
+
+          <label className="field switch-row" style={{ marginTop: "10px" }}>
             <span>{t(lang, "alarm.when.service")}</span>
             <input
               type="checkbox"
@@ -791,23 +945,25 @@ export const App = () => {
         <label className="field">
           <span>{t(lang, "line.tokenLabel")}</span>
           <input
-            type="password"
+            type="text"
             autoComplete="off"
             spellCheck={false}
             placeholder={t(lang, "line.tokenPlaceholder")}
-            value={lineToken}
-            onPaste={handleSensitivePaste}
-            onChange={(event) => {
-              setLineToken(event.target.value);
-              setLineTokenMessage("");
-            }}
+            value={maskToken(lineToken)}
+            onPaste={handleTokenPaste}
+            onKeyDown={handleTokenKeyDown}
+            // Controlled by the mask: every mutation goes through the paste and
+            // key handlers above, so there is nothing for onChange to apply.
+            onChange={() => undefined}
           />
         </label>
 
         <button className="primary-btn" onClick={handleSaveLineCredentials} disabled={savingLineToken}>
           {savingLineToken ? t(lang, "button.saving") : t(lang, "line.save")}
         </button>
-        {lineTokenMessage ? <p className="meta-text">{lineTokenMessage}</p> : null}
+        {lineTokenMessage.text ? (
+          <p className={lineTokenMessage.isError ? "form-error" : "meta-text"}>{lineTokenMessage.text}</p>
+        ) : null}
       </section>
 
       <section className="panel">
@@ -841,8 +997,8 @@ export const App = () => {
             Line
           </a>
         </p>
-        <p className="footer-license">{t(lang, "footer.license")}</p>
         <p className="footer-free">{t(lang, "footer.free")}</p>
+        <p className="footer-license">{t(lang, "footer.license")}</p>
       </footer>
     </main>
   );

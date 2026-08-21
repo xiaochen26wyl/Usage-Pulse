@@ -7,6 +7,7 @@ import type {
   ServiceType
 } from "./types";
 import { t } from "./i18n";
+import { isTrusted } from "./snapshot-trust";
 
 // setTimeout silently fires immediately once the delay exceeds a signed 32-bit
 // int, so long waits are clamped here and re-armed by the caller on each tick.
@@ -76,10 +77,20 @@ export const formatCountdown = (iso: string | null, nowMs: number, lang: Languag
   return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
 };
 
+/**
+ * The reset times worth arming an alarm for.
+ *
+ * `lastGoodResets` carries the last reset time each source was seen with while
+ * its snapshot was still trustworthy. A credential outage blanks `resetsAt`,
+ * and without this fallback that would quietly disarm a real pending alarm —
+ * the reset would come and go with nothing to show for it. A degraded snapshot
+ * therefore keeps arming from what we last knew rather than from nothing.
+ */
 export const collectAlarmTargets = (
   snapshot: CombinedSnapshot,
   settings: AppSettings,
-  lang: Language
+  lang: Language,
+  lastGoodResets: Partial<Record<AlarmSource, string>> = {}
 ): AlarmTarget[] => {
   const specs: Array<{ id: AlarmSource; service: ServiceType; resetAt: string | null | undefined; label: string }> = [
     {
@@ -104,16 +115,33 @@ export const collectAlarmTargets = (
 
   const targets: AlarmTarget[] = [];
   for (const spec of specs) {
-    if (!settings[resetToggleMap[spec.service]] || !spec.resetAt) {
+    if (!settings[resetToggleMap[spec.service]]) {
       continue;
     }
-    if (Number.isNaN(Date.parse(spec.resetAt))) {
+    const trusted = isTrusted(snapshot[spec.service]);
+    const resetAt = spec.resetAt || (trusted ? null : lastGoodResets[spec.id] ?? null);
+    if (!resetAt || Number.isNaN(Date.parse(resetAt))) {
       continue;
     }
-    targets.push({ id: spec.id, service: spec.service, fireAt: spec.resetAt, label: spec.label });
+    targets.push({ id: spec.id, service: spec.service, fireAt: resetAt, label: spec.label });
   }
   return targets;
 };
+
+/**
+ * Whether a firing that is now due may actually ring.
+ *
+ * An alarm only rings for a `fireAt` it watched go from pending to due. A reset
+ * time first seen when it was already in the past is a hole in our own
+ * observation — the app was closed, the credential was unreadable — not a reset
+ * that just happened. Ringing for one is how a freshly recovered credential
+ * used to announce a reset out of thin air.
+ *
+ * Sleep and restart catch-up is unaffected: the previous session recorded the
+ * firing as pending before the machine went down.
+ */
+export const mayFire = (fireAt: string, observedFireAt: string | null | undefined): boolean =>
+  Boolean(observedFireAt) && observedFireAt === fireAt;
 
 export const nextTarget = (targets: AlarmTarget[], nowMs: number): AlarmTarget | null => {
   let best: AlarmTarget | null = null;

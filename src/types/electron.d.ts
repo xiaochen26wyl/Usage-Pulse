@@ -5,6 +5,8 @@ import type {
   AuthStatus,
   CombinedSnapshot,
   CredentialStatus,
+  ManualCredentialContext,
+  ManualTokenResult,
   ServiceType
 } from "@shared/types";
 
@@ -14,6 +16,11 @@ interface UsagePulseApi {
   getAuthStatus: () => Promise<AuthStatus>;
   checkAuth: (service: ServiceType) => Promise<CredentialStatus>;
   getLatestSnapshot: () => Promise<CombinedSnapshot | null>;
+  openManualCredential: (service: ServiceType) => Promise<void>;
+  requestManualCredentialContext: () => Promise<ManualCredentialContext | null>;
+  submitManualToken: (token: string) => Promise<ManualTokenResult>;
+  dismissManualCredential: () => Promise<void>;
+  clearManualCredential: (service: ServiceType) => Promise<void>;
   quitApp: () => Promise<void>;
   openExternal: (url: string) => Promise<void>;
   clearClipboard: () => Promise<void>;
@@ -25,6 +32,7 @@ interface UsagePulseApi {
   dismissAlarm: () => Promise<void>;
   snoozeAlarm: () => Promise<void>;
   onAlarmPayload: (handler: (payload: AlarmPopupPayload) => void) => () => void;
+  onManualCredentialContext: (handler: (context: ManualCredentialContext) => void) => () => void;
   onAuthUpdated: (handler: (status: AuthStatus) => void) => () => void;
   onSnapshotUpdated: (handler: (snapshot: CombinedSnapshot) => void) => () => void;
 }

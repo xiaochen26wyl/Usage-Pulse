@@ -7,6 +7,19 @@ import { promisify } from "node:util";
 import type { SqlJsStatic } from "sql.js";
 
 const execFileAsync = promisify(execFile);
+
+/**
+ * Supplies the hand-entered Claude Code token, if the user has stored one.
+ *
+ * Injected rather than imported from the store, so this module keeps depending
+ * on nothing but the OS — the same reason credential-monitor takes its quota
+ * refresher by injection.
+ */
+let manualClaudeTokenProvider: (() => string | null | undefined) | null = null;
+
+export const setManualClaudeTokenProvider = (provider: () => string | null | undefined): void => {
+  manualClaudeTokenProvider = provider;
+};
 const require = createRequire(import.meta.url);
 // Loaded via require(), not a static `import`: sql.js ships its Emscripten/CJS
 // glue as a UMD-style script doing `module.exports = ...`. Vite/Rollup statically
@@ -267,6 +280,15 @@ export const readClaudeCredential = async (): Promise<RawCredential> => {
   const envToken = process.env.CLAUDE_CODE_OAUTH_TOKEN?.trim();
   if (envToken) {
     return toCredential(envToken, null);
+  }
+
+  // A token the user pasted in themselves (`claude setup-token`). It sits above
+  // the automatic sources deliberately: it only ever exists because automatic
+  // detection already failed twice, so letting a half-working Keychain entry
+  // outrank it would put the user right back where they started.
+  const manualToken = manualClaudeTokenProvider?.()?.trim();
+  if (manualToken) {
+    return toCredential(manualToken, null);
   }
 
   const fromKeychain = await readClaudeCredentialFromKeychain();
