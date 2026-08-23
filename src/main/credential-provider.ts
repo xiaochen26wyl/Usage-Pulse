@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { readFile, stat } from "node:fs/promises";
 import { createRequire } from "node:module";
-import { homedir } from "node:os";
+import { homedir, userInfo } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import type { SqlJsStatic } from "sql.js";
@@ -233,7 +233,7 @@ const readCursorCredentialFromStateDb = async (): Promise<RawCredential> => {
   }
 };
 
-const readClaudeCredentialFromKeychain = async (): Promise<RawCredential | null> => {
+export const peekClaudeKeychainCredential = async (): Promise<RawCredential | null> => {
   if (process.platform !== "darwin") {
     return null;
   }
@@ -249,6 +249,48 @@ const readClaudeCredentialFromKeychain = async (): Promise<RawCredential | null>
   } catch {
     return null;
   }
+};
+
+const readExistingKeychainAccount = async (): Promise<string | null> => {
+  try {
+    const { stdout } = await execFileAsync("security", [
+      "find-generic-password",
+      "-s",
+      CLAUDE_KEYCHAIN_SERVICE
+    ]);
+    const match = stdout.match(/"acct"<blob>="([^"]+)"/);
+    return match?.[1] ?? null;
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * Exception write: persist a long-lived setup-token into the same macOS
+ * Keychain item the official CLI uses (`Claude Code-credentials`), so the next
+ * re-detect and ordinary `readClaudeCredential` can find it.
+ *
+ * This is the only Keychain write Usage-Pulse performs. It does not write
+ * `state.vscdb`, `~/.claude/.credentials.json`, or anything Cursor-related.
+ * Windows has no equivalent item — callers keep the token in the app store.
+ */
+export const writeClaudeSetupTokenToKeychain = async (token: string): Promise<void> => {
+  if (process.platform !== "darwin") {
+    return;
+  }
+
+  const blob = JSON.stringify({ claudeAiOauth: { accessToken: token } });
+  const account = (await readExistingKeychainAccount()) || userInfo().username || "Usage-Pulse";
+  await execFileAsync("security", [
+    "add-generic-password",
+    "-s",
+    CLAUDE_KEYCHAIN_SERVICE,
+    "-a",
+    account,
+    "-w",
+    blob,
+    "-U"
+  ]);
 };
 
 const resolveClaudeCredentialsPath = (): string => {
@@ -291,7 +333,7 @@ export const readClaudeCredential = async (): Promise<RawCredential> => {
     return toCredential(manualToken, null);
   }
 
-  const fromKeychain = await readClaudeCredentialFromKeychain();
+  const fromKeychain = await peekClaudeKeychainCredential();
   if (fromKeychain) {
     return fromKeychain;
   }

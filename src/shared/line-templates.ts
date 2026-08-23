@@ -3,13 +3,13 @@ import { t } from "./i18n";
 
 // LINE bubbles can't read the app's CSS, so the accents live here a second
 // time. They mirror styles.css on purpose — change one and change the other:
-//   cursor  -> --color-success / .progress-fill-cursor
-//   claude  -> --color-primary / .progress-fill
+//   cursor  -> logo black / .progress-fill-cursor (grayscale)
+//   claude  -> terracotta / .progress-fill
 // The bar colour identifies the *service*, never the quota level; the one
 // exception is "quota used up", which is red for either service.
 export const SERVICE_ACCENT: Record<ServiceType, string> = {
-  cursor: "#59D090",
-  claude: "#3B82F6"
+  cursor: "#1F2328",
+  claude: "#E8945A",
 };
 
 // Deliberately darker than --color-danger (#ff7d7d): that one is tuned for the
@@ -45,8 +45,10 @@ interface BubbleRow {
 
 const locale = (lang: Language): string => (lang === "zh" ? "zh-TW" : "en-US");
 
-const formatTime = (iso: string | null | undefined, lang: Language): string | null =>
-  iso ? new Date(iso).toLocaleString(locale(lang)) : null;
+const formatTime = (
+  iso: string | null | undefined,
+  lang: Language,
+): string | null => (iso ? new Date(iso).toLocaleString(locale(lang)) : null);
 
 const row = (entry: BubbleRow): FlexNode => ({
   type: "box",
@@ -54,8 +56,16 @@ const row = (entry: BubbleRow): FlexNode => ({
   spacing: "sm",
   contents: [
     { type: "text", text: entry.label, size: "sm", color: TEXT_MUTED, flex: 2 },
-    { type: "text", text: entry.value, size: "sm", color: TEXT_COLOR, weight: "bold", flex: 5, wrap: true }
-  ]
+    {
+      type: "text",
+      text: entry.value,
+      size: "sm",
+      color: TEXT_COLOR,
+      weight: "bold",
+      flex: 5,
+      wrap: true,
+    },
+  ],
 });
 
 /**
@@ -97,21 +107,46 @@ const bubble = (options: {
           backgroundColor: options.accent,
           // A box needs at least one child; filler keeps the bar a pure block
           // of colour.
-          contents: [{ type: "filler" }]
+          contents: [{ type: "filler" }],
         },
-        { type: "text", text: options.title, weight: "bold", size: "lg", color: options.accent, wrap: true },
-        { type: "text", text: options.subtitle, size: "sm", color: TEXT_COLOR, wrap: true },
-        ...options.rows.map(row),
-        ...(options.note ? [{ type: "text", text: options.note, size: "sm", color: TEXT_COLOR, wrap: true }] : []),
         {
           type: "text",
-          text: t(options.lang, "line.tpl.footer", { time: options.now.toLocaleString(locale(options.lang)) }),
+          text: options.title,
+          weight: "bold",
+          size: "lg",
+          color: options.accent,
+          wrap: true,
+        },
+        {
+          type: "text",
+          text: options.subtitle,
+          size: "sm",
+          color: TEXT_COLOR,
+          wrap: true,
+        },
+        ...options.rows.map(row),
+        ...(options.note
+          ? [
+              {
+                type: "text",
+                text: options.note,
+                size: "sm",
+                color: TEXT_COLOR,
+                wrap: true,
+              },
+            ]
+          : []),
+        {
+          type: "text",
+          text: t(options.lang, "line.tpl.footer", {
+            time: options.now.toLocaleString(locale(options.lang)),
+          }),
           size: "xxs",
-          color: TEXT_MUTED
-        }
-      ]
-    }
-  }
+          color: TEXT_MUTED,
+        },
+      ],
+    },
+  },
 });
 
 interface QuotaTemplateOptions {
@@ -130,13 +165,31 @@ interface QuotaTemplateOptions {
 }
 
 /** 最低額度觸發通知 — accented with the service's own colour. */
-export const buildLowQuotaFlex = (options: QuotaTemplateOptions): LineFlexMessage => {
-  const { service, serviceLabel, windowLabel, remainingPercent, thresholdPercent, resetAt, lang } = options;
-  const remainingText = remainingPercent === null || remainingPercent === undefined ? t(lang, "app.unknown") : `${remainingPercent}%`;
-  const rows: BubbleRow[] = [{ label: t(lang, "line.tpl.remaining"), value: remainingText }];
+export const buildLowQuotaFlex = (
+  options: QuotaTemplateOptions,
+): LineFlexMessage => {
+  const {
+    service,
+    serviceLabel,
+    windowLabel,
+    remainingPercent,
+    thresholdPercent,
+    resetAt,
+    lang,
+  } = options;
+  const remainingText =
+    remainingPercent === null || remainingPercent === undefined
+      ? t(lang, "app.unknown")
+      : `${remainingPercent}%`;
+  const rows: BubbleRow[] = [
+    { label: t(lang, "line.tpl.remaining"), value: remainingText },
+  ];
 
   if (thresholdPercent !== undefined) {
-    rows.push({ label: t(lang, "line.tpl.threshold"), value: `${thresholdPercent}%` });
+    rows.push({
+      label: t(lang, "line.tpl.threshold"),
+      value: `${thresholdPercent}%`,
+    });
   }
   const resetText = formatTime(resetAt, lang);
   if (resetText) {
@@ -149,20 +202,24 @@ export const buildLowQuotaFlex = (options: QuotaTemplateOptions): LineFlexMessag
       service: serviceLabel,
       label: windowLabel,
       remaining: remainingText.replace("%", ""),
-      threshold: thresholdPercent ?? 0
+      threshold: thresholdPercent ?? 0,
     }),
     title: t(lang, "line.tpl.lowTitle"),
     subtitle: `${serviceLabel} · ${windowLabel}`,
     rows,
     lang,
-    now: options.now ?? new Date()
+    now: options.now ?? new Date(),
   });
 };
 
 /** model 點數用完通知 — red for either service, per the notification spec. */
-export const buildExhaustedFlex = (options: QuotaTemplateOptions): LineFlexMessage => {
+export const buildExhaustedFlex = (
+  options: QuotaTemplateOptions,
+): LineFlexMessage => {
   const { serviceLabel, windowLabel, resetAt, lang } = options;
-  const rows: BubbleRow[] = [{ label: t(lang, "line.tpl.remaining"), value: "0%" }];
+  const rows: BubbleRow[] = [
+    { label: t(lang, "line.tpl.remaining"), value: "0%" },
+  ];
   const resetText = formatTime(resetAt, lang);
   if (resetText) {
     rows.push({ label: t(lang, "line.tpl.resetAt"), value: resetText });
@@ -170,12 +227,15 @@ export const buildExhaustedFlex = (options: QuotaTemplateOptions): LineFlexMessa
 
   return bubble({
     accent: EXHAUSTED_RED,
-    altText: t(lang, "line.tpl.altExhausted", { service: serviceLabel, label: windowLabel }),
+    altText: t(lang, "line.tpl.altExhausted", {
+      service: serviceLabel,
+      label: windowLabel,
+    }),
     title: t(lang, "line.tpl.exhaustedTitle"),
     subtitle: `${serviceLabel} · ${windowLabel}`,
     rows,
     lang,
-    now: options.now ?? new Date()
+    now: options.now ?? new Date(),
   });
 };
 
@@ -199,5 +259,5 @@ export const buildPlainAlertFlex = (options: {
     rows: [],
     note: options.body,
     lang: options.lang,
-    now: options.now ?? new Date()
+    now: options.now ?? new Date(),
   });

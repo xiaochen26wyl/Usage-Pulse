@@ -4,9 +4,15 @@
 
   --color-primary: #3b82f6;
   --color-primary-strong: #2563eb;
-  --color-warning: #ffbb55;
+  --color-warning: #6cb6ff;
   --color-success: #59d090;
   --color-danger: #ff7d7d;
+  --color-line: #06c755;
+  --color-line-strong: #05b34c;
+  --color-water: #38bdf8;
+  --color-water-strong: #0ea5e9;
+  --color-claude: #e8945a;
+  --color-cursor: #c084fc;
   --color-text: #f5f6f8;
   --color-text-muted: #9aa4b5;
   --color-border: #2a3442;
@@ -37,6 +43,39 @@ body {
   border-radius: 14px;
   padding: 14px;
   box-shadow: var(--shadow-card);
+}
+
+/* LINE token section: brand green accent without flooding the dark panel. */
+.panel-line {
+  border-left: 3px solid var(--color-line);
+}
+
+.panel-line h2 {
+  color: var(--color-line);
+}
+
+.panel-water {
+  border-left: 3px solid var(--color-water);
+}
+
+.panel-water h2 {
+  color: var(--color-water);
+}
+
+.water-cup-row {
+  display: flex;
+  gap: 8px;
+}
+
+.water-cup-row button {
+  flex: 1;
+  width: auto;
+  margin: 0;
+}
+
+.toggle.toggle-water:checked {
+  background: var(--color-water-strong);
+  border-color: var(--color-water-strong);
 }
 
 h1,
@@ -94,6 +133,38 @@ h2 {
   box-shadow: var(--shadow-card);
 }
 
+.quota-card-claude,
+.service-block-claude,
+.session-summary-block-claude {
+  border-left: 3px solid var(--color-claude);
+}
+
+.quota-card-claude strong,
+.service-block-claude strong,
+.session-summary-block-claude h2 {
+  color: var(--color-claude);
+}
+
+.quota-card-cursor,
+.service-block-cursor,
+.session-summary-block-cursor {
+  border-left: 3px solid var(--color-cursor);
+}
+
+.quota-card-cursor strong,
+.service-block-cursor strong,
+.session-summary-block-cursor h2 {
+  color: var(--color-cursor);
+}
+
+.session-summary-block-water {
+  border-left: 3px solid var(--color-water);
+}
+
+.session-summary-block-water h2 {
+  color: var(--color-water);
+}
+
 .window-list {
   margin-top: 8px;
 }
@@ -131,16 +202,16 @@ h2 {
   overflow: hidden;
 }
 
-/* Bar colour identifies the service, not the quota level: Claude Code keeps the
-   blue default and Cursor overrides to green. Low quota is signalled by the
-   status tag in the card header, so the fill never changes hue. */
+/* Bar colour identifies the service, not the quota level: Claude Code is
+   terracotta and Cursor is violet. Low quota is signalled by the status tag
+   in the card header, so the fill never changes hue. */
 .progress-fill {
   height: 100%;
-  background: linear-gradient(90deg, #00c2ff, var(--color-primary));
+  background: linear-gradient(90deg, #f0b27a, var(--color-claude));
 }
 
 .progress-fill-cursor {
-  background: linear-gradient(90deg, #7ee2a8, var(--color-success));
+  background: linear-gradient(90deg, #e9d5ff, var(--color-cursor));
 }
 
 .meta-text {
@@ -223,13 +294,19 @@ h2 {
 }
 
 input[type="password"],
-input[type="number"] {
+input[type="number"],
+select {
   width: 100%;
   border-radius: 8px;
   border: 1px solid #334155;
   background: #10141b;
   color: #f5f6f8;
   padding: 10px;
+}
+
+select {
+  appearance: none;
+  -webkit-appearance: none;
 }
 
 input[type="range"] {
@@ -273,6 +350,11 @@ input[type="range"] {
   border-color: var(--color-primary-strong);
 }
 
+.toggle.toggle-line:checked {
+  background: var(--color-line);
+  border-color: var(--color-line);
+}
+
 .toggle:checked::before {
   transform: translateX(18px);
 }
@@ -306,6 +388,18 @@ button:disabled {
   border-color: var(--color-primary-strong);
 }
 
+.primary-btn-line {
+  width: 100%;
+  background: var(--color-line);
+  border-color: var(--color-line);
+  color: #ffffff;
+}
+
+.primary-btn-line:hover:not(:disabled) {
+  background: var(--color-line-strong);
+  border-color: var(--color-line-strong);
+}
+
 /* The neutral counterpart to .primary-btn: base button styling, no accent. */
 .ghost-btn {
   width: 100%;
@@ -328,7 +422,7 @@ button:disabled {
 }
 
 .warning-btn:hover:not(:disabled) {
-  background: rgba(255, 187, 85, 0.12);
+  background: rgba(108, 182, 255, 0.12);
 }
 
 .lang-toggle {
@@ -337,9 +431,38 @@ button:disabled {
   border-radius: 999px;
 }
 
+.tray-color-group {
+  display: flex;
+  gap: 6px;
+}
+
+.tray-color-btn {
+  width: auto;
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+.tray-color-btn.is-system.is-selected {
+  background: var(--color-primary-strong);
+  border-color: var(--color-primary-strong);
+  color: #ffffff;
+}
+
+.tray-color-btn.is-white.is-selected {
+  background: #ffffff;
+  border-color: #ffffff;
+  color: #1f2328;
+}
+
+.tray-color-btn.is-black.is-selected {
+  background: #1f2328;
+  border-color: #1f2328;
+  color: #ffffff;
+}
+
 .warning-text {
   margin: 0 0 12px;
-  color: #ffbf73;
+  color: var(--color-warning);
   font-size: 13px;
 }
 
@@ -348,8 +471,8 @@ button:disabled {
   padding: 10px 12px;
   border-radius: 10px;
   border-left: 3px solid var(--color-warning);
-  background: rgba(255, 187, 85, 0.12);
-  color: #ffd699;
+  background: rgba(108, 182, 255, 0.12);
+  color: #c5ddff;
   font-size: 13px;
   line-height: 1.5;
 }
@@ -387,6 +510,10 @@ button:disabled {
 
 .footer-link:hover {
   text-decoration: underline;
+}
+
+.footer-link-line {
+  color: var(--color-line);
 }
 
 /* License notice: same brightness as the credit line above it — it's a
@@ -487,7 +614,7 @@ button:disabled {
   padding: 8px 10px;
   border-radius: 8px;
   border: 1px solid var(--color-border);
-  background: rgba(255, 187, 85, 0.08);
+  background: rgba(108, 182, 255, 0.08);
   font-size: 12px;
   color: var(--color-warning);
 }
@@ -551,5 +678,56 @@ button:disabled {
 
 .manual-token-actions button {
   flex: 1;
+  margin: 0;
+}
+
+/* --- Session summary (session.html) --- */
+.session-summary {
+  min-height: 100vh;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: #181d25;
+}
+
+.session-summary-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.session-summary-duration {
+  margin: 0;
+  font-size: 14px;
+  color: var(--color-text);
+}
+
+.session-summary-block {
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+
+.session-summary-block h2 {
+  margin: 0 0 6px;
+  font-size: 14px;
+}
+
+.session-summary-block p {
+  margin: 0 0 4px;
+  font-size: 13px;
+  color: var(--color-text-muted);
+}
+
+.session-summary-actions {
+  margin-top: auto;
+  display: flex;
+  gap: 8px;
+}
+
+.session-summary-actions button {
+  flex: 1;
+  width: auto;
   margin: 0;
 }

@@ -51,6 +51,15 @@ const playChime = (context: AudioContext): void => {
  * now follows the alert that opened it.
  */
 const alarmTitleKey = (id: AlarmPopupPayload["id"]): TranslationKey => {
+  if (id === "water") {
+    return "water.popup.title";
+  }
+  if (id === "cursor-billing") {
+    return "alarm.popup.title.cursorPeriod";
+  }
+  if (id === "claude-billing") {
+    return "alarm.popup.title.claudePeriod";
+  }
   if (id === "claude-cooldown") {
     return "alarm.popup.title.cooldown";
   }
@@ -117,6 +126,7 @@ export const AlarmApp = () => {
   }
 
   const lang = payload.language;
+  const isWater = payload.id === "water";
   const serviceLabel = payload.service ? serviceNames[payload.service] : "Usage-Pulse";
 
   return (
@@ -125,10 +135,8 @@ export const AlarmApp = () => {
         <strong className="alarm-title">{t(lang, alarmTitleKey(payload.id))}</strong>
       </div>
 
-      <p className="alarm-subject">
-        {serviceLabel} · {payload.label}
-      </p>
-      {payload.countdownTarget ? (
+      <p className="alarm-subject">{isWater ? payload.label : `${serviceLabel} · ${payload.label}`}</p>
+      {isWater ? null : payload.countdownTarget ? (
         <p className="alarm-meta">
           {t(lang, "alarm.popup.cooldownCountdown", { countdown: formatCountdown(payload.countdownTarget, now, lang) })}
         </p>
@@ -138,12 +146,25 @@ export const AlarmApp = () => {
       <p className="alarm-meta">{t(lang, "alarm.autoDismiss", { minutes: ALARM_POPUP_AUTO_DISMISS_MINUTES })}</p>
 
       <div className="alarm-actions">
-        <button type="button" className="warning-btn" onClick={() => window.usagePulse.snoozeAlarm()}>
-          {t(lang, "alarm.popup.snooze")}
-        </button>
-        <button type="button" className="primary-btn" onClick={() => window.usagePulse.dismissAlarm()}>
-          {t(lang, "alarm.popup.dismiss")}
-        </button>
+        {isWater ? (
+          <>
+            <button type="button" className="primary-btn" onClick={() => window.usagePulse.drinkWater()}>
+              {t(lang, "water.popup.drink")}
+            </button>
+            <button type="button" className="warning-btn" onClick={() => window.usagePulse.skipWater()}>
+              {t(lang, "water.popup.skip")}
+            </button>
+          </>
+        ) : (
+          <>
+            <button type="button" className="warning-btn" onClick={() => window.usagePulse.snoozeAlarm()}>
+              {t(lang, "alarm.popup.snooze")}
+            </button>
+            <button type="button" className="primary-btn" onClick={() => window.usagePulse.dismissAlarm()}>
+              {t(lang, "alarm.popup.dismiss")}
+            </button>
+          </>
+        )}
       </div>
     </main>
   );

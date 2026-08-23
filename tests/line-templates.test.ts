@@ -7,13 +7,15 @@ import {
   buildExhaustedFlex,
   buildLowQuotaFlex,
   buildPlainAlertFlex,
-  type LineFlexMessage
+  type LineFlexMessage,
 } from "../src/shared/line-templates";
 
 // The accent bar is the first child of the body box; the title text right
 // after it carries the same colour.
 const accentOf = (message: LineFlexMessage): string => {
-  const body = (message.contents.body as { contents: Array<Record<string, unknown>> }).contents;
+  const body = (
+    message.contents.body as { contents: Array<Record<string, unknown>> }
+  ).contents;
   return body[0].backgroundColor as string;
 };
 
@@ -31,7 +33,7 @@ test("low-quota bubbles are accented with the service's own colour", () => {
     thresholdPercent: 20,
     resetAt: "2026-09-01T00:00:00Z",
     lang: "zh",
-    now: fixedNow
+    now: fixedNow,
   });
   const claude = buildLowQuotaFlex({
     service: "claude",
@@ -41,7 +43,7 @@ test("low-quota bubbles are accented with the service's own colour", () => {
     thresholdPercent: 20,
     resetAt: null,
     lang: "zh",
-    now: fixedNow
+    now: fixedNow,
   });
 
   assert.equal(accentOf(cursor), SERVICE_ACCENT.cursor);
@@ -57,7 +59,7 @@ test("exhausted bubbles are red for either service", () => {
       windowLabel: "Weekly",
       resetAt: "2026-09-01T00:00:00Z",
       lang: "en",
-      now: fixedNow
+      now: fixedNow,
     });
     assert.equal(accentOf(message), EXHAUSTED_RED);
   }
@@ -72,14 +74,14 @@ test("every template keeps a white bubble background", () => {
       remainingPercent: 5,
       thresholdPercent: 20,
       lang: "zh",
-      now: fixedNow
+      now: fixedNow,
     }),
     buildExhaustedFlex({
       service: "claude",
       serviceLabel: "Claude Code",
       windowLabel: "Weekly",
       lang: "zh",
-      now: fixedNow
+      now: fixedNow,
     }),
     buildPlainAlertFlex({
       service: "claude",
@@ -87,8 +89,8 @@ test("every template keeps a white bubble background", () => {
       title: "Usage-Pulse 配額通知",
       body: "Claude Code 憑證已過期",
       lang: "zh",
-      now: fixedNow
-    })
+      now: fixedNow,
+    }),
   ];
 
   for (const message of messages) {
@@ -105,14 +107,14 @@ test("altText carries the whole message for the push banner", () => {
     remainingPercent: 12,
     thresholdPercent: 20,
     lang: "zh",
-    now: fixedNow
+    now: fixedNow,
   });
   const exhausted = buildExhaustedFlex({
     service: "claude",
     serviceLabel: "Claude Code",
     windowLabel: "Weekly 消耗度",
     lang: "zh",
-    now: fixedNow
+    now: fixedNow,
   });
 
   assert.match(low.altText, /Cursor/);
@@ -128,7 +130,7 @@ test("no text node in a bubble is ever empty (LINE rejects those)", () => {
     title: "配額已重置",
     body: "Cursor 本期 included usage 已到重置時間",
     lang: "zh",
-    now: fixedNow
+    now: fixedNow,
   });
 
   const texts: string[] = [];

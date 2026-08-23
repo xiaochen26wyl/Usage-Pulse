@@ -13,7 +13,8 @@
 - Architecture principle: Sidecar Observer — only reads local credentials and usage APIs, never writes back to IDE state.
 
 ### Data model
-- `AppSettings`: check interval, low-quota threshold, launch-at-login, notification cooldown, reset/low-quota alert toggles, UI language
+- `AppSettings`: check interval, low-quota threshold, launch-with-Cursor-or-Claude-Code, notification cooldown, reset/low-quota alert toggles, UI language, water-reminder interval / cup size
+- `SessionStats`: per-launch duration, water logged, and Cursor / Claude Code usage delta since this process started
 - `CombinedSnapshot`: Cursor and Claude quota snapshots
 - `QuotaSnapshot.windows`: multi-window quotas (e.g. Claude Code's 5-hour / weekly windows)
 
@@ -44,6 +45,12 @@ never written if it fails, encrypted at rest, and never handed back to a
 renderer — `settings:get` returns a placeholder. Settings has a button to
 reopen the window or clear the stored token.
 
+Claude's **Re-detect Credentials** button looks in the `Claude Code-credentials`
+Keychain item first. If that item is missing it opens a system terminal running
+`claude setup-token`; after you finish the official login page the app reads the
+printed `sk-ant-oat01-` token itself and writes it back to that same Keychain
+item (and to the encrypted app store). The paste window remains as a fallback.
+
 ### Restraint on the usage API
 
 Usage-Pulse deliberately keeps its request volume to Anthropic low.
@@ -55,9 +62,10 @@ Usage-Pulse deliberately keeps its request volume to Anthropic low.
 - **A single rate floor.** Every automatic trigger — the schedule, the credential
   sweep's self-heal, a rotation — passes through one minimum gap (5 minutes).
   Only an explicit user action and the single-shot confirmation re-read may pass.
-- **Local corroboration first.** When a held alert needs a second opinion, the
-  CLI's own `quotaLimits` records are consulted before any request is made; a
-  rejection recorded for the same window settles it for free.
+- **Local corroboration first (always on).** When a held alert needs a second
+  opinion, the CLI's own `quotaLimits` records are consulted before any request
+  is made; a rejection recorded for the same window settles it for free. This
+  is built-in, not a setting.
 
 ### Completed features
 - Electron + React + TypeScript project skeleton
@@ -65,10 +73,12 @@ Usage-Pulse deliberately keeps its request volume to Anthropic low.
 - Local credential detection + API quota fetching
 - Background scheduled monitoring (default: every 10 minutes)
 - Desktop notifications (quota change / low quota / reset alerts)
-- Timed alarm: an always-on-top popup in the top-right corner at reset time, with catch-up for alarms missed during sleep
+- Timed alarm: an always-on-top popup in the top-right corner when due, with catch-up for alarms missed during sleep (Cursor period end / Claude window reset)
 - Bilingual UI (Traditional Chinese / English), switchable in Settings
 - GitHub Actions Release (tag-triggered `.dmg` / `.exe`)
 - CI quality gates (typecheck, readonly guard, unit tests, build, smoke build)
+- Water reminder: interval popup (default 50 minutes) with “I'll go drink now” / “No, thanks”, three cup sizes (250 ml / 500 ml / 1 L), totals reset each launch
+- Session summary on quit: any real quit shows Cursor / Claude Code usage this launch, time open, and water drunk, with Keep using / Quit
 
 
 ### Alarm trigger precision
@@ -101,9 +111,15 @@ monitor-arrangement change never leaves it off-screen). It is shown with `showIn
 never steals the keystroke you are in the middle of typing, and closes itself after
 `alarmPopupAutoDismissMinutes` (default 5).
 
-Settings shows the popup toggle, sound toggle, auto-dismiss and catch-up sliders, and the reset
-reminder switch for each service (Cursor / Claude Code) alongside its low-quota alert threshold —
-no separate "Reset Alarm" card, no OS-level configuration.
+Settings shows the popup toggle and the per-service reminder switch alongside
+each service's low-quota threshold — no separate "Reset Alarm" card, no OS-level
+configuration. Cursor's switch is **period-end** (`billingCycleEnd`, which is
+both the included-usage reset and the billing date). Claude Code splits three
+independent switches: **5-hour reset**, **weekly reset** (usage windows from
+`/api/oauth/usage`), and **subscription renewal** (derived from
+`/api/oauth/profile` `subscription_created_at` plus the monthly/annual cadence
+setting). The subscription date does not refill quota. Max plans are monthly
+only; an annual Pro plan uses the yearly anniversary of that anchor.
 
 Two failure modes of the old reset alert are fixed here:
 
@@ -115,8 +131,9 @@ Two failure modes of the old reset alert are fixed here:
 
 
 ### Security constraints
-- OAuth tokens are only held briefly in memory and never written back to any IDE credential source.
-- Writing to `state.vscdb`, `.credentials.json`, or Keychain is forbidden.
+- OAuth tokens are only held briefly in memory except for the setup-token exception below.
+- Writing to `state.vscdb` or `.credentials.json` is forbidden.
+- The one Keychain write is the long-lived token from `claude setup-token`, stored in `Claude Code-credentials` after the user completes official CLI OAuth.
 - On a 401 or missing quota data, return an actionable error message; never perform automatic token refresh.
 
 ### Development and packaging
@@ -160,7 +177,8 @@ Two failure modes of the old reset alert are fixed here:
 - 架構原則：Sidecar Observer（旁路觀察者），僅讀取本機憑證與用量 API，不寫回 IDE 狀態。
 
 ### 資料架構
-- `AppSettings`：檢查頻率、低額度閾值、開機啟動、通知冷卻時間、重置提醒與低額度提醒開關、介面語言
+- `AppSettings`：檢查頻率、低額度閾值、開啟 Cursor／Claude Code 時一併啟動、通知冷卻時間、重置提醒與低額度提醒開關、介面語言、喝水提醒間隔／杯量
+- `SessionStats`：本次啟動的使用時長、已記喝水量，以及 Cursor／Claude Code 相對啟動時的用量增量
 - `CombinedSnapshot`：Cursor 與 Claude 配額快照
 - `QuotaSnapshot.windows`：多視窗配額（例如 Claude Code 的 5 小時 / 每週）
 
@@ -188,6 +206,10 @@ Two failure modes of the old reset alert are fixed here:
 過才儲存，驗證失敗一律不寫入；存放時加密，而且永遠不會回傳給任何 renderer——`settings:get`
 只回一個佔位字串。設定頁有按鈕可以重新叫出這個視窗或清除已存的 token。
 
+Claude 的「重新偵測憑證」會先查 Keychain 的 `Claude Code-credentials`。沒有才打開系統終端機
+跑 `claude setup-token`；你在官方登入頁完成授權後，程式自己從輸出收回 `sk-ant-oat01-` token，
+再寫回同一組 Keychain（以及 App 自己的加密 store）。手動貼上視窗仍保留當備援。
+
 ### 對 usage API 的節制
 
 Usage-Pulse 刻意把送往 Anthropic 的請求次數壓到最低。
@@ -197,8 +219,8 @@ Usage-Pulse 刻意把送往 Anthropic 的請求次數壓到最低。
   （預設 30 分鐘）。
 - **單一最小間隔**：排程、憑證掃描的自我修復、憑證輪替等所有自動觸發，都要通過同一道 5 分鐘的
   最小間隔；只有使用者明確操作與那一次單發的補確認可以通過。
-- **先查本機再打 API**：被暫緩的警告需要第二意見時，先看 CLI 自己的 `quotaLimits` 紀錄；同一個
-  視窗有被拒絕的紀錄就直接成立，一個請求都不用花。
+- **先查本機再打 API（一律開啟）**：被暫緩的警告需要第二意見時，先看 CLI 自己的
+  `quotaLimits` 紀錄；同一個視窗有被拒絕的紀錄就直接成立，一個請求都不用花。這是內建行為，沒有開關。
 
 ### 已完成功能
 - Electron + React + TypeScript 專案骨架
@@ -206,10 +228,12 @@ Usage-Pulse 刻意把送往 Anthropic 的請求次數壓到最低。
 - 本機憑證偵測 + API 配額抓取
 - 背景抓取與排程監控（預設 10 分鐘）
 - 桌面通知（配額變化 / 低額度 / 重置提醒）
-- 到點提醒：重置時間到點在螢幕右上角彈出置頂視窗，睡眠期間錯過的提醒會補發
+- 到點／到期提醒：時間到點在螢幕右上角彈出置頂視窗，睡眠期間錯過的提醒會補發（Cursor 為本期到期，Claude 為視窗重置）
 - 中英雙語介面，可在設定內切換
 - GitHub Actions Release（tag 觸發 `.dmg` / `.exe`）
 - CI 品質檢查（typecheck、readonly guard、unit test、build、smoke build）
+- 喝水提醒：依間隔彈窗（預設 50 分鐘），按鈕為「我現在去喝／不，謝謝」；杯量僅 250 ml／500 ml／1 L，水量每次開啟 App 後重新累計
+- 結束統計：任何真正關閉 App 的動作都會先顯示本次 Cursor／Claude Code 用量、使用時長與總喝水量，可繼續使用或結束
 
 
 ### 警告觸發精確度
@@ -228,15 +252,16 @@ Usage-Pulse 刻意把送往 Anthropic 的請求次數壓到最低。
 
 ### 到點提醒
 
-Usage-Pulse 完全不碰任何作業系統層級的鬧鐘或排程器——唯一的提醒方式是 App 內彈窗，不需要任何
-權限。重置時間到點時，`alarm-service.ts` 會開啟一個無邊框、置頂的視窗（`alarm.html`）並播放
-合成提示音，顯示位置固定在主螢幕的**右上角**（每次顯示時都會重新計算座標，所以解析度或多螢幕
-排列變動也不會讓視窗跑到畫面外）。用 `showInactive()` 顯示，所以不會搶走你正在輸入的鍵盤焦點。
-經過 `alarmPopupAutoDismissMinutes`（預設 5 分鐘）後自動關閉。
+Usage-Pulse 完全不碰任何作業系統層級的鬧鐘或排程器——App 內彈窗不需要任何權限。時間到點時，
+`alarm-service.ts` 會開啟一個無邊框、置頂的視窗（`alarm.html`），顯示位置固定在主螢幕的
+**右上角**（每次顯示時都會重新計算座標，所以解析度或多螢幕排列變動也不會讓視窗跑到畫面外）。
+彈窗一律靜音。用 `showInactive()` 顯示，所以不會搶走你正在輸入的鍵盤焦點。經過
+`ALARM_POPUP_AUTO_DISMISS_MINUTES`（預設 1 分鐘）後自動關閉。
 
-「提醒設定」面板裡是彈窗開關、提示音開關、自動關閉與補發視窗分鐘數的滑桿，以及 Cursor／Claude
-Code 各自的「到點提醒」開關（跟該服務的低額度預警閾值放在同一張卡片裡）——沒有獨立的「重置鬧鐘」
-卡片，也沒有任何作業系統層級的設定。
+「用什麼方式提醒」是兩個平級開關：App 彈窗（`enableAlarmPopup`）與 LINE 通知
+（`enableLineNotification`；仍須在下方區塊貼 Token 才會真的送出）。各服務的開關跟該服務的
+低額度預警閾值放在同一張卡片裡——沒有獨立的「重置鬧鐘」卡片，也沒有任何作業系統層級的設定。
+Cursor 是「到期提醒」（本期 `billingCycleEnd`，用量重設與計費同一天）。Claude Code 拆成三個獨立開關：5 小時到點、每週配額到點（`/api/oauth/usage` 的用量視窗），以及訂閱到期（`/api/oauth/profile` 的 `subscription_created_at` 加上月繳／年繳週年推算）。訂閱到期**不會**重設 5 小時或每週配額。Max 目前只有月繳；年繳 Pro 用該錨點的年週年。若中途從月繳改年繳，錨點可能仍是原始訂閱日。
 
 這個機制同時修掉舊版重置提醒的兩個缺陷：
 
@@ -248,8 +273,9 @@ Code 各自的「到點提醒」開關（跟該服務的低額度預警閾值放
 
 
 ### 安全約束
-- OAuth token 僅在記憶體中短暫使用，不寫回 IDE 憑證來源。
-- 禁止寫入 `state.vscdb`、`.credentials.json`、Keychain。
+- OAuth token 僅在記憶體中短暫使用，setup-token 永久憑證除外（見下）。
+- 禁止寫入 `state.vscdb`、`.credentials.json`。
+- 唯一的 Keychain 寫入：使用者在官方 CLI OAuth 完成後，把 `claude setup-token` 的永久 token 寫進 `Claude Code-credentials`。
 - 發生 401 / 配額資料缺失時，回傳可行動的錯誤訊息，不做自動 token refresh。
 
 ### 開發與打包

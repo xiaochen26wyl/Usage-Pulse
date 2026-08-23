@@ -1,4 +1,5 @@
 import { BrowserWindow, nativeImage, type NativeImage } from "electron";
+import { SERVICE_ACCENT } from "@shared/line-templates";
 
 // macOS's Tray.setTitle() can't reliably fit two stacked lines: on the
 // classic ~22pt menu bar row (external displays, non-notched Macs) the
@@ -8,54 +9,94 @@ import { BrowserWindow, nativeImage, type NativeImage } from "electron";
 // always fits, regardless of the host Mac's menu bar height. Text only, no
 // icon glyph — at menu-bar scale any icon derived from the app's artwork
 // either loses legibility or leaves an oversized gap before the text.
-const CANVAS_WIDTH = 190;
 const CANVAS_HEIGHT = 40;
 const SCALE_FACTOR = 2;
 const PADDING = 6;
+const MAX_CANVAS_WIDTH = 190;
+const PADDING_X = PADDING;
+const TOKEN_GAP = 6;
+const LINE1_SIZE = 13;
+const LINE2_SIZE = 17;
 
 let rendererWindow: BrowserWindow | null = null;
 let loadPromise: Promise<void> | null = null;
 
 const RENDERER_HTML = `<!DOCTYPE html>
 <html><body style="margin:0">
-<canvas id="c" width="${CANVAS_WIDTH}" height="${CANVAS_HEIGHT}"></canvas>
+<canvas id="c" width="${MAX_CANVAS_WIDTH}" height="${CANVAS_HEIGHT}"></canvas>
 <script>
-window.renderTray = (line1, line2) => {
+window.renderTray = (line1, line2, valueColor) => {
   const canvas = document.getElementById("c");
   const ctx = canvas.getContext("2d");
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  // Most menu bars render dark/translucent regardless of the system's
-  // light/dark setting, so white text (matching other menu bar utilities)
-  // is legible far more often than following nativeTheme would be.
-  ctx.fillStyle = "#ffffff";
-  ctx.textBaseline = "middle";
+  const paddingX = ${PADDING_X};
+  const tokenGap = ${TOKEN_GAP};
+  const line1Size = ${LINE1_SIZE};
+  const line2Size = ${LINE2_SIZE};
+  const maxCanvasWidth = ${MAX_CANVAS_WIDTH};
+  const line1Colors = [valueColor || "#ffffff", ${JSON.stringify(SERVICE_ACCENT.claude)}];
+  const fontStack = "-apple-system, BlinkMacSystemFont, sans-serif";
 
-  const padding = ${PADDING};
-  const textStartX = padding;
+  const tokensOf = (line) => String(line || "").trim().split(/\\s+/).filter(Boolean);
 
-  const maxWidth = canvas.width - textStartX - padding;
-  const textCenterX = textStartX + maxWidth / 2;
-  ctx.textAlign = "center";
-
-  const fitFontSize = (text, weight, maxSize, minSize) => {
-    let size = maxSize;
-    while (size > minSize) {
-      ctx.font = weight + " " + size + "px -apple-system, BlinkMacSystemFont, sans-serif";
-      if (ctx.measureText(text).width <= maxWidth) {
-        break;
-      }
-      size -= 1;
+  const measureLine = (tokens, weight, size) => {
+    ctx.font = weight + " " + size + "px " + fontStack;
+    if (tokens.length === 0) {
+      return 0;
     }
-    return size;
+    let width = 0;
+    for (let i = 0; i < tokens.length; i++) {
+      width += ctx.measureText(tokens[i]).width;
+      if (i < tokens.length - 1) {
+        width += tokenGap;
+      }
+    }
+    return width;
   };
 
-  const size1 = fitFontSize(line1, "600", 15, 8);
-  ctx.font = "600 " + size1 + "px -apple-system, BlinkMacSystemFont, sans-serif";
-  ctx.fillText(line1, textCenterX, canvas.height * 0.28);
+  let size1 = line1Size;
+  let size2 = line2Size;
+  let tokens1 = tokensOf(line1);
+  let tokens2 = tokensOf(line2);
+  let contentWidth = Math.max(measureLine(tokens1, "600", size1), measureLine(tokens2, "bold", size2));
 
-  const size2 = fitFontSize(line2, "bold", 20, 9);
-  ctx.font = "bold " + size2 + "px -apple-system, BlinkMacSystemFont, sans-serif";
-  ctx.fillText(line2, textCenterX, canvas.height * 0.74);
+  while (contentWidth + paddingX * 2 > maxCanvasWidth && (size1 > 8 || size2 > 9)) {
+    if (size1 > 8) {
+      size1 -= 1;
+    }
+    if (size2 > 9) {
+      size2 -= 1;
+    }
+    contentWidth = Math.max(measureLine(tokens1, "600", size1), measureLine(tokens2, "bold", size2));
+  }
+
+  canvas.width = Math.min(maxCanvasWidth, Math.ceil(contentWidth + paddingX * 2));
+  canvas.height = ${CANVAS_HEIGHT};
+  // Resizing the canvas resets the context; re-apply drawing state.
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.textBaseline = "middle";
+  ctx.textAlign = "left";
+
+  const drawLine = (tokens, weight, size, y, colors) => {
+    ctx.font = weight + " " + size + "px " + fontStack;
+    let x = paddingX;
+    for (let i = 0; i < tokens.length; i++) {
+      ctx.fillStyle = colors[i] || colors[colors.length - 1] || "#ffffff";
+      ctx.fillText(tokens[i], x, y);
+      x += ctx.measureText(tokens[i]).width;
+      if (i < tokens.length - 1) {
+        x += tokenGap;
+      }
+    }
+  };
+
+  drawLine(tokens1, "600", size1, canvas.height * 0.28, line1Colors);
+  drawLine(
+    tokens2,
+    "bold",
+    size2,
+    canvas.height * 0.74,
+    tokens2.map(() => valueColor || "#ffffff")
+  );
 
   return canvas.toDataURL("image/png");
 };
@@ -72,25 +113,33 @@ const ensureRendererWindow = async (): Promise<BrowserWindow> => {
 
   rendererWindow = new BrowserWindow({
     show: false,
-    width: CANVAS_WIDTH,
+    width: MAX_CANVAS_WIDTH,
     height: CANVAS_HEIGHT,
     webPreferences: {
       contextIsolation: true,
-      nodeIntegration: false
-    }
+      nodeIntegration: false,
+    },
   });
-  loadPromise = rendererWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(RENDERER_HTML)}`);
+  loadPromise = rendererWindow.loadURL(
+    `data:text/html;charset=utf-8,${encodeURIComponent(RENDERER_HTML)}`,
+  );
   await loadPromise;
   return rendererWindow;
 };
 
-export const renderTrayImage = async (line1: string, line2: string): Promise<NativeImage> => {
+export const renderTrayImage = async (
+  line1: string,
+  line2: string,
+  valueColor: string,
+): Promise<NativeImage> => {
   const win = await ensureRendererWindow();
   const dataUrl = (await win.webContents.executeJavaScript(
-    `window.renderTray(${JSON.stringify(line1)}, ${JSON.stringify(line2)})`
+    `window.renderTray(${JSON.stringify(line1)}, ${JSON.stringify(line2)}, ${JSON.stringify(valueColor)})`,
   )) as string;
   const base64 = dataUrl.split(",")[1] ?? "";
-  return nativeImage.createFromBuffer(Buffer.from(base64, "base64"), { scaleFactor: SCALE_FACTOR });
+  return nativeImage.createFromBuffer(Buffer.from(base64, "base64"), {
+    scaleFactor: SCALE_FACTOR,
+  });
 };
 
 export const destroyTrayRenderer = (): void => {

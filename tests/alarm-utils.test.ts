@@ -26,13 +26,17 @@ const settings = (patch: Partial<AppSettings> = {}): AppSettings =>
     claudeWeeklyLowThresholdPercent: 20,
     enableClaudeWeeklyLowAlert: true,
     enableClaudeCooldownAlert: true,
-    launchAtLogin: false,
+    launchWithIde: false,
     notifyCooldownMinutes: 15,
     enableCursorResetAlarm: true,
     enableClaudeResetAlarm: true,
+    enableClaudeWeeklyResetAlarm: true,
+    enableClaudeBillingAlarm: true,
+    claudeBillingCadence: "monthly",
     language: "zh",
+    trayValueColorMode: "system",
     enableAlarmPopup: true,
-    alarmSoundEnabled: true,
+    enableLineNotification: true,
     lineChannelAccessToken: "",
     ...patch
   }) as AppSettings;
@@ -96,7 +100,11 @@ test("collectAlarmTargets gathers every enabled reset window", () => {
 test("collectAlarmTargets honours the per-service reset toggles", () => {
   const targets = collectAlarmTargets(
     snapshot({ resetsAt: at(3_600_000) }, { resetsAt: at(600_000), weeklyResetAt: at(7_200_000) }),
-    settings({ enableClaudeResetAlarm: false }),
+    settings({
+      enableClaudeResetAlarm: false,
+      enableClaudeWeeklyResetAlarm: false,
+      enableClaudeBillingAlarm: false
+    }),
     "zh"
   );
 
@@ -104,6 +112,42 @@ test("collectAlarmTargets honours the per-service reset toggles", () => {
     targets.map((target) => target.id),
     ["cursor-billing"]
   );
+});
+
+test("collectAlarmTargets treats Claude session, weekly, and billing as independent toggles", () => {
+  const combined = snapshot(
+    { resetsAt: null },
+    {
+      resetsAt: at(600_000),
+      weeklyResetAt: at(7_200_000),
+      billingAnchorAt: "2026-07-20T12:00:00.000Z"
+    }
+  );
+
+  const weeklyOnly = collectAlarmTargets(
+    combined,
+    settings({ enableClaudeResetAlarm: false, enableClaudeBillingAlarm: false }),
+    "zh",
+    {},
+    NOW
+  );
+  assert.deepEqual(
+    weeklyOnly.map((target) => target.id),
+    ["claude-weekly"]
+  );
+
+  const billingOnly = collectAlarmTargets(
+    combined,
+    settings({ enableClaudeResetAlarm: false, enableClaudeWeeklyResetAlarm: false }),
+    "zh",
+    {},
+    NOW
+  );
+  assert.deepEqual(
+    billingOnly.map((target) => target.id),
+    ["claude-billing"]
+  );
+  assert.equal(billingOnly[0]?.fireAt, "2026-08-20T12:00:00.000Z");
 });
 
 test("collectAlarmTargets skips missing and unparseable reset times", () => {

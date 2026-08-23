@@ -1,16 +1,23 @@
 import Store from "electron-store";
+import type { AlertSilenceRecord } from "@shared/alert-silence";
 import type {
   AlarmFireRecord,
   AlarmLastGoodRecord,
   AlarmObservation,
   AlarmSource,
   AppSettings,
+  ClaudeBillingCadence,
   CombinedSnapshot,
   CredentialState,
-  ServiceType
+  ServiceType,
+  TrayValueColorMode
 } from "@shared/types";
 import { DEFAULT_SETTINGS } from "@main/config";
+import { clampWaterReminderMinutes, normalizeWaterCupSize } from "@shared/water";
+import { migrateLaunchWithIde } from "@main/ide-presence";
 import { decryptSecret, encryptSecret } from "@main/secure-store";
+
+const TRAY_VALUE_COLOR_MODES: ReadonlySet<TrayValueColorMode> = new Set(["system", "white", "black"]);
 
 // Settings fields listed here are encrypted at rest via the OS keychain (see secure-store.ts)
 // whenever they're written to the electron-store JSON file, and decrypted on read. Add future
@@ -35,10 +42,7 @@ const encryptSettings = (settings: AppSettings): AppSettings => {
   return result;
 };
 
-interface NotificationRecord {
-  key: string;
-  at: string;
-}
+type NotificationRecord = AlertSilenceRecord;
 
 // What the last credential sweep saw for one service. `fingerprint` is a
 // SHA-256 digest, never the token: comparing digests is enough to notice the
@@ -87,19 +91,43 @@ const store = new Store<UsagePulseStore>({
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 
+type StoredSettings = AppSettings & {
+  launchAtLogin?: boolean;
+  enableClaudeWeeklyResetAlarm?: boolean;
+  enableClaudeBillingAlarm?: boolean;
+  claudeBillingCadence?: ClaudeBillingCadence;
+};
+
+const migrateClaudeWeeklyResetAlarm = (raw: StoredSettings): boolean =>
+  typeof raw.enableClaudeWeeklyResetAlarm === "boolean"
+    ? raw.enableClaudeWeeklyResetAlarm
+    : Boolean(raw.enableClaudeResetAlarm ?? DEFAULT_SETTINGS.enableClaudeResetAlarm);
+
+const migrateClaudeBillingCadence = (raw: StoredSettings): ClaudeBillingCadence =>
+  raw.claudeBillingCadence === "annual" ? "annual" : "monthly";
+
+const readSettings = (): AppSettings => {
+  const raw = store.get("settings") as StoredSettings;
+  const { launchAtLogin: _legacy, ...rest } = raw;
+  return decryptSettings({
+    ...DEFAULT_SETTINGS,
+    ...rest,
+    launchWithIde: migrateLaunchWithIde(raw),
+    enableClaudeWeeklyResetAlarm: migrateClaudeWeeklyResetAlarm(raw),
+    enableClaudeBillingAlarm:
+      typeof raw.enableClaudeBillingAlarm === "boolean"
+        ? raw.enableClaudeBillingAlarm
+        : DEFAULT_SETTINGS.enableClaudeBillingAlarm,
+    claudeBillingCadence: migrateClaudeBillingCadence(raw)
+  });
+};
+
 export const settingsStore = {
   get(): AppSettings {
-    const current = store.get("settings");
-    return decryptSettings({
-      ...DEFAULT_SETTINGS,
-      ...current
-    });
+    return readSettings();
   },
   update(patch: Partial<AppSettings>): AppSettings {
-    const current = decryptSettings({
-      ...DEFAULT_SETTINGS,
-      ...store.get("settings")
-    });
+    const current = readSettings();
     const merged: AppSettings = {
       ...current,
       ...patch
@@ -114,10 +142,18 @@ export const settingsStore = {
     merged.cursorModelsLowThresholdPercent = clamp(Number(merged.cursorModelsLowThresholdPercent || 20), 5, 30);
     merged.claudeSessionLowThresholdPercent = clamp(Number(merged.claudeSessionLowThresholdPercent || 20), 5, 30);
     merged.claudeWeeklyLowThresholdPercent = clamp(Number(merged.claudeWeeklyLowThresholdPercent || 20), 5, 30);
-    merged.claudeIdleIntervalMinutes = clamp(Number(merged.claudeIdleIntervalMinutes || 30), 10, 120);
     merged.notifyCooldownMinutes = Number.isFinite(Number(merged.notifyCooldownMinutes))
       ? clamp(Number(merged.notifyCooldownMinutes), 1, 240)
       : 15;
+    if (!TRAY_VALUE_COLOR_MODES.has(merged.trayValueColorMode)) {
+      merged.trayValueColorMode = DEFAULT_SETTINGS.trayValueColorMode;
+    }
+    merged.waterReminderMinutes = clampWaterReminderMinutes(merged.waterReminderMinutes);
+    merged.waterCupSizeMl = normalizeWaterCupSize(merged.waterCupSizeMl);
+    merged.enableWaterReminder = Boolean(merged.enableWaterReminder);
+    merged.enableClaudeWeeklyResetAlarm = Boolean(merged.enableClaudeWeeklyResetAlarm);
+    merged.enableClaudeBillingAlarm = Boolean(merged.enableClaudeBillingAlarm);
+    merged.claudeBillingCadence = merged.claudeBillingCadence === "annual" ? "annual" : "monthly";
     store.set("settings", encryptSettings(merged));
     return merged;
   }
@@ -137,27 +173,40 @@ export const notificationStore = {
     const notifications = store.get("notifications") as Record<string, NotificationRecord> | undefined;
     const scoped = notifications?.[scope];
     if (scoped && scoped.key) {
-      return scoped;
+      return {
+        key: scoped.key,
+        at: scoped.at,
+        restoreAt: scoped.restoreAt ?? null
+      };
     }
 
     if (scope === "global") {
       return {
         key: store.get("lastNotificationKey"),
-        at: store.get("lastNotificationAt")
+        at: store.get("lastNotificationAt"),
+        restoreAt: null
       };
     }
 
     return {
       key: "",
-      at: ""
+      at: "",
+      restoreAt: null
     };
   },
-  set(scope: string, key: string, at: string): void {
-    store.set(`notifications.${scope}`, { key, at });
+  set(scope: string, key: string, at: string, restoreAt?: string | null): void {
+    store.set(`notifications.${scope}`, { key, at, restoreAt: restoreAt ?? null });
     if (scope === "global") {
       store.set("lastNotificationKey", key);
       store.set("lastNotificationAt", at);
     }
+  },
+  clear(scope: string): void {
+    const notifications = {
+      ...((store.get("notifications") as Record<string, NotificationRecord> | undefined) ?? {})
+    };
+    delete notifications[scope];
+    store.set("notifications", notifications);
   }
 };
 

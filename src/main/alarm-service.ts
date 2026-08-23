@@ -150,7 +150,7 @@ export class AlarmService {
       service: null,
       label: t(settings.language, "alarm.testLabel"),
       fireAt: nowIso(),
-      soundEnabled: settings.alarmSoundEnabled,
+      soundEnabled: false,
       language: settings.language
     });
   }
@@ -169,10 +169,14 @@ export class AlarmService {
     const settings: AppSettings = settingsStore.get();
     const lang = settings.language;
     const snapshot: CombinedSnapshot | null = snapshotStore.get();
-    const reason = t(lang, "reason.resetFired", {
-      service: SERVICE_LABELS[target.service],
-      label: target.label
-    });
+    const reason = target.id === "cursor-billing"
+      ? t(lang, "reason.cursorPeriodEnded")
+      : target.id === "claude-billing"
+        ? t(lang, "reason.claudePeriodEnded")
+        : t(lang, "reason.resetFired", {
+            service: SERVICE_LABELS[target.service],
+            label: target.label
+          });
 
     notificationStore.set(`reset:${target.id}`, `${target.id}|${target.fireAt}`, nowIso());
 
@@ -184,7 +188,14 @@ export class AlarmService {
       buildPlainAlertFlex({
         service: target.service,
         serviceLabel: SERVICE_LABELS[target.service],
-        title: t(lang, "alarm.popup.title"),
+        title: t(
+          lang,
+          target.id === "cursor-billing"
+            ? "alarm.popup.title.cursorPeriod"
+            : target.id === "claude-billing"
+              ? "alarm.popup.title.claudePeriod"
+              : "alarm.popup.title"
+        ),
         body: reason,
         lang
       })
@@ -196,7 +207,7 @@ export class AlarmService {
         service: target.service,
         label: target.label,
         fireAt: target.fireAt,
-        soundEnabled: settings.alarmSoundEnabled,
+        soundEnabled: false,
         language: lang
       };
       showAlarmPopup(payload);

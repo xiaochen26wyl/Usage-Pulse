@@ -1,6 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { detectLimitKey, parseLimitObject, toIsoTime, toPercentField, toRatioField } from "../src/shared/claude-usage";
+import {
+  buildClaudeScrapeResult,
+  detectLimitKey,
+  extractLimits,
+  parseLimitObject,
+  toIsoTime,
+  toPercentField,
+  toRatioField
+} from "../src/shared/claude-usage";
 
 test("a percent-scale field is taken at face value, not rescaled", () => {
   // The regression this guards: 1 % used used to be read as 100 % used, which
@@ -61,4 +69,45 @@ test("a limit with no reset time at all parses without one", () => {
   const parsed = parseLimitObject({ name: "five_hour", utilization: 40 }, "en");
   assert.equal(parsed?.resetsAt, null);
   assert.equal(parsed?.usedPercent, 40);
+});
+
+test("the same usage payload builds session and weekly windows for validation and collection", () => {
+  const payload = {
+    limits: [
+      { name: "five_hour", utilization: 25, resets_at: 1787221800 },
+      { name: "seven_day_all", utilization: 40 }
+    ]
+  };
+  const limits = extractLimits(payload, "en");
+  const result = buildClaudeScrapeResult(limits, "en");
+
+  assert.equal(result.windows.length, 2);
+  assert.equal(result.windows[0]?.key, "session");
+  assert.equal(result.windows[0]?.percent, 75);
+  assert.equal(result.windows[0]?.resetsAt, "2026-08-20T10:30:00.000Z");
+  assert.equal(result.windows[1]?.key, "weekly_all");
+  assert.equal(result.windows[1]?.percent, 60);
+  assert.equal(result.remaining, 75);
+  assert.equal(result.source, "api");
+});
+
+test("an empty payload yields no windows so validation would refuse it", () => {
+  const result = buildClaudeScrapeResult(extractLimits({}, "en"), "en");
+  assert.equal(result.windows.length, 0);
+  assert.equal(result.remaining, null);
+});
+
+test("CLI reset times fill windows the API left blank", () => {
+  const limits = extractLimits(
+    { limits: [{ name: "five_hour", utilization: 10 }, { name: "seven_day_all", utilization: 20 }] },
+    "en"
+  );
+  const result = buildClaudeScrapeResult(limits, "en", {
+    session: "2026-08-20T10:30:00.000Z",
+    weekly: "2026-08-27T10:30:00.000Z"
+  });
+
+  assert.equal(result.windows.find((window) => window.key === "session")?.resetsAt, "2026-08-20T10:30:00.000Z");
+  assert.equal(result.windows.find((window) => window.key === "weekly_all")?.resetsAt, "2026-08-27T10:30:00.000Z");
+  assert.equal(result.source, "cli-log");
 });

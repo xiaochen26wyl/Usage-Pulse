@@ -8,7 +8,9 @@ import type {
   CredentialStatus,
   ManualCredentialContext,
   ManualTokenResult,
-  ServiceType
+  SessionStats,
+  ServiceType,
+  WaterCupSizeMl
 } from "@shared/types";
 
 const api = {
@@ -17,6 +19,7 @@ const api = {
     ipcRenderer.invoke("settings:save", settings) as Promise<AppSettings>,
   getAuthStatus: () => ipcRenderer.invoke("auth:status") as Promise<AuthStatus>,
   checkAuth: (service: ServiceType) => ipcRenderer.invoke("auth:check", service) as Promise<CredentialStatus>,
+  runSetupToken: () => ipcRenderer.invoke("credential:run-setup-token") as Promise<ManualTokenResult>,
   getLatestSnapshot: () => ipcRenderer.invoke("monitor:get-latest") as Promise<CombinedSnapshot | null>,
   openManualCredential: (service: ServiceType) =>
     ipcRenderer.invoke("credential:open-manual", service) as Promise<void>,
@@ -30,6 +33,21 @@ const api = {
   clearManualCredential: (service: ServiceType) =>
     ipcRenderer.invoke("credential:clear-manual", service) as Promise<void>,
   quitApp: () => ipcRenderer.invoke("app:quit") as Promise<void>,
+  getSessionStats: () => ipcRenderer.invoke("session:get-stats") as Promise<SessionStats>,
+  logWaterCup: (sizeMl?: WaterCupSizeMl) =>
+    ipcRenderer.invoke("session:log-cup", sizeMl) as Promise<SessionStats>,
+  drinkWater: () => ipcRenderer.invoke("water:drink") as Promise<SessionStats>,
+  skipWater: () => ipcRenderer.invoke("water:skip") as Promise<void>,
+  continueSession: () => ipcRenderer.invoke("session:continue") as Promise<void>,
+  confirmQuit: () => ipcRenderer.invoke("session:confirm-quit") as Promise<void>,
+  requestSessionStats: () => ipcRenderer.invoke("session:request-stats") as Promise<SessionStats | null>,
+  onSessionStatsUpdated: (handler: (stats: SessionStats) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, stats: SessionStats) => handler(stats);
+    ipcRenderer.on("session:stats", listener);
+    return () => {
+      ipcRenderer.removeListener("session:stats", listener);
+    };
+  },
   openExternal: (url: string) => ipcRenderer.invoke("app:open-external", url) as Promise<void>,
   clearClipboard: () => ipcRenderer.invoke("app:clear-clipboard") as Promise<void>,
   copyToClipboard: (text: string) => ipcRenderer.invoke("app:copy-to-clipboard", text) as Promise<void>,

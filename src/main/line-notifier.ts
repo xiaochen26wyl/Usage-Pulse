@@ -26,7 +26,11 @@ const clampMessage = (message: LineMessage): LineMessage =>
  */
 export const sendLineBroadcast = async (message: LineMessage): Promise<boolean> => {
   try {
-    const accessToken = settingsStore.get().lineChannelAccessToken.trim();
+    const settings = settingsStore.get();
+    if (!settings.enableLineNotification) {
+      return false;
+    }
+    const accessToken = settings.lineChannelAccessToken.trim();
     if (!accessToken) {
       return false;
     }

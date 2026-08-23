@@ -1,12 +1,28 @@
 import axios from "axios";
-import type { Language, QuotaWindow, ScrapeResult } from "@shared/types";
+import type { Language, ScrapeResult } from "@shared/types";
 import { t } from "@shared/i18n";
-import { clampPercent, extractLimits, selectPrimaryLimits } from "@shared/claude-usage";
+import { nextBillingAt, parseSubscriptionCreatedAt } from "@shared/claude-billing";
+import { buildClaudeScrapeResult, extractLimits, selectPrimaryLimits } from "@shared/claude-usage";
 import { latestFutureReset, readClaudeCliQuotaEvents } from "@main/collectors/claude-cli-log";
 import { getClaudeCodeOAuthToken } from "@main/credential-provider";
 import { settingsStore } from "@main/store";
 
 const CLAUDE_USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
+const CLAUDE_PROFILE_URL = "https://api.anthropic.com/api/oauth/profile";
+const PROFILE_CACHE_MS = 24 * 60 * 60 * 1000;
+
+const oauthHeaders = (token: string) => ({
+  Authorization: `Bearer ${token}`,
+  "anthropic-beta": "oauth-2025-04-20",
+  "User-Agent": "claude-code/"
+});
+
+interface ProfileCache {
+  fetchedAt: number;
+  subscriptionCreatedAt: string | null;
+}
+
+let profileCache: ProfileCache | null = null;
 
 // Wider than the 5-hour window, so a rejection recorded at its start is still
 // in scope when we go looking for the reset time it carried.
@@ -46,11 +62,7 @@ export class ClaudeLoginExpiredError extends Error {}
 const fetchUsagePayload = async (token: string, lang: Language): Promise<Record<string, unknown>> => {
   try {
     const response = await axios.get(CLAUDE_USAGE_URL, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "anthropic-beta": "oauth-2025-04-20",
-        "User-Agent": "claude-code/"
-      },
+      headers: oauthHeaders(token),
       timeout: 15_000
     });
     return response.data as Record<string, unknown>;
@@ -68,94 +80,74 @@ const fetchUsagePayload = async (token: string, lang: Language): Promise<Record<
 };
 
 /**
- * Proves a hand-pasted token actually works before it is stored.
+ * Fetches usage for a known token. Shared by the scheduled collector and by
+ * the setup-token / paste-token path so validation is the same scrape.
+ */
+export const collectClaudeCodeQuotaFromToken = async (token: string): Promise<ScrapeResult> => {
+  const lang = settingsStore.get().language;
+  const payload = await fetchUsagePayload(token, lang);
+  const limits = extractLimits(payload, lang);
+  if (limits.length === 0) {
+    return buildClaudeScrapeResult(limits, lang);
+  }
+
+  const { session, weekly } = selectPrimaryLimits(limits);
+  // The usage API does not always return a reset time. Without one there is no
+  // reset alarm to arm and no cooldown countdown to show, so fall back to what
+  // the CLI recorded locally before giving up on it. Profile is independent of
+  // quota windows; a failure there must not drop a successful usage scrape.
+  const [cliResets, billingAnchorAt] = await Promise.all([
+    readCliResetTimes(!session?.resetsAt, !weekly?.resetsAt),
+    readSubscriptionCreatedAt(token)
+  ]);
+  const result = buildClaudeScrapeResult(limits, lang, cliResets);
+  const cadence = settingsStore.get().claudeBillingCadence;
+  const billingResetAt = billingAnchorAt ? nextBillingAt(billingAnchorAt, cadence, Date.now()) : null;
+  return {
+    ...result,
+    billingAnchorAt,
+    billingResetAt,
+    billingResetLabel: billingResetAt ? t(lang, "fallback.claudeBilling") : null
+  };
+};
+
+/**
+ * Cached profile read. The subscription anchor changes at most when the user
+ * switches plan; 24h is plenty, and a miss just means no billing alarm.
+ */
+const readSubscriptionCreatedAt = async (token: string): Promise<string | null> => {
+  if (profileCache && Date.now() - profileCache.fetchedAt < PROFILE_CACHE_MS) {
+    return profileCache.subscriptionCreatedAt;
+  }
+  try {
+    const response = await axios.get(CLAUDE_PROFILE_URL, {
+      headers: oauthHeaders(token),
+      timeout: 15_000
+    });
+    const payload = response.data && typeof response.data === "object" ? (response.data as Record<string, unknown>) : {};
+    const subscriptionCreatedAt = parseSubscriptionCreatedAt(payload);
+    profileCache = { fetchedAt: Date.now(), subscriptionCreatedAt };
+    return subscriptionCreatedAt;
+  } catch {
+    return profileCache?.subscriptionCreatedAt ?? null;
+  }
+};
+
+/**
+ * Proves a hand-pasted token actually works before it is stored, and returns
+ * the usage already fetched so the monitor can apply it without a second request.
  *
  * A token that fails here is never written anywhere, so a typo cannot quietly
  * outrank the automatic sources and make the situation worse than it was.
  */
-export const validateClaudeOAuthToken = async (token: string): Promise<void> => {
-  const lang = settingsStore.get().language;
-  const payload = await fetchUsagePayload(token, lang);
-  if (extractLimits(payload, lang).length === 0) {
-    throw new Error(t(lang, "error.claudeMissingFields"));
+export const validateClaudeOAuthToken = async (token: string): Promise<ScrapeResult> => {
+  const result = await collectClaudeCodeQuotaFromToken(token);
+  if (result.windows.length === 0) {
+    throw new Error(t(settingsStore.get().language, "error.claudeMissingFields"));
   }
+  return result;
 };
 
 export const collectClaudeCodeQuota = async (): Promise<ScrapeResult> => {
-  const lang = settingsStore.get().language;
-  const token = await getClaudeCodeOAuthToken();
-  const payload = await fetchUsagePayload(token, lang);
-
-  const limits = extractLimits(payload, lang);
-  if (limits.length === 0) {
-    return {
-      remaining: null,
-      total: null,
-      unit: "percent",
-      resetsAt: null,
-      windows: [],
-      message: t(lang, "error.claudeMissingFields"),
-      source: "api"
-    };
-  }
-
-  const windows: QuotaWindow[] = limits.map((item) => {
-    const remaining = item.usedPercent === null ? null : clampPercent(100 - item.usedPercent);
-    return {
-      key: item.key,
-      label: item.label,
-      remaining,
-      total: item.usedPercent === null ? null : 100,
-      percent: remaining,
-      resetsAt: item.resetsAt,
-      message: t(lang, "window.message.claudeSource")
-    };
-  });
-
-  const { session, weekly } = selectPrimaryLimits(limits);
-
-  // The usage API does not always return a reset time. Without one there is no
-  // reset alarm to arm and no cooldown countdown to show, so fall back to what
-  // the CLI recorded locally before giving up on it.
-  const cliResets = settingsStore.get().claudeUseLocalSessionLogs
-    ? await readCliResetTimes(!session?.resetsAt, !weekly?.resetsAt)
-    : { session: null, weekly: null };
-
-  const sessionResetsAt = session?.resetsAt ?? cliResets.session;
-  const weeklyResetsAt = weekly?.resetsAt ?? cliResets.weekly;
-
-  for (const window of windows) {
-    if (window.resetsAt) {
-      continue;
-    }
-    if (window.key === "session") {
-      window.resetsAt = sessionResetsAt;
-    } else if (window.key.startsWith("weekly")) {
-      window.resetsAt = weeklyResetsAt;
-    }
-  }
-
-  const sessionUsed = session?.usedPercent ?? null;
-  const weeklyUsed = weekly?.usedPercent ?? null;
-  // "Low quota" for Claude Code means the 5-hour session window specifically,
-  // not whichever of session/weekly happens to be worse — weekly is only a
-  // fallback for when the session window itself has no data.
-  const primaryUsed = sessionUsed ?? weeklyUsed ?? 0;
-  const hasPrimary = sessionUsed !== null || weeklyUsed !== null;
-  const remaining = hasPrimary ? clampPercent(100 - primaryUsed) : null;
-  const resetsAt = sessionResetsAt ?? weeklyResetsAt;
-
-  const sessionText = sessionUsed === null ? "N/A" : `${Math.round(clampPercent(100 - sessionUsed))}%`;
-  const weeklyText = weeklyUsed === null ? "N/A" : `${Math.round(clampPercent(100 - weeklyUsed))}%`;
-
-  return {
-    remaining,
-    total: hasPrimary ? 100 : null,
-    unit: "percent",
-    resetsAt,
-    weeklyResetAt: weeklyResetsAt,
-    windows,
-    message: t(lang, "message.claudeSummary", { session: sessionText, weekly: weeklyText }),
-    source: cliResets.session || cliResets.weekly ? "cli-log" : "api"
-  };
+  return collectClaudeCodeQuotaFromToken(await getClaudeCodeOAuthToken());
 };

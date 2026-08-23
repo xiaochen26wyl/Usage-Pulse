@@ -57,13 +57,14 @@ Running `claude` the first time opens a browser to complete OAuth login, which w
 
 #### What it never does
 - Never writes to Cursor's `state.vscdb`
-- Never writes to Claude credentials / Keychain
-- Never modifies any IDE's login state
+- Never writes `~/.claude/.credentials.json`
 - Never auto-refreshes tokens on your behalf
+
+The one Keychain write is intentional: after you finish the official `claude setup-token` login from **Re-detect Credentials**, Usage-Pulse stores that long-lived token in the `Claude Code-credentials` item so the next re-detect can find it. It does not create a login of its own.
 
 #### Data storage
 - The app stores general settings (check interval, notification toggles, cooldown time, language) locally via `electron-store`.
-- OAuth tokens are only used in-memory for API requests during runtime and are never written back to the IDE.
+- OAuth tokens are used in-memory for API requests. A long-lived `setup-token` is also stored in the official Keychain item (and the encrypted app store) after you complete that login.
 
 ### License and important notice
 
@@ -126,7 +127,7 @@ claude
 ### 功能行為
 - 背景定時檢查 Cursor / Claude 配額（預設 10 分鐘）。
 - 低額度通知可分別開關（Cursor、Claude 各自控制）。
-- 配額重置提醒可分別開關（Cursor、Claude 各自控制）。
+- 配額重置／到期提醒可分別開關：Cursor 到期、Claude Code 5 小時到點、每週到點、訂閱到期（月繳／年繳）各自獨立。
 - 通知冷卻時間可設定，避免同內容短時間重複提醒。
 - 支援繁體中文與英文介面，可在 App 設定面板內切換。
 - 可在 UI 或 Tray 選單直接使用「結束 Usage-Pulse」。
@@ -139,13 +140,14 @@ claude
 
 #### 不會做的事情
 - 不會寫入 Cursor `state.vscdb`
-- 不會寫入 Claude credentials / Keychain
-- 不會修改 IDE 的登入狀態
+- 不會寫入 `~/.claude/.credentials.json`
 - 不會替你自動刷新 token
+
+唯一的 Keychain 寫入是刻意的：在「重新偵測憑證」裡用官方 `claude setup-token` 完成登入後，Usage-Pulse 會把那組永久 token 寫進 `Claude Code-credentials`，下次重新偵測才讀得到。不會自己做一套登入。
 
 #### 資料落地
 - 應用程式會在本機 `electron-store` 保存一般設定（檢查頻率、通知開關、冷卻時間、語言）。
-- OAuth token 僅用於執行期間請求 API，不會被回寫到 IDE。
+- OAuth token 用於執行期間請求 API。`setup-token` 永久憑證在你完成官方登入後，會寫入 Keychain 與 App 自己的加密 store。
 
 ### 授權與重要聲明
 

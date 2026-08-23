@@ -1,4 +1,4 @@
-import type { Language } from "./types";
+import type { Language, QuotaWindow, ScrapeResult } from "./types";
 import { t } from "./i18n";
 
 // The payload has used both camelCase and snake_case for the same field over
@@ -207,4 +207,81 @@ export const selectPrimaryLimits = (limits: NormalizedLimit[]): { session: Norma
     limits.find((item) => item.key === "weekly") ||
     null;
   return { session, weekly };
+};
+
+export interface ClaudeCliResetTimes {
+  session: string | null;
+  weekly: string | null;
+}
+
+/**
+ * Turns already-parsed limits into the scrape shape both validation and the
+ * scheduled collector publish. No I/O: callers attach CLI reset fallbacks
+ * when they have them.
+ */
+export const buildClaudeScrapeResult = (
+  limits: NormalizedLimit[],
+  lang: Language,
+  cliResets: ClaudeCliResetTimes = { session: null, weekly: null }
+): ScrapeResult => {
+  if (limits.length === 0) {
+    return {
+      remaining: null,
+      total: null,
+      unit: "percent",
+      resetsAt: null,
+      windows: [],
+      message: t(lang, "error.claudeMissingFields"),
+      source: "api"
+    };
+  }
+
+  const windows: QuotaWindow[] = limits.map((item) => {
+    const remaining = item.usedPercent === null ? null : clampPercent(100 - item.usedPercent);
+    return {
+      key: item.key,
+      label: item.label,
+      remaining,
+      total: item.usedPercent === null ? null : 100,
+      percent: remaining,
+      resetsAt: item.resetsAt,
+      message: t(lang, "window.message.claudeSource")
+    };
+  });
+
+  const { session, weekly } = selectPrimaryLimits(limits);
+  const sessionResetsAt = session?.resetsAt ?? cliResets.session;
+  const weeklyResetsAt = weekly?.resetsAt ?? cliResets.weekly;
+
+  for (const window of windows) {
+    if (window.resetsAt) {
+      continue;
+    }
+    if (window.key === "session") {
+      window.resetsAt = sessionResetsAt;
+    } else if (window.key.startsWith("weekly")) {
+      window.resetsAt = weeklyResetsAt;
+    }
+  }
+
+  const sessionUsed = session?.usedPercent ?? null;
+  const weeklyUsed = weekly?.usedPercent ?? null;
+  const primaryUsed = sessionUsed ?? weeklyUsed ?? 0;
+  const hasPrimary = sessionUsed !== null || weeklyUsed !== null;
+  const remaining = hasPrimary ? clampPercent(100 - primaryUsed) : null;
+  const resetsAt = sessionResetsAt ?? weeklyResetsAt;
+
+  const sessionText = sessionUsed === null ? "N/A" : `${Math.round(clampPercent(100 - sessionUsed))}%`;
+  const weeklyText = weeklyUsed === null ? "N/A" : `${Math.round(clampPercent(100 - weeklyUsed))}%`;
+
+  return {
+    remaining,
+    total: hasPrimary ? 100 : null,
+    unit: "percent",
+    resetsAt,
+    weeklyResetAt: weeklyResetsAt,
+    windows,
+    message: t(lang, "message.claudeSummary", { session: sessionText, weekly: weeklyText }),
+    source: cliResets.session || cliResets.weekly ? "cli-log" : "api"
+  };
 };

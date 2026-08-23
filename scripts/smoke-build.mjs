@@ -7,7 +7,8 @@ const requiredFiles = [
   "dist/preload/index.js",
   "dist/renderer/index.html",
   "dist/renderer/alarm.html",
-  "dist/renderer/credential.html"
+  "dist/renderer/credential.html",
+  "dist/renderer/session.html"
 ];
 
 const assertExists = async (relativePath) => {

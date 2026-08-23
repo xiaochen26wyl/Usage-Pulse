@@ -2,6 +2,10 @@ export type ServiceType = "cursor" | "claude";
 
 export type Language = "zh" | "en";
 
+// How menu-bar quota values (line 2) are coloured. Brand labels on line 1 stay
+// on their service accents regardless of this setting.
+export type TrayValueColorMode = "system" | "white" | "black";
+
 export type QuotaStatus = "ok" | "low" | "unknown" | "error";
 export type QuotaUnit = "usd" | "percent" | "count";
 
@@ -30,6 +34,12 @@ export interface QuotaSnapshot {
   resetLabel?: string | null;
   weeklyResetAt?: string | null;
   weeklyResetLabel?: string | null;
+  // Claude Code subscription billing: the official usage API has no monthly
+  // quota window. These come from /api/oauth/profile's subscription_created_at
+  // plus the user's monthly/annual cadence — they do not refill quota.
+  billingResetAt?: string | null;
+  billingResetLabel?: string | null;
+  billingAnchorAt?: string | null;
   windows: QuotaWindow[];
   status: QuotaStatus;
   message: string;
@@ -92,13 +102,23 @@ export interface AppSettings {
   // regardless of how much of the 5 hours has actually elapsed. This toggle
   // alerts on that lockout state itself, distinct from the consumption warning.
   enableClaudeCooldownAlert: boolean;
-  launchAtLogin: boolean;
+  // When on, a tiny login helper starts Usage-Pulse only after Cursor or
+  // Claude Code is running. The menu-bar app itself is not a login item.
+  launchWithIde: boolean;
   notifyCooldownMinutes: number;
   enableCursorResetAlarm: boolean;
+  // 5-hour session reset only. Weekly used to share this switch; existing
+  // stores migrate enableClaudeWeeklyResetAlarm from this value on first read.
   enableClaudeResetAlarm: boolean;
+  enableClaudeWeeklyResetAlarm: boolean;
+  enableClaudeBillingAlarm: boolean;
+  claudeBillingCadence: ClaudeBillingCadence;
   language: Language;
+  // Menu-bar numeric text: follow OS appearance, or force white / near-black.
+  trayValueColorMode: TrayValueColorMode;
   enableAlarmPopup: boolean;
-  alarmSoundEnabled: boolean;
+  // Independent of the token: off skips LINE even when a token is stored.
+  enableLineNotification: boolean;
   lineChannelAccessToken: string;
   // A Claude Code OAuth token the user pasted in themselves (`claude
   // setup-token`), used when automatic detection cannot reach the Keychain or
@@ -106,14 +126,46 @@ export interface AppSettings {
   // in cleartext — see CLAUDE_MANUAL_TOKEN_MASK.
   claudeManualOAuthToken: string;
   // Poll Claude Code only when its CLI has actually been active since the last
-  // successful fetch, stretching to claudeIdleIntervalMinutes when it has not.
-  // This exists to *reduce* request volume, not to increase it.
+  // successful fetch. Idle ticks skip the request but keep the normal interval.
   claudeUseCliActivityPolling: boolean;
-  claudeIdleIntervalMinutes: number;
-  // Read quota events out of the local Claude Code session logs. Credential-free
-  // and costs no API request, but the log directory also holds conversation
-  // content, so it is opt-outable.
-  claudeUseLocalSessionLogs: boolean;
+  // Drink-water reminder: interval from launch (or last response) and the cup
+  // size recorded when the user confirms they drank.
+  enableWaterReminder: boolean;
+  waterReminderMinutes: number;
+  waterCupSizeMl: WaterCupSizeMl;
+}
+
+export type ClaudeBillingCadence = "monthly" | "annual";
+
+export const WATER_CUP_SIZES_ML = [250, 500, 1000] as const;
+export type WaterCupSizeMl = (typeof WATER_CUP_SIZES_ML)[number];
+
+export type SessionDeltaKind = "consumed" | "reset" | "unknown";
+
+export interface SessionMetricDelta {
+  key: "billing" | "cursorModels" | "advancedModels" | "claudeSession" | "claudeWeekly";
+  kind: SessionDeltaKind;
+  // Consumed amount when kind is "consumed"; otherwise null.
+  used: number | null;
+  unit: "usd" | "percent";
+}
+
+export interface SessionUsageDeltas {
+  billing: SessionMetricDelta;
+  cursorModels: SessionMetricDelta;
+  advancedModels: SessionMetricDelta;
+  claudeSession: SessionMetricDelta;
+  claudeWeekly: SessionMetricDelta;
+}
+
+// Per-launch session: duration, water, and quota consumed since this process started.
+export interface SessionStats {
+  startedAt: string;
+  durationMs: number;
+  waterMl: number;
+  waterCups: number;
+  nextWaterAt: string | null;
+  usage: SessionUsageDeltas;
 }
 
 // What a renderer sees in place of a stored manual token. The renderer only
@@ -136,6 +188,9 @@ export interface ScrapeResult {
   resetLabel?: string | null;
   weeklyResetAt?: string | null;
   weeklyResetLabel?: string | null;
+  billingResetAt?: string | null;
+  billingResetLabel?: string | null;
+  billingAnchorAt?: string | null;
   windows: QuotaWindow[];
   message: string;
   isError?: boolean;
@@ -149,7 +204,7 @@ export interface NotifyPayload {
 }
 
 
-export type AlarmSource = "cursor-billing" | "claude-session" | "claude-weekly";
+export type AlarmSource = "cursor-billing" | "claude-session" | "claude-weekly" | "claude-billing";
 
 export interface AlarmTarget {
   id: AlarmSource;
@@ -200,7 +255,7 @@ export type LowQuotaAlertSource =
   | "claude-weekly-exhausted";
 
 export interface AlarmPopupPayload {
-  id: AlarmSource | LowQuotaAlertSource | "test";
+  id: AlarmSource | LowQuotaAlertSource | "test" | "water";
   service: ServiceType | null;
   label: string;
   fireAt: string;

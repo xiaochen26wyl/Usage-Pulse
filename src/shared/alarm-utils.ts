@@ -7,6 +7,7 @@ import type {
   ServiceType
 } from "./types";
 import { t } from "./i18n";
+import { resolveClaudeBillingAt } from "./claude-billing";
 import { isTrusted } from "./snapshot-trust";
 
 // setTimeout silently fires immediately once the delay exceeds a signed 32-bit
@@ -22,11 +23,17 @@ export const ALARM_POPUP_AUTO_DISMISS_MINUTES = 1;
 
 export type FireClass = "pending" | "due" | "expired";
 
-type ResetToggleKey = "enableCursorResetAlarm" | "enableClaudeResetAlarm";
+type ResetToggleKey =
+  | "enableCursorResetAlarm"
+  | "enableClaudeResetAlarm"
+  | "enableClaudeWeeklyResetAlarm"
+  | "enableClaudeBillingAlarm";
 
-const resetToggleMap: Record<ServiceType, ResetToggleKey> = {
-  cursor: "enableCursorResetAlarm",
-  claude: "enableClaudeResetAlarm"
+const resetToggleMap: Record<AlarmSource, ResetToggleKey> = {
+  "cursor-billing": "enableCursorResetAlarm",
+  "claude-session": "enableClaudeResetAlarm",
+  "claude-weekly": "enableClaudeWeeklyResetAlarm",
+  "claude-billing": "enableClaudeBillingAlarm"
 };
 
 export const clampTimeoutMs = (ms: number): number => {
@@ -90,7 +97,8 @@ export const collectAlarmTargets = (
   snapshot: CombinedSnapshot,
   settings: AppSettings,
   lang: Language,
-  lastGoodResets: Partial<Record<AlarmSource, string>> = {}
+  lastGoodResets: Partial<Record<AlarmSource, string>> = {},
+  nowMs = Date.now()
 ): AlarmTarget[] => {
   const specs: Array<{ id: AlarmSource; service: ServiceType; resetAt: string | null | undefined; label: string }> = [
     {
@@ -110,12 +118,23 @@ export const collectAlarmTargets = (
       service: "claude",
       resetAt: snapshot.claude.weeklyResetAt,
       label: snapshot.claude.weeklyResetLabel || t(lang, "window.label.weekly")
+    },
+    {
+      id: "claude-billing",
+      service: "claude",
+      resetAt: resolveClaudeBillingAt(
+        snapshot.claude.billingAnchorAt,
+        snapshot.claude.billingResetAt,
+        settings.claudeBillingCadence,
+        nowMs
+      ),
+      label: snapshot.claude.billingResetLabel || t(lang, "fallback.claudeBilling")
     }
   ];
 
   const targets: AlarmTarget[] = [];
   for (const spec of specs) {
-    if (!settings[resetToggleMap[spec.service]]) {
+    if (!settings[resetToggleMap[spec.id]]) {
       continue;
     }
     const trusted = isTrusted(snapshot[spec.service]);

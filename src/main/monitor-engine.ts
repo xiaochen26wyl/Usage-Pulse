@@ -153,6 +153,9 @@ const makeQuotaSnapshot = (
     resetLabel,
     weeklyResetAt,
     weeklyResetLabel,
+    billingResetAt,
+    billingResetLabel,
+    billingAnchorAt,
     windows,
     message,
     isError,
@@ -182,6 +185,9 @@ const makeQuotaSnapshot = (
       resetLabel,
       weeklyResetAt,
       weeklyResetLabel,
+      billingResetAt,
+      billingResetLabel,
+      billingAnchorAt,
       windows,
       status,
       message,
@@ -205,6 +211,8 @@ const hasServiceChanged = (prev: QuotaSnapshot | null, next: QuotaSnapshot): boo
     prev.unit !== next.unit ||
     prev.resetsAt !== next.resetsAt ||
     prev.weeklyResetAt !== next.weeklyResetAt ||
+    prev.billingResetAt !== next.billingResetAt ||
+    prev.billingAnchorAt !== next.billingAnchorAt ||
     prev.status !== next.status ||
     JSON.stringify(prev.windows) !== JSON.stringify(next.windows)
   );
@@ -338,8 +346,11 @@ export class MonitorEngine extends EventEmitter {
     let nextDelayMs = settings.claudeIntervalMinutes * 60_000;
 
     try {
+      // When activity polling is on and the CLI has been idle, skip the API
+      // request but keep the normal interval — stretching was removed with
+      // claudeIdleIntervalMinutes.
       if (settings.claudeUseCliActivityPolling && !(await this.claudeHasActivitySinceLastFetch())) {
-        nextDelayMs = settings.claudeIdleIntervalMinutes * 60_000;
+        // Idle tick: no fetch.
       } else {
         await this.checkService("claude", "scheduled");
       }
@@ -400,7 +411,7 @@ export class MonitorEngine extends EventEmitter {
         service,
         label,
         fireAt: nowIso(),
-        soundEnabled: settings.alarmSoundEnabled,
+        soundEnabled: false,
         language: settings.language,
         countdownTarget: countdownTarget ?? null
       });
@@ -658,7 +669,7 @@ export class MonitorEngine extends EventEmitter {
     const settings = settingsStore.get();
     const stored = snapshotStore.get();
 
-    if (service === "claude" && settings.claudeUseLocalSessionLogs && stored && isTrusted(stored.claude)) {
+    if (service === "claude" && stored && isTrusted(stored.claude)) {
       try {
         const flags = evaluateClaudeLowFlags(stored.claude.windows, settings);
         const events = await readClaudeCliQuotaEvents(Date.now() - CLI_LOG_LOOKBACK_MS);
@@ -701,8 +712,7 @@ export class MonitorEngine extends EventEmitter {
     this.isRunning[service] = true;
 
     try {
-      const settings = settingsStore.get();
-      const lang = settings.language;
+      const lang = settingsStore.get().language;
       const previousSnapshot = snapshotStore.get();
       const previousServiceSnapshot = previousSnapshot ? previousSnapshot[service] : null;
 
@@ -725,83 +735,107 @@ export class MonitorEngine extends EventEmitter {
       }
 
       const scrapeResult = await scrapeQuota(service);
-      const { snapshot: nextServiceSnapshot, cursorFlags, claudeFlags } = makeQuotaSnapshot(service, scrapeResult, settings);
-
-      // Re-read the store *after* the scrape awaits, right before merging and
-      // writing back — the other service's independent checkService() call may
-      // have completed and written its own update while this one was in flight.
-      // Merging from a snapshot captured before the await would clobber that
-      // update; reading fresh here (with no further await before the write)
-      // guarantees this write only replaces this service's own key.
-      const latestCombined = snapshotStore.get();
-      const otherService: ServiceType = service === "cursor" ? "claude" : "cursor";
-      const otherServiceSnapshot = latestCombined ? latestCombined[otherService] : nextServiceSnapshot;
-
-      const combined: CombinedSnapshot = {
-        cursor: service === "cursor" ? nextServiceSnapshot : otherServiceSnapshot,
-        claude: service === "claude" ? nextServiceSnapshot : otherServiceSnapshot,
-        fetchedAt: nowIso()
-      };
-
-      const changed = hasServiceChanged(previousServiceSnapshot, nextServiceSnapshot);
-      const isLow = nextServiceSnapshot.status === "low";
-      const reason = makeReason(changed, isLow ? [service] : [], lang);
-      let notified = false;
-
-      // Nothing here may interrupt the user off the back of a reading we cannot
-      // stand behind. A credential we could not read, a payload we could not
-      // parse, or the first believable reading after either of those, all look
-      // identical to a quota that genuinely ran out — so they stay silent
-      // across all three channels (popup, LINE, desktop) and are confirmed
-      // first. Gating out here rather than inside fireLowQuotaAlert keeps the
-      // dedupe store clean, so the confirming poll can still fire normally.
-      const cold = isColdReading(previousServiceSnapshot, nextServiceSnapshot);
-
-      if (changed && !cold) {
-        const changeKey = JSON.stringify({
-          remaining: nextServiceSnapshot.remaining,
-          total: nextServiceSnapshot.total,
-          percent: nextServiceSnapshot.percent,
-          status: nextServiceSnapshot.status
-        });
-        if (this.shouldNotify(`change:${service}`, changeKey, settings)) {
-          sendDesktopNotification({ snapshot: combined, reason: t(lang, "reason.changed") });
-          notified = true;
-        }
-      }
-
-      if (cold) {
-        // A trustworthy reading that already looks like an emergency still gets
-        // its day in court, just not immediately.
-        if (isTrusted(nextServiceSnapshot) && this.wouldAlert(cursorFlags, claudeFlags, settings)) {
-          console.log(`[Usage-Pulse] ${service} alert held: cold reading, confirming in 90s`);
-          this.scheduleConfirmation(service);
-        }
-      } else {
-        if (cursorFlags) {
-          notified = this.handleCursorLowAlerts(cursorFlags, settings, combined, lang) || notified;
-        }
-        if (claudeFlags) {
-          notified = this.handleClaudeLowAlerts(claudeFlags, settings, combined, lang) || notified;
-        }
-      }
-
-      snapshotStore.set(combined);
-      this.emit("snapshot", combined);
-
-      // Update alarms with the latest combined snapshot
-      alarmService.rearm("poll");
-
-      return {
-        snapshot: combined,
-        changed,
-        lowAlert: isLow,
-        notified,
-        reason
-      };
+      return this.applyScrapeResult(service, scrapeResult, previousServiceSnapshot);
     } finally {
       this.isRunning[service] = false;
     }
+  }
+
+  /**
+   * Publishes an already-fetched scrape as the current snapshot.
+   *
+   * Used after setup-token / paste-token validation so the usage that proved
+   * the credential is the usage the UI shows — a second request would race
+   * the first and often 429-overwrite it.
+   */
+  applyScrapeResult(
+    service: ServiceType,
+    scrapeResult: ScrapeResult,
+    previousServiceSnapshot?: QuotaSnapshot | null
+  ): MonitorResult {
+    if (service === "claude") {
+      this.lastClaudeFetchMs = Date.now();
+    }
+
+    const settings = settingsStore.get();
+    const lang = settings.language;
+    const previous = previousServiceSnapshot ?? snapshotStore.get()?.[service] ?? null;
+    const { snapshot: nextServiceSnapshot, cursorFlags, claudeFlags } = makeQuotaSnapshot(
+      service,
+      scrapeResult,
+      settings
+    );
+
+    // Re-read the store right before merging and writing back — the other
+    // service's independent checkService() call may have completed and written
+    // its own update. Merging from a snapshot captured earlier would clobber
+    // that update; reading fresh here (with no further await before the write)
+    // guarantees this write only replaces this service's own key.
+    const latestCombined = snapshotStore.get();
+    const otherService: ServiceType = service === "cursor" ? "claude" : "cursor";
+    const otherServiceSnapshot = latestCombined ? latestCombined[otherService] : nextServiceSnapshot;
+
+    const combined: CombinedSnapshot = {
+      cursor: service === "cursor" ? nextServiceSnapshot : otherServiceSnapshot,
+      claude: service === "claude" ? nextServiceSnapshot : otherServiceSnapshot,
+      fetchedAt: nowIso()
+    };
+
+    const changed = hasServiceChanged(previous, nextServiceSnapshot);
+    const isLow = nextServiceSnapshot.status === "low";
+    const reason = makeReason(changed, isLow ? [service] : [], lang);
+    let notified = false;
+
+    // Nothing here may interrupt the user off the back of a reading we cannot
+    // stand behind. A credential we could not read, a payload we could not
+    // parse, or the first believable reading after either of those, all look
+    // identical to a quota that genuinely ran out — so they stay silent
+    // across all three channels (popup, LINE, desktop) and are confirmed
+    // first. Gating out here rather than inside fireLowQuotaAlert keeps the
+    // dedupe store clean, so the confirming poll can still fire normally.
+    const cold = isColdReading(previous, nextServiceSnapshot);
+
+    if (changed && !cold) {
+      const changeKey = JSON.stringify({
+        remaining: nextServiceSnapshot.remaining,
+        total: nextServiceSnapshot.total,
+        percent: nextServiceSnapshot.percent,
+        status: nextServiceSnapshot.status
+      });
+      if (this.shouldNotify(`change:${service}`, changeKey, settings)) {
+        sendDesktopNotification({ snapshot: combined, reason: t(lang, "reason.changed") });
+        notified = true;
+      }
+    }
+
+    if (cold) {
+      // A trustworthy reading that already looks like an emergency still gets
+      // its day in court, just not immediately.
+      if (isTrusted(nextServiceSnapshot) && this.wouldAlert(cursorFlags, claudeFlags, settings)) {
+        console.log(`[Usage-Pulse] ${service} alert held: cold reading, confirming in 90s`);
+        this.scheduleConfirmation(service);
+      }
+    } else {
+      if (cursorFlags) {
+        notified = this.handleCursorLowAlerts(cursorFlags, settings, combined, lang) || notified;
+      }
+      if (claudeFlags) {
+        notified = this.handleClaudeLowAlerts(claudeFlags, settings, combined, lang) || notified;
+      }
+    }
+
+    snapshotStore.set(combined);
+    this.emit("snapshot", combined);
+
+    alarmService.rearm("poll");
+
+    return {
+      snapshot: combined,
+      changed,
+      lowAlert: isLow,
+      notified,
+      reason
+    };
   }
 
   /**

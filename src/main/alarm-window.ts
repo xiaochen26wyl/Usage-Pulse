@@ -29,6 +29,14 @@ let snoozeTimer: NodeJS.Timeout | null = null;
 // rather than clobbering whichever one is already on screen — anything that
 // arrives while a popup is showing waits here and is shown once it closes.
 const queue: AlarmPopupPayload[] = [];
+const closeListeners = new Set<(payload: AlarmPopupPayload) => void>();
+
+export const onAlarmPopupClosed = (listener: (payload: AlarmPopupPayload) => void): (() => void) => {
+  closeListeners.add(listener);
+  return () => {
+    closeListeners.delete(listener);
+  };
+};
 
 const alarmUrl = (): string =>
   isDev
@@ -124,12 +132,19 @@ export const showAlarmPopup = (payload: AlarmPopupPayload): void => {
 export const getAlarmPayload = (): AlarmPopupPayload | null => currentPayload;
 
 export const closeAlarmPopup = (): void => {
+  const closed = currentPayload;
   clearAutoDismiss();
   currentPayload = null;
   if (popup && !popup.isDestroyed()) {
     popup.close();
   }
   popup = null;
+
+  if (closed) {
+    for (const listener of closeListeners) {
+      listener(closed);
+    }
+  }
 
   const next = queue.shift();
   if (next) {

@@ -47,7 +47,8 @@ export default defineConfig({
         input: {
           index: resolve("index.html"),
           alarm: resolve("alarm.html"),
-          credential: resolve("credential.html")
+          credential: resolve("credential.html"),
+          session: resolve("session.html")
         }
       }
     },

@@ -7,7 +7,9 @@ import type {
   CredentialStatus,
   ManualCredentialContext,
   ManualTokenResult,
-  ServiceType
+  SessionStats,
+  ServiceType,
+  WaterCupSizeMl
 } from "@shared/types";
 
 interface UsagePulseApi {
@@ -15,6 +17,7 @@ interface UsagePulseApi {
   saveSettings: (settings: Partial<AppSettings>) => Promise<AppSettings>;
   getAuthStatus: () => Promise<AuthStatus>;
   checkAuth: (service: ServiceType) => Promise<CredentialStatus>;
+  runSetupToken: () => Promise<ManualTokenResult>;
   getLatestSnapshot: () => Promise<CombinedSnapshot | null>;
   openManualCredential: (service: ServiceType) => Promise<void>;
   requestManualCredentialContext: () => Promise<ManualCredentialContext | null>;
@@ -22,6 +25,14 @@ interface UsagePulseApi {
   dismissManualCredential: () => Promise<void>;
   clearManualCredential: (service: ServiceType) => Promise<void>;
   quitApp: () => Promise<void>;
+  getSessionStats: () => Promise<SessionStats>;
+  logWaterCup: (sizeMl?: WaterCupSizeMl) => Promise<SessionStats>;
+  drinkWater: () => Promise<SessionStats>;
+  skipWater: () => Promise<void>;
+  continueSession: () => Promise<void>;
+  confirmQuit: () => Promise<void>;
+  requestSessionStats: () => Promise<SessionStats | null>;
+  onSessionStatsUpdated: (handler: (stats: SessionStats) => void) => () => void;
   openExternal: (url: string) => Promise<void>;
   clearClipboard: () => Promise<void>;
   copyToClipboard: (text: string) => Promise<void>;

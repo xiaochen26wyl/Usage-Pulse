@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { app, clipboard, ipcMain, Menu, powerMonitor, shell } from "electron";
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeTheme, powerMonitor, shell } from "electron";
 import { menubar } from "menubar";
 import type {
   AlarmStatusReport,
@@ -10,18 +10,32 @@ import type {
   ManualCredentialContext,
   ManualTokenResult,
   QuotaSnapshot,
-  ServiceType
+  ScrapeResult,
+  SessionStats,
+  ServiceType,
+  WaterCupSizeMl
 } from "@shared/types";
 import { CLAUDE_MANUAL_TOKEN_MASK } from "@shared/types";
 import { t } from "@shared/i18n";
+import { resolveTrayValueColor } from "@shared/tray-value-color";
 import { alarmService } from "@main/alarm-service";
 import { destroyAlarmWindow, closeAlarmPopup, getAlarmPayload, snoozeAlarmPopup } from "@main/alarm-window";
+import { closeSessionSummary, destroySessionWindow, showSessionSummary } from "@main/session-window";
+import { sessionTracker } from "@main/session-tracker";
+import { waterReminder } from "@main/water-reminder";
+import { runClaudeSetupToken, SetupTokenError } from "@main/claude-setup-token";
 import { validateClaudeOAuthToken } from "@main/collectors/claude-code";
 import { credentialMonitor } from "@main/credential-monitor";
-import { setManualClaudeTokenProvider } from "@main/credential-provider";
+import {
+  peekClaudeKeychainCredential,
+  setManualClaudeTokenProvider,
+  writeClaudeSetupTokenToKeychain
+} from "@main/credential-provider";
 import { closeManualCredentialWindow, getManualCredentialContext } from "@main/credential-window";
+import { applyIdeLaunchHelper } from "@main/ide-launch-helper";
+import { IdePresenceMonitor, probeIdeRunning } from "@main/ide-presence";
 import { MonitorEngine } from "@main/monitor-engine";
-import { settingsStore } from "@main/store";
+import { settingsStore, snapshotStore } from "@main/store";
 import { destroyTrayRenderer, renderTrayImage } from "@main/tray-icon-renderer";
 
 const isMac = process.platform === "darwin";
@@ -41,6 +55,29 @@ if (!app.requestSingleInstanceLock()) {
 }
 
 const monitor = new MonitorEngine();
+
+let sessionReady = false;
+let quitConfirmed = false;
+
+const collectSessionStats = (): SessionStats =>
+  sessionTracker.getStats(monitor.getLatestSnapshot() ?? snapshotStore.get(), Date.now(), waterReminder.getNextAt());
+
+const emitSessionStats = (): void => {
+  const stats = collectSessionStats();
+  if (trayApp.window && !trayApp.window.isDestroyed()) {
+    trayApp.window.webContents.send("session:stats", stats);
+  }
+};
+
+const confirmQuit = (): void => {
+  quitConfirmed = true;
+  closeSessionSummary();
+  app.quit();
+};
+
+const cancelQuit = (): void => {
+  closeSessionSummary();
+};
 
 // Wired before anything can read a credential: the hand-entered token has to be
 // visible to the provider from the very first sweep, not only after the first
@@ -126,7 +163,7 @@ const sessionValueText = (snapshot: QuotaSnapshot): string => {
   return valueText(snapshot);
 };
 
-const trayTitleLine1 = "Cursor CC";
+const trayTitleLine1 = "Cursor Claude";
 const trayTitleLine2 = (snapshot: CombinedSnapshot): string =>
   `${valueText(snapshot.cursor)} ${sessionValueText(snapshot.claude)}`;
 
@@ -156,22 +193,89 @@ const updateTrayText = async (snapshot: CombinedSnapshot): Promise<void> => {
   trayApp.tray.setToolTip(toolTipLines.join("\n"));
 };
 
+const currentTrayValueColor = (): string =>
+  resolveTrayValueColor(settingsStore.get().trayValueColorMode, nativeTheme.shouldUseDarkColors);
+
 const setTrayImage = async (line1: string, line2: string): Promise<void> => {
   if (!trayApp.tray) {
     return;
   }
   try {
-    const image = await renderTrayImage(line1, line2);
+    const image = await renderTrayImage(line1, line2, currentTrayValueColor());
     trayApp.tray.setImage(image);
   } catch (error) {
     console.error("[Usage-Pulse] tray render failed", error);
   }
 };
 
-const applyAutoLaunch = (enabled: boolean): void => {
-  app.setLoginItemSettings({
-    openAtLogin: enabled
+const refreshTrayFromLatest = async (): Promise<void> => {
+  const latest = monitor.getLatestSnapshot();
+  if (latest) {
+    await updateTrayText(latest);
+    return;
+  }
+  if (isMac && trayApp.tray) {
+    await setTrayImage(trayTitleLine1, "? ?");
+  }
+};
+
+let ideQuitPromptParent: BrowserWindow | null = null;
+let ideQuitPromptCancelled = false;
+
+const destroyIdeQuitPromptWindow = (): void => {
+  if (ideQuitPromptParent && !ideQuitPromptParent.isDestroyed()) {
+    ideQuitPromptParent.destroy();
+  }
+  ideQuitPromptParent = null;
+};
+
+const closeIdeQuitPrompt = (): void => {
+  ideQuitPromptCancelled = true;
+  destroyIdeQuitPromptWindow();
+};
+
+const askIdeQuitPrompt = async (): Promise<"quit" | "stay" | "cancelled"> => {
+  ideQuitPromptCancelled = false;
+  destroyIdeQuitPromptWindow();
+  const lang = settingsStore.get().language;
+  ideQuitPromptParent = new BrowserWindow({
+    show: false,
+    alwaysOnTop: true,
+    skipTaskbar: true
   });
+  try {
+    const { response } = await dialog.showMessageBox(ideQuitPromptParent, {
+      type: "question",
+      buttons: [t(lang, "dialog.ideClosed.quit"), t(lang, "dialog.ideClosed.stay")],
+      defaultId: 1,
+      cancelId: 1,
+      title: t(lang, "dialog.ideClosed.title"),
+      message: t(lang, "dialog.ideClosed.message")
+    });
+    if (ideQuitPromptCancelled) {
+      return "cancelled";
+    }
+    return response === 0 ? "quit" : "stay";
+  } catch {
+    return "cancelled";
+  } finally {
+    destroyIdeQuitPromptWindow();
+  }
+};
+
+const idePresenceMonitor = new IdePresenceMonitor({
+  probe: () => probeIdeRunning(),
+  ask: askIdeQuitPrompt,
+  cancelAsk: closeIdeQuitPrompt,
+  quit: () => app.quit()
+});
+
+const syncIdePresenceMonitor = (enabled: boolean): void => {
+  if (enabled) {
+    idePresenceMonitor.start();
+    return;
+  }
+  idePresenceMonitor.stop();
 };
 
 // Built lazily on each right-click (instead of via tray.setContextMenu) so
@@ -214,8 +318,13 @@ const setupIpcHandlers = (): void => {
   ipcMain.handle("settings:get", () => maskSecrets(settingsStore.get()));
   ipcMain.handle("settings:save", (_event, patch: Partial<AppSettings>) => {
     const next = settingsStore.update(stripMaskedSecrets(patch));
-    applyAutoLaunch(next.launchAtLogin);
+    void applyIdeLaunchHelper(next.launchWithIde).catch((error) => {
+      console.error("[Usage-Pulse] failed to apply IDE launch helper", error);
+    });
+    syncIdePresenceMonitor(next.launchWithIde);
     monitor.reschedule();
+    waterReminder.reschedule();
+    emitSessionStats();
     const latest = monitor.getLatestSnapshot();
     if (latest) {
       updateTrayText(latest);
@@ -229,6 +338,77 @@ const setupIpcHandlers = (): void => {
   ipcMain.handle("auth:check", (_event, service: ServiceType): Promise<CredentialStatus> =>
     credentialMonitor.check(service)
   );
+
+  // Claude "re-detect": Keychain first. Only if that item is missing do we
+  // open a terminal for `claude setup-token`, recover the printed token, and
+  // write it back to the same Keychain service (plus the encrypted app store).
+  ipcMain.handle("credential:run-setup-token", async (): Promise<ManualTokenResult> => {
+    const lang = settingsStore.get().language;
+    const setupTokenMessage = (code: SetupTokenError["code"]): string => {
+      const keys = {
+        notFound: "setupToken.claudeNotFound",
+        timeout: "setupToken.timeout",
+        inProgress: "setupToken.inProgress",
+        noToken: "setupToken.noToken",
+        launchFailed: "setupToken.launchFailed"
+      } as const;
+      return t(lang, keys[code]);
+    };
+
+    const persistClaudeToken = async (token: string, savedMessage: string): Promise<ManualTokenResult> => {
+      let scrapeResult: ScrapeResult;
+      try {
+        scrapeResult = await validateClaudeOAuthToken(token);
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : t(lang, "scrape.unknownError");
+        return { ok: false, message: detail };
+      }
+
+      try {
+        await writeClaudeSetupTokenToKeychain(token);
+      } catch (error) {
+        console.error("[Usage-Pulse] Keychain write for setup-token failed", error);
+      }
+      settingsStore.update({ claudeManualOAuthToken: token });
+      credentialMonitor.resetFailureStreak("claude");
+      closeManualCredentialWindow();
+      try {
+        monitor.applyScrapeResult("claude", scrapeResult);
+      } catch (error) {
+        console.error("[Usage-Pulse] apply usage after setup-token failed", error);
+      }
+      await credentialMonitor.check("claude");
+      return { ok: true, message: savedMessage };
+    };
+
+    const fromKeychain = await peekClaudeKeychainCredential();
+    const keychainExpiryMs = fromKeychain?.expiresAt ? Date.parse(fromKeychain.expiresAt) : Number.NaN;
+    const keychainUsable =
+      Boolean(fromKeychain) && (Number.isNaN(keychainExpiryMs) || keychainExpiryMs > Date.now());
+    if (keychainUsable) {
+      await monitor.runServiceCheck("claude", "manual").catch((error) => {
+        console.error("[Usage-Pulse] refresh after Keychain re-detect failed", error);
+      });
+      await credentialMonitor.check("claude");
+      return { ok: true, message: t(lang, "setupToken.keychainFound") };
+    }
+
+    try {
+      const token = await runClaudeSetupToken({
+        userDataDir: app.getPath("userData"),
+        onAuthUrl: (url) => {
+          void shell.openExternal(url);
+        }
+      });
+      return persistClaudeToken(token, t(lang, "setupToken.saved"));
+    } catch (error) {
+      if (error instanceof SetupTokenError) {
+        return { ok: false, message: setupTokenMessage(error.code) };
+      }
+      const detail = error instanceof Error ? error.message : t(lang, "app.authRefreshFailed");
+      return { ok: false, message: detail };
+    }
+  });
 
   // The manual-token flow. Only reachable after automatic detection has failed
   // twice, or when the user asks for it from Settings.
@@ -258,8 +438,9 @@ const setupIpcHandlers = (): void => {
       return { ok: false, message: t(lang, "manualToken.error.empty") };
     }
 
+    let scrapeResult: ScrapeResult;
     try {
-      await validateClaudeOAuthToken(trimmed);
+      scrapeResult = await validateClaudeOAuthToken(trimmed);
     } catch (error) {
       const detail = error instanceof Error ? error.message : t(lang, "scrape.unknownError");
       return { ok: false, message: detail };
@@ -268,16 +449,43 @@ const setupIpcHandlers = (): void => {
     settingsStore.update({ claudeManualOAuthToken: trimmed });
     credentialMonitor.resetFailureStreak("claude");
     closeManualCredentialWindow();
+    try {
+      monitor.applyScrapeResult("claude", scrapeResult);
+    } catch (error) {
+      console.error("[Usage-Pulse] apply usage after manual token failed", error);
+    }
     await credentialMonitor.check("claude");
-    await monitor.runServiceCheck("claude", "manual").catch((error) => {
-      console.error("[Usage-Pulse] refresh after manual token failed", error);
-    });
     return { ok: true, message: t(lang, "manualToken.saved") };
   });
 
   ipcMain.handle("monitor:get-latest", () => monitor.getLatestSnapshot());
   ipcMain.handle("app:quit", () => {
     app.quit();
+  });
+  ipcMain.handle("session:get-stats", (): SessionStats => collectSessionStats());
+  ipcMain.handle("session:log-cup", (_event, sizeMl?: WaterCupSizeMl): SessionStats => {
+    const cup = sizeMl ?? settingsStore.get().waterCupSizeMl;
+    sessionTracker.logCup(cup);
+    const stats = collectSessionStats();
+    emitSessionStats();
+    return stats;
+  });
+  ipcMain.handle("session:request-stats", (): SessionStats => collectSessionStats());
+  ipcMain.handle("session:continue", () => {
+    cancelQuit();
+  });
+  ipcMain.handle("session:confirm-quit", () => {
+    confirmQuit();
+  });
+  ipcMain.handle("water:drink", (): SessionStats => {
+    sessionTracker.logCup(settingsStore.get().waterCupSizeMl);
+    closeAlarmPopup();
+    const stats = collectSessionStats();
+    emitSessionStats();
+    return stats;
+  });
+  ipcMain.handle("water:skip", () => {
+    closeAlarmPopup();
   });
   ipcMain.handle("app:open-external", (_event, url: string) => {
     if (typeof url === "string" && /^https:\/\//.test(url)) {
@@ -310,10 +518,16 @@ const setupIpcHandlers = (): void => {
 
 app.whenReady().then(async () => {
   const settings = settingsStore.get();
-  applyAutoLaunch(settings.launchAtLogin);
+  await applyIdeLaunchHelper(settings.launchWithIde).catch((error) => {
+    console.error("[Usage-Pulse] failed to apply IDE launch helper", error);
+  });
+  sessionTracker.start(Date.now(), snapshotStore.get());
+  sessionReady = true;
+  waterReminder.start();
   setupIpcHandlers();
 
   monitor.on("snapshot", (snapshot: CombinedSnapshot) => {
+    sessionTracker.observeSnapshot(snapshot);
     updateTrayText(snapshot);
     if (trayApp.window && !trayApp.window.isDestroyed()) {
       trayApp.window.webContents.send("snapshot:updated", snapshot);
@@ -350,6 +564,14 @@ app.whenReady().then(async () => {
   powerMonitor.on("unlock-screen", () => {
     alarmService.rearm("unlock");
     void credentialMonitor.checkIfDue();
+  });
+
+  // Menu-bar value colour follows OS appearance when trayValueColorMode is "system".
+  nativeTheme.on("updated", () => {
+    if (settingsStore.get().trayValueColorMode !== "system") {
+      return;
+    }
+    void refreshTrayFromLatest();
   });
 
   app.on("second-instance", (_event, argv) => {
@@ -392,10 +614,12 @@ app.whenReady().then(async () => {
       console.error("[Usage-Pulse] startup credential check failed", error);
     });
     credentialMonitor.start();
+    syncIdePresenceMonitor(settingsStore.get().launchWithIde);
   });
 });
 
 app.on("before-quit", () => {
+  idePresenceMonitor.stop();
   monitor.stop();
   credentialMonitor.stop();
   destroyAlarmWindow();
