@@ -1,5 +1,5 @@
 import type { Language, ServiceType } from "./types";
-import { t } from "./i18n";
+import { localeForLanguage, t } from "./i18n";
 
 // LINE bubbles can't read the app's CSS, so the accents live here a second
 // time. They mirror styles.css on purpose — change one and change the other:
@@ -43,12 +43,11 @@ interface BubbleRow {
   value: string;
 }
 
-const locale = (lang: Language): string => (lang === "zh" ? "zh-TW" : "en-US");
-
 const formatTime = (
   iso: string | null | undefined,
   lang: Language,
-): string | null => (iso ? new Date(iso).toLocaleString(locale(lang)) : null);
+): string | null =>
+  iso ? new Date(iso).toLocaleString(localeForLanguage(lang)) : null;
 
 const row = (entry: BubbleRow): FlexNode => ({
   type: "box",
@@ -139,7 +138,7 @@ const bubble = (options: {
         {
           type: "text",
           text: t(options.lang, "line.tpl.footer", {
-            time: options.now.toLocaleString(locale(options.lang)),
+            time: options.now.toLocaleString(localeForLanguage(options.lang)),
           }),
           size: "xxs",
           color: TEXT_MUTED,

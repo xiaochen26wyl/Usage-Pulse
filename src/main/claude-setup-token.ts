@@ -54,9 +54,36 @@ export const extractSetupTokenFromOutput = (text: string): string | null => {
   return collected.length >= MIN_TOKEN_LENGTH ? collected : null;
 };
 
+// The login URL is opened in the user's browser without asking, so the host has
+// to be checked properly rather than by substring. A pattern like
+// `claude\.ai[^\s]*` happily matches `https://claude.ai.evil.com/…`, where
+// `claude.ai` is only a prefix of the real registrable domain.
+const AUTH_URL_HOSTS = ["claude.ai", "anthropic.com"] as const;
+
+const isTrustedAuthHost = (hostname: string): boolean => {
+  const host = hostname.toLowerCase();
+  return AUTH_URL_HOSTS.some((allowed) => host === allowed || host.endsWith(`.${allowed}`));
+};
+
 export const extractAuthUrlFromOutput = (text: string): string | null => {
-  const match = text.match(/https:\/\/(?:[a-z0-9-]+\.)*(?:claude\.ai|anthropic\.com)[^\s"'<>]*/i);
-  return match ? match[0] : null;
+  // Collect candidates loosely, then let the URL parser decide.
+  const candidates = text.match(/https:\/\/[^\s"'<>]+/gi);
+  if (!candidates) {
+    return null;
+  }
+
+  for (const candidate of candidates) {
+    try {
+      const url = new URL(candidate);
+      if (url.protocol === "https:" && isTrustedAuthHost(url.hostname)) {
+        return candidate;
+      }
+    } catch {
+      // Not a URL after all; keep looking.
+    }
+  }
+
+  return null;
 };
 
 const extraBinDirs = (): string[] => {
@@ -214,8 +241,26 @@ const collectSetupToken = async (options: {
     }
     return await watchCaptureFile(capturePath, options.onAuthUrl);
   } finally {
+    // Overwrite before unlinking: the token sat in this file in cleartext for
+    // as long as the login took, and truncating it first means a crash between
+    // these two lines cannot leave a readable copy behind.
+    await writeFile(capturePath, "", { mode: 0o600 }).catch(() => undefined);
     await unlink(capturePath).catch(() => undefined);
   }
+};
+
+/**
+ * Clears a capture file left behind by a previous run that died mid-login.
+ * Called at startup, before anything else can read the directory.
+ */
+export const clearStaleSetupTokenCapture = async (userDataDir: string): Promise<void> => {
+  const capturePath = join(userDataDir, CAPTURE_FILE_NAME);
+  try {
+    await writeFile(capturePath, "", { mode: 0o600, flag: "r+" });
+  } catch {
+    // Nothing there, or not writable — either way there is nothing to clear.
+  }
+  await unlink(capturePath).catch(() => undefined);
 };
 
 /**

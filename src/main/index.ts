@@ -7,23 +7,29 @@ import type {
   AuthStatus,
   CombinedSnapshot,
   CredentialStatus,
-  ManualCredentialContext,
   ManualTokenResult,
-  QuotaSnapshot,
   ScrapeResult,
   SessionStats,
   ServiceType,
   WaterCupSizeMl
 } from "@shared/types";
-import { CLAUDE_MANUAL_TOKEN_MASK } from "@shared/types";
-import { t } from "@shared/i18n";
+import { CLAUDE_MANUAL_TOKEN_MASK, LINE_TOKEN_MASK } from "@shared/types";
+import { localeForLanguage, t } from "@shared/i18n";
+import { isSupportLink } from "@shared/support-links";
 import { resolveTrayValueColor } from "@shared/tray-value-color";
+import {
+  claudeCountdownTargetAt,
+  claudeTrayValueText,
+  cursorCountdownTargetAt,
+  cursorTrayValueText,
+  snapshotValueText
+} from "@shared/tray-display";
 import { alarmService } from "@main/alarm-service";
 import { destroyAlarmWindow, closeAlarmPopup, getAlarmPayload, snoozeAlarmPopup } from "@main/alarm-window";
 import { closeSessionSummary, destroySessionWindow, showSessionSummary } from "@main/session-window";
 import { sessionTracker } from "@main/session-tracker";
 import { waterReminder } from "@main/water-reminder";
-import { runClaudeSetupToken, SetupTokenError } from "@main/claude-setup-token";
+import { clearStaleSetupTokenCapture, runClaudeSetupToken, SetupTokenError } from "@main/claude-setup-token";
 import { validateClaudeOAuthToken } from "@main/collectors/claude-code";
 import { credentialMonitor } from "@main/credential-monitor";
 import {
@@ -31,15 +37,38 @@ import {
   setManualClaudeTokenProvider,
   writeClaudeSetupTokenToKeychain
 } from "@main/credential-provider";
-import { closeManualCredentialWindow, getManualCredentialContext } from "@main/credential-window";
+import { applyAppLoginItem } from "@main/app-login-item";
 import { applyIdeLaunchHelper } from "@main/ide-launch-helper";
 import { IdePresenceMonitor, probeIdeRunning } from "@main/ide-presence";
+import {
+  asClipboardText,
+  asServiceType,
+  asSettingsPatch,
+  asWaterCupSize
+} from "@main/ipc-validation";
+import { redact } from "@main/log-redaction";
+import { isSecretStorageAvailable } from "@main/secure-store";
+import { sendLineBroadcast } from "@main/line-notifier";
 import { MonitorEngine } from "@main/monitor-engine";
+import { installWebContentsHardening } from "@main/window-hardening";
 import { settingsStore, snapshotStore } from "@main/store";
 import { destroyTrayRenderer, renderTrayImage } from "@main/tray-icon-renderer";
 
 const isMac = process.platform === "darwin";
 const isDev = Boolean(process.env.ELECTRON_RENDERER_URL);
+
+// This is a tray app whose entire value is staying alive silently for hours —
+// a reset alarm it never watched fire (because the process died) does not get
+// a second chance. Node's default behaviour for either of these is to print a
+// trace and exit, which takes the whole app down over one unguarded rejection
+// anywhere in this event-driven codebase, with no crash report to explain it
+// (a clean process exit, not a fault). Log and keep running instead.
+process.on("uncaughtException", (error) => {
+  console.error("[Usage-Pulse] uncaught exception (main process kept alive)", redact(error));
+});
+process.on("unhandledRejection", (reason) => {
+  console.error("[Usage-Pulse] unhandled rejection (main process kept alive)", redact(reason));
+});
 
 if (process.platform === "win32") {
   app.setAppUserModelId("com.xiaochen26wyl.usagepulse");
@@ -53,6 +82,10 @@ const isAlarmLaunch = (argv: string[]): boolean => argv.some((arg) => arg.starts
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 }
+
+// Registered here, at module scope, so it is already in place when menubar
+// builds its preloaded window a few lines below.
+installWebContentsHardening();
 
 const monitor = new MonitorEngine();
 
@@ -106,66 +139,57 @@ let trayApp = menubar({
     webPreferences: {
       preload: join(__dirname, "../preload/index.js"),
       contextIsolation: true,
+      sandbox: true,
       nodeIntegration: false
     }
   }
 });
 
-const valueText = (snapshot: QuotaSnapshot): string => {
-  if (snapshot.unit === "usd") {
-    if (snapshot.remaining === null) {
-      return "?";
-    }
-    return `$${snapshot.remaining.toFixed(1)}`;
-  }
-
-  if (snapshot.unit === "percent") {
-    const value = snapshot.remaining ?? snapshot.percent;
-    if (value === null) {
-      return "?";
-    }
-    return `${Math.round(value)}%`;
-  }
-
-  return snapshot.remaining === null ? "?" : `${snapshot.remaining}`;
-};
-
-// Once the 5-hour session window is exhausted (0%), showing "0%" is dead
-// information — the countdown to the next reset is what's actually useful,
-// so switch to "X.x小時" (or "xx分" under an hour) until it refills.
-const sessionCountdownText = (session: QuotaSnapshot["windows"][number]): string | null => {
-  if (!session.resetsAt) {
-    return null;
-  }
-  const msRemaining = new Date(session.resetsAt).getTime() - Date.now();
-  if (msRemaining <= 0) {
-    return null;
-  }
-  const hoursRemaining = msRemaining / (60 * 60 * 1000);
-  if (hoursRemaining >= 1) {
-    return `${hoursRemaining.toFixed(1)}小時`;
-  }
-  const minutesRemaining = Math.max(1, Math.round(msRemaining / 60000));
-  return `${minutesRemaining}分`;
-};
-
-// Claude Code's top-level `remaining` is the max of the 5-hour session and
-// weekly windows; the tray specifically wants the 5-hour figure, so read it
-// straight from the session window instead of falling back to that combined value.
-const sessionValueText = (snapshot: QuotaSnapshot): string => {
-  const session = snapshot.windows.find((window) => window.key === "session");
-  if (session && session.remaining !== null) {
-    if (Math.round(session.remaining) <= 0) {
-      return sessionCountdownText(session) ?? "0%";
-    }
-    return `${Math.round(session.remaining)}%`;
-  }
-  return valueText(snapshot);
-};
-
 const trayTitleLine1 = "Cursor Claude";
 const trayTitleLine2 = (snapshot: CombinedSnapshot): string =>
-  `${valueText(snapshot.cursor)} ${sessionValueText(snapshot.claude)}`;
+  `${cursorTrayValueText(snapshot.cursor, Date.now())} ${claudeTrayValueText(snapshot.claude, Date.now())}`;
+
+// The Cursor and/or Claude slot counts down once its quota window is spent,
+// so re-render the tray from the cached snapshot on a timer. Purely local: it
+// never triggers a quota fetch, and it only runs while a countdown is on
+// screen. Claude's countdown is minute-scale (5-hour window), so tick every
+// minute when it's active; Cursor's is day-scale (billing cycle), so an
+// hourly tick is plenty when only that one is showing.
+const TRAY_COUNTDOWN_TICK_MS = 60 * 1000;
+const TRAY_DAY_COUNTDOWN_TICK_MS = 60 * 60 * 1000;
+let trayCountdownTimer: NodeJS.Timeout | null = null;
+
+const clearTrayCountdownTick = (): void => {
+  if (trayCountdownTimer) {
+    clearTimeout(trayCountdownTimer);
+    trayCountdownTimer = null;
+  }
+};
+
+const scheduleTrayCountdownTick = (snapshot: CombinedSnapshot): void => {
+  clearTrayCountdownTick();
+  if (!isMac) {
+    return;
+  }
+  const claudeTarget = claudeCountdownTargetAt(snapshot.claude);
+  const cursorTarget = cursorCountdownTargetAt(snapshot.cursor);
+  if (!claudeTarget && !cursorTarget) {
+    return;
+  }
+  const nowMs = Date.now();
+  const remainingMsList = [claudeTarget, cursorTarget]
+    .filter((target): target is string => target !== null)
+    .map((target) => new Date(target).getTime() - nowMs)
+    .filter((ms) => Number.isFinite(ms) && ms > 0);
+  if (remainingMsList.length === 0) {
+    return;
+  }
+  const tickMs = claudeTarget ? TRAY_COUNTDOWN_TICK_MS : TRAY_DAY_COUNTDOWN_TICK_MS;
+  trayCountdownTimer = setTimeout(() => {
+    trayCountdownTimer = null;
+    void refreshTrayFromLatest();
+  }, Math.min(tickMs, Math.min(...remainingMsList) + 1000));
+};
 
 const updateTrayText = async (snapshot: CombinedSnapshot): Promise<void> => {
   if (!trayApp.tray) {
@@ -175,8 +199,8 @@ const updateTrayText = async (snapshot: CombinedSnapshot): Promise<void> => {
   const lang = settingsStore.get().language;
   const toolTipLines = [
     "Usage-Pulse",
-    `Cursor: ${valueText(snapshot.cursor)}`,
-    `Claude Code: ${valueText(snapshot.claude)}`,
+    `Cursor: ${snapshotValueText(snapshot.cursor)}`,
+    `Claude Code: ${snapshotValueText(snapshot.claude)}`,
   ];
   if (snapshot.claude.resetsAt) {
     const date = new Date(snapshot.claude.resetsAt);
@@ -185,12 +209,17 @@ const updateTrayText = async (snapshot: CombinedSnapshot): Promise<void> => {
       toolTipLines.push(t(lang, "tray.tooltip.claudeReset", { time: timeStr }));
     }
   }
-  toolTipLines.push(t(lang, "tray.tooltip.updated", { time: new Date(snapshot.fetchedAt).toLocaleTimeString() }));
+  toolTipLines.push(
+    t(lang, "tray.tooltip.updated", {
+      time: new Date(snapshot.fetchedAt).toLocaleTimeString(localeForLanguage(lang))
+    })
+  );
 
   if (isMac) {
     await setTrayImage(trayTitleLine1, trayTitleLine2(snapshot));
   }
   trayApp.tray.setToolTip(toolTipLines.join("\n"));
+  scheduleTrayCountdownTick(snapshot);
 };
 
 const currentTrayValueColor = (): string =>
@@ -204,7 +233,7 @@ const setTrayImage = async (line1: string, line2: string): Promise<void> => {
     const image = await renderTrayImage(line1, line2, currentTrayValueColor());
     trayApp.tray.setImage(image);
   } catch (error) {
-    console.error("[Usage-Pulse] tray render failed", error);
+    console.error("[Usage-Pulse] tray render failed", redact(error));
   }
 };
 
@@ -296,32 +325,38 @@ const buildTrayMenu = (): Menu =>
     }
   ]);
 
-// The manual Claude Code token is the one secret a renderer never gets to see.
-// It is a working credential for the usage API, and the UI only ever needs to
-// know whether one is stored, so it leaves the main process as a placeholder.
+// No renderer ever gets to see a stored secret. Both of these are working
+// credentials — the Claude token against the usage API, the LINE token against
+// the user's own official account — and the UI only ever needs to know whether
+// one is set, so each leaves the main process as a placeholder.
 const maskSecrets = (settings: AppSettings): AppSettings => ({
   ...settings,
-  claudeManualOAuthToken: settings.claudeManualOAuthToken ? CLAUDE_MANUAL_TOKEN_MASK : ""
+  claudeManualOAuthToken: settings.claudeManualOAuthToken ? CLAUDE_MANUAL_TOKEN_MASK : "",
+  lineChannelAccessToken: settings.lineChannelAccessToken ? LINE_TOKEN_MASK : ""
 });
 
-// ...and a patch carrying the placeholder back is a no-op, not an instruction
-// to overwrite the real token with the mask.
+// ...and a patch carrying a placeholder back is a no-op, not an instruction to
+// overwrite the real secret with the mask.
 const stripMaskedSecrets = (patch: Partial<AppSettings>): Partial<AppSettings> => {
-  if (patch.claudeManualOAuthToken !== CLAUDE_MANUAL_TOKEN_MASK) {
-    return patch;
+  const result = { ...patch };
+  if (result.claudeManualOAuthToken === CLAUDE_MANUAL_TOKEN_MASK) {
+    delete result.claudeManualOAuthToken;
   }
-  const { claudeManualOAuthToken: _masked, ...rest } = patch;
-  return rest;
+  if (result.lineChannelAccessToken === LINE_TOKEN_MASK) {
+    delete result.lineChannelAccessToken;
+  }
+  return result;
 };
 
 const setupIpcHandlers = (): void => {
   ipcMain.handle("settings:get", () => maskSecrets(settingsStore.get()));
-  ipcMain.handle("settings:save", (_event, patch: Partial<AppSettings>) => {
-    const next = settingsStore.update(stripMaskedSecrets(patch));
+  ipcMain.handle("settings:save", (_event, patch: unknown) => {
+    const next = settingsStore.update(stripMaskedSecrets(asSettingsPatch(patch)));
     void applyIdeLaunchHelper(next.launchWithIde).catch((error) => {
-      console.error("[Usage-Pulse] failed to apply IDE launch helper", error);
+      console.error("[Usage-Pulse] failed to apply IDE launch helper", redact(error));
     });
     syncIdePresenceMonitor(next.launchWithIde);
+    applyAppLoginItem(next.launchAtStartup);
     monitor.reschedule();
     waterReminder.reschedule();
     emitSessionStats();
@@ -332,12 +367,32 @@ const setupIpcHandlers = (): void => {
     return maskSecrets(next);
   });
 
+  // Lets the settings panel confirm a freshly pasted token actually works,
+  // independent of enableLineNotification (a disabled toggle must not make
+  // the test button lie about a broken token).
+  ipcMain.handle("line:send-test", async (): Promise<boolean> => {
+    const settings = settingsStore.get();
+    const accessToken = settings.lineChannelAccessToken.trim();
+    if (!accessToken) {
+      return false;
+    }
+    const lang = settings.language;
+    return sendLineBroadcast(
+      { type: "text", text: t(lang, "line.testMessage", { time: new Date().toLocaleString(localeForLanguage(lang)) }) },
+      { force: true }
+    );
+  });
+
+  // Lets Settings warn when a stored token would sit on disk unencrypted.
+  ipcMain.handle("app:secret-storage-available", (): boolean => isSecretStorageAvailable());
+
   ipcMain.handle("auth:status", (): AuthStatus => credentialMonitor.getStatus());
   // Per-service on purpose: each quota card re-detects only its own credential,
   // so a failing Cursor login can be retried without touching Claude Code.
-  ipcMain.handle("auth:check", (_event, service: ServiceType): Promise<CredentialStatus> =>
-    credentialMonitor.check(service)
-  );
+  ipcMain.handle("auth:check", (_event, service: unknown): Promise<CredentialStatus | null> => {
+    const target = asServiceType(service);
+    return target ? credentialMonitor.check(target) : Promise.resolve(null);
+  });
 
   // Claude "re-detect": Keychain first. Only if that item is missing do we
   // open a terminal for `claude setup-token`, recover the printed token, and
@@ -356,26 +411,45 @@ const setupIpcHandlers = (): void => {
     };
 
     const persistClaudeToken = async (token: string, savedMessage: string): Promise<ManualTokenResult> => {
-      let scrapeResult: ScrapeResult;
+      // Unlike a hand-pasted token, this one just came straight from the
+      // official CLI after a real login, so there is no typo risk to guard
+      // against. A quota scrape can still fail right after issuance (e.g. no
+      // usage window recorded yet) — that must not throw the token away and
+      // send the user back to log in again; store it regardless.
+      let scrapeResult: ScrapeResult | null = null;
       try {
         scrapeResult = await validateClaudeOAuthToken(token);
       } catch (error) {
-        const detail = error instanceof Error ? error.message : t(lang, "scrape.unknownError");
-        return { ok: false, message: detail };
+        console.error("[Usage-Pulse] setup-token quota scrape failed, storing token anyway", redact(error));
       }
 
       try {
         await writeClaudeSetupTokenToKeychain(token);
       } catch (error) {
-        console.error("[Usage-Pulse] Keychain write for setup-token failed", error);
+        console.error("[Usage-Pulse] Keychain write for setup-token failed", redact(error));
       }
       settingsStore.update({ claudeManualOAuthToken: token });
-      credentialMonitor.resetFailureStreak("claude");
-      closeManualCredentialWindow();
-      try {
-        monitor.applyScrapeResult("claude", scrapeResult);
-      } catch (error) {
-        console.error("[Usage-Pulse] apply usage after setup-token failed", error);
+      if (scrapeResult) {
+        try {
+          monitor.applyScrapeResult("claude", scrapeResult);
+        } catch (error) {
+          console.error("[Usage-Pulse] apply usage after setup-token failed", redact(error));
+        }
+      } else {
+        // The validation scrape above failed, so the card is still showing
+        // whatever it showed before this login (often the very "expired"
+        // reading that sent the user through this flow). credentialMonitor's
+        // own re-probe below re-reads the credential, not the quota — and its
+        // self-heal path funnels through the *scheduled* rate floor, which a
+        // login that just happened moments after a failed scheduled poll would
+        // still be inside. Retry the quota read directly with the "manual"
+        // trigger, the same way the keychainUsable branch below does, so a
+        // fresh login is never left showing stale numbers.
+        try {
+          await monitor.runServiceCheck("claude", "manual");
+        } catch (error) {
+          console.error("[Usage-Pulse] post-login quota retry failed", redact(error));
+        }
       }
       await credentialMonitor.check("claude");
       return { ok: true, message: savedMessage };
@@ -386,18 +460,40 @@ const setupIpcHandlers = (): void => {
     const keychainUsable =
       Boolean(fromKeychain) && (Number.isNaN(keychainExpiryMs) || keychainExpiryMs > Date.now());
     if (keychainUsable) {
-      await monitor.runServiceCheck("claude", "manual").catch((error) => {
-        console.error("[Usage-Pulse] refresh after Keychain re-detect failed", error);
+      // A captured token from an earlier run of this flow outranks the Keychain
+      // in readClaudeCredential's priority (it's the fallback for when a
+      // Keychain write couldn't be confirmed) — so a stale one left over from
+      // before would silently shadow the Keychain entry just confirmed above,
+      // and the quota fetch below would use the wrong credential. Since the
+      // Keychain checked out here, it's authoritative; drop the fallback.
+      settingsStore.update({ claudeManualOAuthToken: "" });
+      // scrapeQuota() never rejects — a failed fetch resolves as an
+      // isError snapshot — so success is read off the result, not a catch.
+      const checkResult = await monitor.runServiceCheck("claude", "manual").catch((error) => {
+        console.error("[Usage-Pulse] refresh after Keychain re-detect failed", redact(error));
+        return null;
       });
       await credentialMonitor.check("claude");
-      return { ok: true, message: t(lang, "setupToken.keychainFound") };
+      if (checkResult && checkResult.snapshot.claude.status !== "error") {
+        return { ok: true, message: t(lang, "setupToken.keychainFound") };
+      }
+      // The Keychain entry looked usable (often because it carries no expiry
+      // we could read at all) but the API just rejected it anyway. Don't dead-end
+      // here — fall through to a fresh `claude setup-token` login so a terminal
+      // and the login URL actually open instead of silently retrying the same
+      // dead token.
+      console.error(
+        "[Usage-Pulse] Keychain credential rejected by API on re-detect, falling back to setup-token login"
+      );
     }
 
     try {
       const token = await runClaudeSetupToken({
         userDataDir: app.getPath("userData"),
         onAuthUrl: (url) => {
-          void shell.openExternal(url);
+          shell.openExternal(url).catch((error) => {
+            console.error("[Usage-Pulse] failed to open the setup-token login URL", redact(error));
+          });
         }
       });
       return persistClaudeToken(token, t(lang, "setupToken.saved"));
@@ -410,52 +506,14 @@ const setupIpcHandlers = (): void => {
     }
   });
 
-  // The manual-token flow. Only reachable after automatic detection has failed
-  // twice, or when the user asks for it from Settings.
-  ipcMain.handle("credential:open-manual", (_event, service: ServiceType) => {
-    credentialMonitor.openManualEntry(service);
-  });
-  ipcMain.handle(
-    "credential:request-manual-context",
-    (): ManualCredentialContext | null => getManualCredentialContext()
-  );
-  ipcMain.handle("credential:dismiss-manual", () => {
-    closeManualCredentialWindow();
-  });
-  ipcMain.handle("credential:clear-manual", async (_event, service: ServiceType) => {
-    if (service !== "claude") {
+  // Clears the token the re-detect flow captured, so a stuck/bad one can be
+  // dropped without waiting for it to expire on its own.
+  ipcMain.handle("credential:clear-manual", async (_event, service: unknown) => {
+    if (asServiceType(service) !== "claude") {
       return;
     }
     settingsStore.update({ claudeManualOAuthToken: "" });
     await credentialMonitor.check("claude");
-  });
-  // Validate first, store second: a token that cannot fetch is never written,
-  // so a typo can never outrank the automatic sources.
-  ipcMain.handle("credential:submit-manual-token", async (_event, token: string): Promise<ManualTokenResult> => {
-    const lang = settingsStore.get().language;
-    const trimmed = typeof token === "string" ? token.trim() : "";
-    if (!trimmed) {
-      return { ok: false, message: t(lang, "manualToken.error.empty") };
-    }
-
-    let scrapeResult: ScrapeResult;
-    try {
-      scrapeResult = await validateClaudeOAuthToken(trimmed);
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : t(lang, "scrape.unknownError");
-      return { ok: false, message: detail };
-    }
-
-    settingsStore.update({ claudeManualOAuthToken: trimmed });
-    credentialMonitor.resetFailureStreak("claude");
-    closeManualCredentialWindow();
-    try {
-      monitor.applyScrapeResult("claude", scrapeResult);
-    } catch (error) {
-      console.error("[Usage-Pulse] apply usage after manual token failed", error);
-    }
-    await credentialMonitor.check("claude");
-    return { ok: true, message: t(lang, "manualToken.saved") };
   });
 
   ipcMain.handle("monitor:get-latest", () => monitor.getLatestSnapshot());
@@ -463,8 +521,8 @@ const setupIpcHandlers = (): void => {
     app.quit();
   });
   ipcMain.handle("session:get-stats", (): SessionStats => collectSessionStats());
-  ipcMain.handle("session:log-cup", (_event, sizeMl?: WaterCupSizeMl): SessionStats => {
-    const cup = sizeMl ?? settingsStore.get().waterCupSizeMl;
+  ipcMain.handle("session:log-cup", (_event, sizeMl?: unknown): SessionStats => {
+    const cup = asWaterCupSize(sizeMl) ?? settingsStore.get().waterCupSizeMl;
     sessionTracker.logCup(cup);
     const stats = collectSessionStats();
     emitSessionStats();
@@ -487,16 +545,23 @@ const setupIpcHandlers = (): void => {
   ipcMain.handle("water:skip", () => {
     closeAlarmPopup();
   });
-  ipcMain.handle("app:open-external", (_event, url: string) => {
-    if (typeof url === "string" && /^https:\/\//.test(url)) {
+  // Allowlist, not a protocol check: the renderer only ever needs the handful
+  // of support links it renders in the footer, so anything else is refused
+  // rather than handed to the OS.
+  ipcMain.handle("app:open-external", (_event, url: unknown) => {
+    if (isSupportLink(url)) {
       return shell.openExternal(url);
     }
+    console.warn("[Usage-Pulse] refused openExternal for a non-allowlisted URL");
   });
   ipcMain.handle("app:clear-clipboard", () => {
     clipboard.clear();
   });
-  ipcMain.handle("app:copy-to-clipboard", (_event, text: string) => {
-    clipboard.writeText(text);
+  ipcMain.handle("app:copy-to-clipboard", (_event, text: unknown) => {
+    const safe = asClipboardText(text);
+    if (safe !== null) {
+      clipboard.writeText(safe);
+    }
   });
 
   ipcMain.handle("alarm:get-status", async (): Promise<AlarmStatusReport> => alarmService.getReport());
@@ -517,10 +582,15 @@ const setupIpcHandlers = (): void => {
 };
 
 app.whenReady().then(async () => {
+  // A previous run that died mid-login can leave the setup-token capture file
+  // on disk with a live token in it.
+  await clearStaleSetupTokenCapture(app.getPath("userData")).catch(() => undefined);
+
   const settings = settingsStore.get();
   await applyIdeLaunchHelper(settings.launchWithIde).catch((error) => {
-    console.error("[Usage-Pulse] failed to apply IDE launch helper", error);
+    console.error("[Usage-Pulse] failed to apply IDE launch helper", redact(error));
   });
+  applyAppLoginItem(settings.launchAtStartup);
   sessionTracker.start(Date.now(), snapshotStore.get());
   sessionReady = true;
   waterReminder.start();
@@ -535,7 +605,7 @@ app.whenReady().then(async () => {
   });
 
   monitor.on("error", (error: Error) => {
-    console.error("[Usage-Pulse]", error.message);
+    console.error("[Usage-Pulse]", redact(error));
   });
 
   // Lets the periodic sweep reach an already-open window; without it the
@@ -547,7 +617,7 @@ app.whenReady().then(async () => {
   });
 
   credentialMonitor.on("error", (error: Error) => {
-    console.error("[Usage-Pulse] credential check failed", error.message);
+    console.error("[Usage-Pulse] credential check failed", redact(error));
   });
 
   // A rotated or dead credential gets one immediate quota check before anyone
@@ -606,12 +676,12 @@ app.whenReady().then(async () => {
     }
 
     await monitor.runCheck("startup").catch((error) => {
-      console.error("[Usage-Pulse] startup check failed", error);
+      console.error("[Usage-Pulse] startup check failed", redact(error));
     });
     monitor.start();
 
     await credentialMonitor.checkAll().catch((error) => {
-      console.error("[Usage-Pulse] startup credential check failed", error);
+      console.error("[Usage-Pulse] startup credential check failed", redact(error));
     });
     credentialMonitor.start();
     syncIdePresenceMonitor(settingsStore.get().launchWithIde);
@@ -619,6 +689,7 @@ app.whenReady().then(async () => {
 });
 
 app.on("before-quit", () => {
+  clearTrayCountdownTick();
   idePresenceMonitor.stop();
   monitor.stop();
   credentialMonitor.stop();

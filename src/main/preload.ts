@@ -6,7 +6,6 @@ import type {
   AuthStatus,
   CombinedSnapshot,
   CredentialStatus,
-  ManualCredentialContext,
   ManualTokenResult,
   SessionStats,
   ServiceType,
@@ -21,17 +20,9 @@ const api = {
   checkAuth: (service: ServiceType) => ipcRenderer.invoke("auth:check", service) as Promise<CredentialStatus>,
   runSetupToken: () => ipcRenderer.invoke("credential:run-setup-token") as Promise<ManualTokenResult>,
   getLatestSnapshot: () => ipcRenderer.invoke("monitor:get-latest") as Promise<CombinedSnapshot | null>,
-  openManualCredential: (service: ServiceType) =>
-    ipcRenderer.invoke("credential:open-manual", service) as Promise<void>,
-  requestManualCredentialContext: () =>
-    ipcRenderer.invoke("credential:request-manual-context") as Promise<ManualCredentialContext | null>,
-  // One-way only: the token goes to main to be verified and stored, and no
-  // channel exists to read it back.
-  submitManualToken: (token: string) =>
-    ipcRenderer.invoke("credential:submit-manual-token", token) as Promise<ManualTokenResult>,
-  dismissManualCredential: () => ipcRenderer.invoke("credential:dismiss-manual") as Promise<void>,
   clearManualCredential: (service: ServiceType) =>
     ipcRenderer.invoke("credential:clear-manual", service) as Promise<void>,
+  sendLineTest: () => ipcRenderer.invoke("line:send-test") as Promise<boolean>,
   quitApp: () => ipcRenderer.invoke("app:quit") as Promise<void>,
   getSessionStats: () => ipcRenderer.invoke("session:get-stats") as Promise<SessionStats>,
   logWaterCup: (sizeMl?: WaterCupSizeMl) =>
@@ -50,6 +41,8 @@ const api = {
   },
   openExternal: (url: string) => ipcRenderer.invoke("app:open-external", url) as Promise<void>,
   clearClipboard: () => ipcRenderer.invoke("app:clear-clipboard") as Promise<void>,
+  isSecretStorageAvailable: () =>
+    ipcRenderer.invoke("app:secret-storage-available") as Promise<boolean>,
   copyToClipboard: (text: string) => ipcRenderer.invoke("app:copy-to-clipboard", text) as Promise<void>,
   getAlarmStatus: () => ipcRenderer.invoke("alarm:get-status") as Promise<AlarmStatusReport>,
   rearmAlarm: () => ipcRenderer.invoke("alarm:rearm") as Promise<AlarmStatusReport>,
@@ -62,13 +55,6 @@ const api = {
     ipcRenderer.on("alarm:payload", listener);
     return () => {
       ipcRenderer.removeListener("alarm:payload", listener);
-    };
-  },
-  onManualCredentialContext: (handler: (context: ManualCredentialContext) => void) => {
-    const listener = (_event: Electron.IpcRendererEvent, context: ManualCredentialContext) => handler(context);
-    ipcRenderer.on("credential:manual-context", listener);
-    return () => {
-      ipcRenderer.removeListener("credential:manual-context", listener);
     };
   },
   onAuthUpdated: (handler: (status: AuthStatus) => void) => {

@@ -21,23 +21,40 @@ import {
   type TrayValueColorMode,
   type WaterCupSizeMl,
 } from "@shared/types";
+import { LINE_TOKEN_MASK } from "@shared/types";
 import {
   ALARM_POPUP_AUTO_DISMISS_MINUTES,
   formatCountdown,
 } from "@shared/alarm-utils";
 import { resolveClaudeBillingAt } from "@shared/claude-billing";
-import { t, type TranslationKey } from "@shared/i18n";
+import { localeForLanguage, t, type TranslationKey } from "@shared/i18n";
+import {
+  INSTAGRAM_URL,
+  LINE_URL,
+  LINKEDIN_URL,
+  THREADS_URL,
+  WHATSAPP_URL,
+} from "@shared/support-links";
 import appLogo from "./assets/app-logo.png";
 
 // The token is masked with a fixed-length run of asterisks rather than one per
 // character: a channel access token is ~170 characters, and echoing its real
 // length both overflows the field and leaks something about the secret.
 const TOKEN_MASK_MAX = 10;
+// A stored token never reaches this process, so it arrives as a placeholder.
+// Both cases render as the same run of asterisks — the field shows that a
+// secret is set, and nothing about the secret itself.
 const maskToken = (token: string): string =>
-  "*".repeat(Math.min(token.length, TOKEN_MASK_MAX));
+  token === LINE_TOKEN_MASK
+    ? "*".repeat(TOKEN_MASK_MAX)
+    : "*".repeat(Math.min(token.length, TOKEN_MASK_MAX));
 
-const THREADS_URL = "https://www.threads.com/@xiaochen26wyl";
-const LINE_URL = "https://lin.ee/6XYi49XZ";
+const LANGUAGE_OPTIONS: Array<{ value: Language; label: string }> = [
+  { value: "zh", label: "中文" },
+  { value: "en", label: "English" },
+  { value: "ja", label: "日本語" },
+  { value: "ko", label: "한국어" },
+];
 
 // Claude Code's 5-hour session window has a fixed duration; only its end
 // (resetsAt) comes from the API, so the countdown bar's fill derives the
@@ -57,6 +74,7 @@ const defaultSettings: AppSettings = {
   enableClaudeWeeklyLowAlert: true,
   enableClaudeCooldownAlert: true,
   launchWithIde: false,
+  launchAtStartup: false,
   notifyCooldownMinutes: 15,
   enableCursorResetAlarm: true,
   enableClaudeResetAlarm: true,
@@ -155,7 +173,7 @@ const formatResetText = (iso: string | null, lang: Language): string => {
   if (Number.isNaN(date.getTime())) {
     return t(lang, "app.unknown");
   }
-  return date.toLocaleString();
+  return date.toLocaleString(localeForLanguage(lang));
 };
 
 type LowQuotaThresholdKey =
@@ -196,6 +214,10 @@ export const App = () => {
   });
   const [claudeCommandCopied, setClaudeCommandCopied] = useState(false);
   const [lineToken, setLineToken] = useState("");
+  // False only on hosts with no OS keychain available, where a saved token
+  // would land in the settings file as plain text. The user is told rather
+  // than silently downgraded.
+  const [secretStorageOk, setSecretStorageOk] = useState(true);
   const [savingLineToken, setSavingLineToken] = useState(false);
   const [lineTokenMessage, setLineTokenMessage] = useState<{
     text: string;
@@ -204,6 +226,7 @@ export const App = () => {
     text: "",
     isError: false,
   });
+  const [testingLineToken, setTestingLineToken] = useState(false);
   const [now, setNow] = useState<number>(Date.now());
   const [alarmStatus, setAlarmStatus] = useState<AlarmStatusReport | null>(
     null,
@@ -240,6 +263,13 @@ export const App = () => {
     setSessionStats(nextSessionStats);
     setLineToken(nextSettings.lineChannelAccessToken);
   };
+
+  useEffect(() => {
+    window.usagePulse
+      .isSecretStorageAvailable()
+      .then(setSecretStorageOk)
+      .catch(() => setSecretStorageOk(true));
+  }, []);
 
   useEffect(() => {
     refreshBaseData().catch((error) => {
@@ -421,6 +451,15 @@ export const App = () => {
       return;
     }
 
+    // The field still holds the placeholder: the stored token is untouched, so
+    // there is nothing to send. Saving the placeholder itself would be a no-op
+    // in main anyway, but reporting "saved" without a round trip is honest and
+    // avoids rewriting a good token.
+    if (lineToken === LINE_TOKEN_MASK) {
+      setLineTokenMessage({ text: t(lang, "line.saved"), isError: false });
+      return;
+    }
+
     setSavingLineToken(true);
     try {
       const next = await window.usagePulse.saveSettings({
@@ -433,6 +472,22 @@ export const App = () => {
       console.error(error);
     } finally {
       setSavingLineToken(false);
+    }
+  };
+
+  const handleSendLineTest = async () => {
+    setTestingLineToken(true);
+    try {
+      const ok = await window.usagePulse.sendLineTest();
+      setLineTokenMessage({
+        text: t(lang, ok ? "line.testSuccess" : "line.testFail"),
+        isError: !ok,
+      });
+    } catch (error) {
+      console.error(error);
+      setLineTokenMessage({ text: t(lang, "line.testFail"), isError: true });
+    } finally {
+      setTestingLineToken(false);
     }
   };
 
@@ -506,17 +561,19 @@ export const App = () => {
       field.selectionEnd === field.value.length &&
       field.value.length > 0;
 
+    // Editing a field that is only showing the placeholder starts a new token:
+    // there is no real value in state to append to or trim from.
+    const startsFresh = wholeMaskSelected || lineToken === LINE_TOKEN_MASK;
+
     if (event.key === "Backspace" || event.key === "Delete") {
       event.preventDefault();
-      setLineToken((prev) => (wholeMaskSelected ? "" : prev.slice(0, -1)));
+      setLineToken((prev) => (startsFresh ? "" : prev.slice(0, -1)));
       setLineTokenMessage({ text: "", isError: false });
       return;
     }
     if (event.key.length === 1) {
       event.preventDefault();
-      setLineToken((prev) =>
-        wholeMaskSelected ? event.key : prev + event.key,
-      );
+      setLineToken((prev) => (startsFresh ? event.key : prev + event.key));
       setLineTokenMessage({ text: "", isError: false });
     }
   };
@@ -588,14 +645,18 @@ export const App = () => {
         <p className="meta-text" style={{ margin: "6px 0 0" }}>
           {credential.checkedAt
             ? t(lang, "auth.lastChecked", {
-                time: new Date(credential.checkedAt).toLocaleString(),
+                time: new Date(credential.checkedAt).toLocaleString(
+                  localeForLanguage(lang),
+                ),
               })
             : t(lang, "auth.lastCheckedNever")}
         </p>
         {credential.expiresAt ? (
           <p className="meta-text" style={{ margin: "2px 0 0" }}>
             {t(lang, "auth.expiresAt", {
-              time: new Date(credential.expiresAt).toLocaleString(),
+              time: new Date(credential.expiresAt).toLocaleString(
+                localeForLanguage(lang),
+              ),
             })}
           </p>
         ) : null}
@@ -619,35 +680,24 @@ export const App = () => {
     );
   };
 
-  // Claude Code only. The window this opens is normally offered on its own once
-  // automatic detection has failed twice; this is the way back to it for anyone
-  // who dismissed it, or who wants to swap the stored token out.
-  const renderManualCredentialRow = () => (
-    <div className="quota-header" style={{ marginTop: "8px", gap: "8px" }}>
-      <span className="meta-text" style={{ margin: 0 }}>
-        {hasManualToken ? t(lang, "manualToken.inUse") : ""}
-      </span>
-      <div style={{ display: "flex", gap: "8px" }}>
+  // Claude Code only. Shows whether the token the re-detect flow captured is
+  // still the one in use, with a way to drop it if it turns out to be bad.
+  const renderManualCredentialRow = () =>
+    hasManualToken ? (
+      <div className="quota-header" style={{ marginTop: "8px", gap: "8px" }}>
+        <span className="meta-text" style={{ margin: 0 }}>
+          {t(lang, "manualToken.inUse")}
+        </span>
         <button
           type="button"
+          className="danger-btn"
           style={{ width: "auto" }}
-          onClick={() => window.usagePulse.openManualCredential("claude")}
+          onClick={clearManualToken}
         >
-          {t(lang, "manualToken.openButton")}
+          {t(lang, "manualToken.clearButton")}
         </button>
-        {hasManualToken ? (
-          <button
-            type="button"
-            className="danger-btn"
-            style={{ width: "auto" }}
-            onClick={clearManualToken}
-          >
-            {t(lang, "manualToken.clearButton")}
-          </button>
-        ) : null}
       </div>
-    </div>
-  );
+    ) : null;
 
   const renderUsagePercentBar = (window: QuotaWindow, service: ServiceType) => (
     <div className="window-bar" key={window.key}>
@@ -762,8 +812,10 @@ export const App = () => {
     );
   };
 
-  const toggleLanguage = async () => {
-    const nextLang: Language = lang === "zh" ? "en" : "zh";
+  const changeLanguage = async (nextLang: Language) => {
+    if (nextLang === lang) {
+      return;
+    }
     setSettings((prev) => ({ ...prev, language: nextLang }));
     try {
       const next = await window.usagePulse.saveSettings(
@@ -854,13 +906,21 @@ export const App = () => {
           <div className="app-title-text">
             <div className="quota-header">
               <h1>Usage-Pulse</h1>
-              <button
+              <select
                 className="lang-toggle"
-                onClick={toggleLanguage}
+                value={lang}
                 title={t(lang, "settings.language")}
+                aria-label={t(lang, "settings.language")}
+                onChange={(event) =>
+                  changeLanguage(event.target.value as Language)
+                }
               >
-                {lang === "zh" ? "EN" : "中文"}
-              </button>
+                {LANGUAGE_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
             </div>
             <p className="subtitle">{t(lang, "app.subtitle")}</p>
           </div>
@@ -1064,12 +1124,38 @@ export const App = () => {
                 setSettings((prev) => ({
                   ...prev,
                   launchWithIde: event.target.checked,
+                  launchAtStartup: event.target.checked
+                    ? false
+                    : prev.launchAtStartup,
                 }))
               }
             />
           </label>
           <p className="meta-text" style={{ margin: 0 }}>
             {t(lang, "settings.launchWithIde.hint")}
+          </p>
+        </div>
+
+        <div className="field">
+          <label className="field switch-row" style={{ marginBottom: 0 }}>
+            <span>{t(lang, "settings.launchAtStartup")}</span>
+            <input
+              type="checkbox"
+              className="toggle"
+              checked={settings.launchAtStartup}
+              onChange={(event) =>
+                setSettings((prev) => ({
+                  ...prev,
+                  launchAtStartup: event.target.checked,
+                  launchWithIde: event.target.checked
+                    ? false
+                    : prev.launchWithIde,
+                }))
+              }
+            />
+          </label>
+          <p className="meta-text" style={{ margin: 0 }}>
+            {t(lang, "settings.launchAtStartup.hint")}
           </p>
         </div>
 
@@ -1483,6 +1569,12 @@ export const App = () => {
           {t(lang, "line.pasteHint")}
         </p>
 
+        {secretStorageOk ? null : (
+          <div className="callout-warning">
+            ⚠️ {t(lang, "settings.insecureStorage")}
+          </div>
+        )}
+
         <label className="field">
           <span>{t(lang, "line.tokenLabel")}</span>
           <input
@@ -1499,13 +1591,22 @@ export const App = () => {
           />
         </label>
 
-        <button
-          className="primary-btn primary-btn-line"
-          onClick={handleSaveLineCredentials}
-          disabled={savingLineToken}
-        >
-          {savingLineToken ? t(lang, "button.saving") : t(lang, "line.save")}
-        </button>
+        <div className="alarm-actions-row">
+          <button
+            className="primary-btn primary-btn-line"
+            onClick={handleSaveLineCredentials}
+            disabled={savingLineToken}
+          >
+            {savingLineToken ? t(lang, "button.saving") : t(lang, "line.save")}
+          </button>
+          <button
+            className="ghost-btn"
+            onClick={handleSendLineTest}
+            disabled={testingLineToken || !settings.lineChannelAccessToken}
+          >
+            {testingLineToken ? t(lang, "line.testSending") : t(lang, "line.test")}
+          </button>
+        </div>
         {lineTokenMessage.text ? (
           <p className={lineTokenMessage.isError ? "form-error" : "meta-text"}>
             {lineTokenMessage.text}
@@ -1520,31 +1621,75 @@ export const App = () => {
       </section>
 
       <footer className="panel footer">
-        <p className="footer-credit">
-          {t(lang, "footer.developer")} · {t(lang, "footer.support")}{" "}
-          <a
-            href={THREADS_URL}
-            className="footer-link"
-            onClick={(event) => {
-              event.preventDefault();
-              openSupportLink(THREADS_URL);
-            }}
-          >
-            Threads
-          </a>
-          {" / "}
-          <a
-            href={LINE_URL}
-            className="footer-link footer-link-line"
-            onClick={(event) => {
-              event.preventDefault();
-              openSupportLink(LINE_URL);
-            }}
-          >
-            Line
-          </a>
-        </p>
-        <p className="footer-free">{t(lang, "footer.free")}</p>
+        <div className="footer-credits">
+          <p className="footer-credit">
+            {t(lang, "footer.support")}{" "}
+            {lang === "zh" ? (
+              <>
+                <a
+                  href={THREADS_URL}
+                  className="footer-link"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    openSupportLink(THREADS_URL);
+                  }}
+                >
+                  Threads
+                </a>
+                {" / "}
+                <a
+                  href={LINE_URL}
+                  className="footer-link footer-link-line"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    openSupportLink(LINE_URL);
+                  }}
+                >
+                  Line
+                </a>
+              </>
+            ) : (
+              <>
+                <a
+                  href={INSTAGRAM_URL}
+                  className="footer-link"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    openSupportLink(INSTAGRAM_URL);
+                  }}
+                >
+                  Instagram
+                </a>
+                {" / "}
+                <a
+                  href={WHATSAPP_URL}
+                  className="footer-link"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    openSupportLink(WHATSAPP_URL);
+                  }}
+                >
+                  WhatsApp
+                </a>
+              </>
+            )}
+          </p>
+          <p className="footer-credit">
+            {t(lang, "footer.developer")}{" "}
+            <a
+              href={LINKEDIN_URL}
+              className="footer-link"
+              onClick={(event) => {
+                event.preventDefault();
+                openSupportLink(LINKEDIN_URL);
+              }}
+            >
+              LinkedIn
+            </a>
+            {" · "}
+            {t(lang, "footer.developerHint")}
+          </p>
+        </div>
         <p className="footer-license">{t(lang, "footer.license")}</p>
       </footer>
     </main>

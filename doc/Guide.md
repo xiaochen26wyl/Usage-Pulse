@@ -28,7 +28,7 @@
 #### Claude Code
 - Local source (priority order):
   - `CLAUDE_CODE_OAUTH_TOKEN`
-  - A token the user pasted in by hand (`claude setup-token`), stored encrypted
+  - The token the re-detect flow captured from `claude setup-token`, stored encrypted
   - macOS Keychain `Claude Code-credentials`
   - `~/.claude/.credentials.json` (or `CLAUDE_CONFIG_DIR/.credentials.json`)
 - Remote source: `https://api.anthropic.com/api/oauth/usage`
@@ -36,20 +36,15 @@
   `quotaLimits` records — see "Restraint on the usage API" below
 - Metrics: remaining percentage for the 5-hour window and weekly quota
 
-#### Manual credential entry (CLI users)
-Automatic detection gets two goes before the user is interrupted. After two
-consecutive sweeps conclude the Claude Code credential is unusable, a focusable
-window opens with the `claude setup-token` command and a field to paste the
-result into. The token is verified against the usage API before it is stored,
-never written if it fails, encrypted at rest, and never handed back to a
-renderer — `settings:get` returns a placeholder. Settings has a button to
-reopen the window or clear the stored token.
-
+#### Re-detecting a Claude Code credential
 Claude's **Re-detect Credentials** button looks in the `Claude Code-credentials`
 Keychain item first. If that item is missing it opens a system terminal running
 `claude setup-token`; after you finish the official login page the app reads the
-printed `sk-ant-oat01-` token itself and writes it back to that same Keychain
-item (and to the encrypted app store). The paste window remains as a fallback.
+printed `sk-ant-oat01-` token itself, verifies it against the usage API, and
+writes it back to that same Keychain item (and to the encrypted app store as a
+fallback, in case the Keychain write cannot be confirmed). The fallback copy is
+encrypted at rest and never handed back to a renderer — `settings:get` returns a
+placeholder. Settings has a button to clear it if it turns out to be bad.
 
 ### Restraint on the usage API
 
@@ -192,7 +187,7 @@ Two failure modes of the old reset alert are fixed here:
 #### Claude Code
 - 本機來源（優先序）：
   - `CLAUDE_CODE_OAUTH_TOKEN`
-  - 使用者手動貼上的 token（`claude setup-token`），加密存放
+  - 「重新偵測憑證」流程從 `claude setup-token` 收回的 token，加密存放
   - macOS Keychain `Claude Code-credentials`
   - `~/.claude/.credentials.json`（或 `CLAUDE_CONFIG_DIR/.credentials.json`）
 - 遠端來源：`https://api.anthropic.com/api/oauth/usage`
@@ -200,15 +195,12 @@ Two failure modes of the old reset alert are fixed here:
   紀錄——詳見下方「對 usage API 的節制」
 - 指標：5 小時視窗與每週配額剩餘百分比
 
-#### 手動輸入憑證（CLI 使用者）
-自動偵測會先試兩次才打擾使用者。連續兩輪掃描都判定 Claude Code 憑證不可用之後，才會彈出一個
-可聚焦的視窗，裡面有 `claude setup-token` 指令與貼上結果的輸入格。token 會先向 usage API 驗證
-過才儲存，驗證失敗一律不寫入；存放時加密，而且永遠不會回傳給任何 renderer——`settings:get`
-只回一個佔位字串。設定頁有按鈕可以重新叫出這個視窗或清除已存的 token。
-
+#### 重新偵測 Claude Code 憑證
 Claude 的「重新偵測憑證」會先查 Keychain 的 `Claude Code-credentials`。沒有才打開系統終端機
 跑 `claude setup-token`；你在官方登入頁完成授權後，程式自己從輸出收回 `sk-ant-oat01-` token，
-再寫回同一組 Keychain（以及 App 自己的加密 store）。手動貼上視窗仍保留當備援。
+向 usage API 驗證過後寫回同一組 Keychain（以及 App 自己的加密 store，作為 Keychain 寫入無法
+確認時的備援）。備援副本存放時加密，且永遠不會回傳給任何 renderer——`settings:get` 只回一個
+佔位字串。設定頁有按鈕可以在它壞掉時清除。
 
 ### 對 usage API 的節制
 

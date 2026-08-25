@@ -1,5 +1,6 @@
 import axios from "axios";
 import type { LineMessage } from "@shared/line-templates";
+import { redact } from "@main/log-redaction";
 import { settingsStore } from "@main/store";
 
 const LINE_BROADCAST_URL = "https://api.line.me/v2/bot/message/broadcast";
@@ -23,11 +24,18 @@ const clampMessage = (message: LineMessage): LineMessage =>
  * Never throws. LINE is a best-effort side channel — a stale token or a network
  * blip must not take down the credential sweep or the quota monitor that called
  * this.
+ *
+ * `force` skips the enableLineNotification check — used by the settings
+ * panel's "send test message" button, where a disabled toggle must not mask
+ * whether the pasted token itself actually works.
  */
-export const sendLineBroadcast = async (message: LineMessage): Promise<boolean> => {
+export const sendLineBroadcast = async (
+  message: LineMessage,
+  options?: { force?: boolean }
+): Promise<boolean> => {
   try {
     const settings = settingsStore.get();
-    if (!settings.enableLineNotification) {
+    if (!settings.enableLineNotification && !options?.force) {
       return false;
     }
     const accessToken = settings.lineChannelAccessToken.trim();
@@ -50,7 +58,7 @@ export const sendLineBroadcast = async (message: LineMessage): Promise<boolean> 
   } catch (error) {
     // Deliberately not surfaced to the renderer: the message body may echo
     // parts of the request, and callers have nothing useful to do with it.
-    console.warn("[line-notifier] broadcast failed:", error instanceof Error ? error.message : error);
+    console.warn("[line-notifier] broadcast failed:", redact(error));
     return false;
   }
 };

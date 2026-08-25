@@ -18,6 +18,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   enableClaudeWeeklyLowAlert: true,
   enableClaudeCooldownAlert: true,
   launchWithIde: false,
+  launchAtStartup: false,
   notifyCooldownMinutes: 15,
   enableCursorResetAlarm: true,
   enableClaudeResetAlarm: true,

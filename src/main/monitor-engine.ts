@@ -12,10 +12,11 @@ import type {
 import { isDuplicateInCooldown } from "@shared/monitor-utils";
 import { isColdReading, isTrusted } from "@shared/snapshot-trust";
 import { buildExhaustedFlex, buildLowQuotaFlex } from "@shared/line-templates";
-import { t } from "@shared/i18n";
+import { localeForLanguage, t } from "@shared/i18n";
 import { alarmService } from "@main/alarm-service";
 import { showAlarmPopup } from "@main/alarm-window";
 import { sendLineBroadcast } from "@main/line-notifier";
+import { redact } from "@main/log-redaction";
 import { scrapeQuota } from "@main/scrapers";
 import { sendDesktopNotification } from "@main/notifiers";
 import {
@@ -457,7 +458,9 @@ export class MonitorEngine extends EventEmitter {
         reason: t(lang, "reason.quotaExhaustedNotify", {
           service: serviceLabel,
           label,
-          resetTime: resetAt ? new Date(resetAt).toLocaleString(lang === "zh" ? "zh-TW" : "en-US") : t(lang, "app.unknown")
+          resetTime: resetAt
+            ? new Date(resetAt).toLocaleString(localeForLanguage(lang))
+            : t(lang, "app.unknown")
         }),
         settings,
         combined,
@@ -588,7 +591,9 @@ export class MonitorEngine extends EventEmitter {
           resetAt: claudeSnapshot.resetsAt,
           label,
           reason: t(lang, "reason.claudeCooldownNotify", {
-            resetTime: new Date(claudeSnapshot.resetsAt).toLocaleString()
+            resetTime: new Date(claudeSnapshot.resetsAt).toLocaleString(
+              localeForLanguage(lang)
+            )
           }),
           settings,
           combined,
@@ -686,7 +691,7 @@ export class MonitorEngine extends EventEmitter {
         }
       } catch (error) {
         // The log is an optimisation, never a dependency.
-        console.error("[Usage-Pulse] CLI log corroboration failed", error);
+        console.error("[Usage-Pulse] CLI log corroboration failed", redact(error));
       }
     }
 

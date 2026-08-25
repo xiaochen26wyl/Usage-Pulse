@@ -1,5 +1,8 @@
 import { BrowserWindow, nativeImage, type NativeImage } from "electron";
-import { SERVICE_ACCENT } from "@shared/line-templates";
+import {
+  TRAY_CLAUDE_LABEL_COLOR,
+  TRAY_CURSOR_LABEL_COLOR,
+} from "@shared/tray-value-color";
 
 // macOS's Tray.setTitle() can't reliably fit two stacked lines: on the
 // classic ~22pt menu bar row (external displays, non-notched Macs) the
@@ -11,12 +14,13 @@ import { SERVICE_ACCENT } from "@shared/line-templates";
 // either loses legibility or leaves an oversized gap before the text.
 const CANVAS_HEIGHT = 40;
 const SCALE_FACTOR = 2;
-const PADDING = 6;
 const MAX_CANVAS_WIDTH = 190;
-const PADDING_X = PADDING;
-const TOKEN_GAP = 6;
-const LINE1_SIZE = 13;
-const LINE2_SIZE = 17;
+const PADDING_X = 2;
+const TOKEN_GAP = 30;
+const LINE1_SIZE = 15;
+const LINE2_SIZE = 22;
+const LINE1_Y_RATIO = 0.28;
+const LINE2_Y_RATIO = 0.74;
 
 let rendererWindow: BrowserWindow | null = null;
 let loadPromise: Promise<void> | null = null;
@@ -32,8 +36,10 @@ window.renderTray = (line1, line2, valueColor) => {
   const tokenGap = ${TOKEN_GAP};
   const line1Size = ${LINE1_SIZE};
   const line2Size = ${LINE2_SIZE};
+  const line1YRatio = ${LINE1_Y_RATIO};
+  const line2YRatio = ${LINE2_Y_RATIO};
   const maxCanvasWidth = ${MAX_CANVAS_WIDTH};
-  const line1Colors = [valueColor || "#ffffff", ${JSON.stringify(SERVICE_ACCENT.claude)}];
+  const line1Colors = [${JSON.stringify(TRAY_CURSOR_LABEL_COLOR)}, ${JSON.stringify(TRAY_CLAUDE_LABEL_COLOR)}];
   const fontStack = "-apple-system, BlinkMacSystemFont, sans-serif";
 
   const tokensOf = (line) => String(line || "").trim().split(/\\s+/).filter(Boolean);
@@ -89,12 +95,12 @@ window.renderTray = (line1, line2, valueColor) => {
     }
   };
 
-  drawLine(tokens1, "600", size1, canvas.height * 0.28, line1Colors);
+  drawLine(tokens1, "600", size1, canvas.height * line1YRatio, line1Colors);
   drawLine(
     tokens2,
     "bold",
     size2,
-    canvas.height * 0.74,
+    canvas.height * line2YRatio,
     tokens2.map(() => valueColor || "#ffffff")
   );
 

@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { readFile, stat } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { homedir, userInfo } from "node:os";
@@ -9,11 +9,10 @@ import type { SqlJsStatic } from "sql.js";
 const execFileAsync = promisify(execFile);
 
 /**
- * Supplies the hand-entered Claude Code token, if the user has stored one.
- *
- * Injected rather than imported from the store, so this module keeps depending
- * on nothing but the OS — the same reason credential-monitor takes its quota
- * refresher by injection.
+ * Supplies the token the "re-detect" flow captured from `claude setup-token`,
+ * if one is stored. Injected rather than imported from the store, so this
+ * module keeps depending on nothing but the OS — the same reason
+ * credential-monitor takes its quota refresher by injection.
  */
 let manualClaudeTokenProvider: (() => string | null | undefined) | null = null;
 
@@ -266,6 +265,43 @@ const readExistingKeychainAccount = async (): Promise<string | null> => {
 };
 
 /**
+ * Runs `security add-generic-password` with the secret supplied on stdin
+ * instead of in argv.
+ *
+ * `-w` with no value makes `security` prompt for the password rather than take
+ * it from the command line, which keeps the token out of the process argument
+ * list that any other process running as this user can read via `ps`. It asks
+ * twice — once for the value and once to confirm it — so the blob is written
+ * twice; sending it only once makes the two prompts disagree and silently
+ * stores an empty password.
+ *
+ * Nothing about the failure path may quote the command: Node puts the full
+ * argument list on `error.cmd` and `error.message`, which is the leak this
+ * whole arrangement exists to avoid.
+ */
+const addGenericPasswordViaStdin = (args: string[], secret: string): Promise<void> =>
+  new Promise((resolve, reject) => {
+    const child = spawn("security", args, { stdio: ["pipe", "ignore", "pipe"] });
+
+    let stderr = "";
+    child.stderr?.on("data", (chunk) => {
+      stderr += String(chunk);
+    });
+    child.on("error", () => reject(new Error("Keychain write could not start")));
+    child.on("close", (code) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      // stderr here is only ever `security`'s own prompts and diagnostics, but
+      // it is redacted at the log site regardless.
+      reject(new Error(`Keychain write failed (exit ${code}): ${stderr.trim().slice(0, 200)}`));
+    });
+
+    child.stdin?.end(`${secret}\n${secret}\n`);
+  });
+
+/**
  * Exception write: persist a long-lived setup-token into the same macOS
  * Keychain item the official CLI uses (`Claude Code-credentials`), so the next
  * re-detect and ordinary `readClaudeCredential` can find it.
@@ -281,16 +317,10 @@ export const writeClaudeSetupTokenToKeychain = async (token: string): Promise<vo
 
   const blob = JSON.stringify({ claudeAiOauth: { accessToken: token } });
   const account = (await readExistingKeychainAccount()) || userInfo().username || "Usage-Pulse";
-  await execFileAsync("security", [
-    "add-generic-password",
-    "-s",
-    CLAUDE_KEYCHAIN_SERVICE,
-    "-a",
-    account,
-    "-w",
-    blob,
-    "-U"
-  ]);
+  await addGenericPasswordViaStdin(
+    ["add-generic-password", "-s", CLAUDE_KEYCHAIN_SERVICE, "-a", account, "-U", "-w"],
+    blob
+  );
 };
 
 const resolveClaudeCredentialsPath = (): string => {
@@ -324,13 +354,13 @@ export const readClaudeCredential = async (): Promise<RawCredential> => {
     return toCredential(envToken, null);
   }
 
-  // A token the user pasted in themselves (`claude setup-token`). It sits above
-  // the automatic sources deliberately: it only ever exists because automatic
-  // detection already failed twice, so letting a half-working Keychain entry
-  // outrank it would put the user right back where they started.
-  const manualToken = manualClaudeTokenProvider?.()?.trim();
-  if (manualToken) {
-    return toCredential(manualToken, null);
+  // A token the "re-detect" flow captured from `claude setup-token`. It sits
+  // above the Keychain/file sources deliberately: it only ever exists because
+  // that flow already wrote it to the Keychain too, so this is the fallback
+  // for when that write silently failed.
+  const capturedToken = manualClaudeTokenProvider?.()?.trim();
+  if (capturedToken) {
+    return toCredential(capturedToken, null);
   }
 
   const fromKeychain = await peekClaudeKeychainCredential();

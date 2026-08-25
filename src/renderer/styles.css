@@ -429,6 +429,9 @@ button:disabled {
   padding: 4px 10px;
   font-size: 12px;
   border-radius: 999px;
+  width: auto;
+  max-width: none;
+  cursor: pointer;
 }
 
 .tray-color-group {
@@ -496,6 +499,13 @@ button:disabled {
   margin-top: 12px;
 }
 
+.footer-credits {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: center;
+}
+
 .footer p.footer-credit {
   margin: 0;
   font-size: 12px;
@@ -516,23 +526,14 @@ button:disabled {
   color: var(--color-line);
 }
 
-/* License notice: same brightness as the credit line above it — it's a
-   standing statement, not a de-emphasized footnote. Left-aligned and placed
-   after the "free forever" line. */
+/* License notice: same brightness as the credit lines above — a standing
+   statement, not a de-emphasized footnote. */
 .footer p.footer-license {
-  margin: 4px 0 0;
+  margin: 8px 0 0;
   font-size: 11px;
   line-height: 1.5;
   color: #8b949e;
   text-align: left;
-}
-
-.footer p.footer-free {
-  margin: 4px 0 0;
-  font-size: 11px;
-  font-weight: 600;
-  color: #7ee787;
-  text-align: center;
 }
 
 /* --- Timed alarm popup (alarm.html) --- */
@@ -582,101 +583,6 @@ button:disabled {
 }
 
 .alarm-actions button {
-  flex: 1;
-  margin: 0;
-}
-
-/* --- Manual credential entry (credential.html) --- */
-.manual-token {
-  min-height: 100vh;
-  padding: 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  background: #181d25;
-}
-
-.manual-token-title {
-  margin: 0;
-  font-size: 17px;
-  font-weight: 600;
-  color: #ffffff;
-}
-
-.manual-token-intro {
-  margin: 0;
-  font-size: 13px;
-  color: var(--color-text);
-}
-
-.manual-token-reason {
-  margin: 0 0 4px;
-  padding: 8px 10px;
-  border-radius: 8px;
-  border: 1px solid var(--color-border);
-  background: rgba(108, 182, 255, 0.08);
-  font-size: 12px;
-  color: var(--color-warning);
-}
-
-.manual-token-step {
-  margin: 6px 0 0;
-  font-size: 13px;
-  color: var(--color-text);
-}
-
-.manual-token-command {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.manual-token-command code {
-  flex: 1;
-  padding: 8px 10px;
-  border-radius: 8px;
-  border: 1px solid var(--color-border);
-  background: #10141b;
-  font-size: 13px;
-  color: var(--color-text);
-}
-
-.manual-token-command button {
-  width: auto;
-  margin: 0;
-  white-space: nowrap;
-}
-
-.manual-token-input {
-  width: 100%;
-  padding: 9px 10px;
-  border-radius: 8px;
-  border: 1px solid var(--color-border);
-  background: #10141b;
-  color: var(--color-text);
-  font-size: 13px;
-}
-
-.manual-token-meta {
-  margin: 0;
-  font-size: 11px;
-  color: var(--color-text-muted);
-}
-
-.manual-token-error {
-  margin: 0;
-  font-size: 12px;
-  color: var(--color-danger);
-}
-
-.manual-token-actions {
-  margin-top: auto;
-  padding-top: 12px;
-  display: flex;
-  gap: 8px;
-}
-
-.manual-token-actions button {
   flex: 1;
   margin: 0;
 }

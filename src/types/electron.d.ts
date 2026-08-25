@@ -5,7 +5,6 @@ import type {
   AuthStatus,
   CombinedSnapshot,
   CredentialStatus,
-  ManualCredentialContext,
   ManualTokenResult,
   SessionStats,
   ServiceType,
@@ -19,11 +18,8 @@ interface UsagePulseApi {
   checkAuth: (service: ServiceType) => Promise<CredentialStatus>;
   runSetupToken: () => Promise<ManualTokenResult>;
   getLatestSnapshot: () => Promise<CombinedSnapshot | null>;
-  openManualCredential: (service: ServiceType) => Promise<void>;
-  requestManualCredentialContext: () => Promise<ManualCredentialContext | null>;
-  submitManualToken: (token: string) => Promise<ManualTokenResult>;
-  dismissManualCredential: () => Promise<void>;
   clearManualCredential: (service: ServiceType) => Promise<void>;
+  sendLineTest: () => Promise<boolean>;
   quitApp: () => Promise<void>;
   getSessionStats: () => Promise<SessionStats>;
   logWaterCup: (sizeMl?: WaterCupSizeMl) => Promise<SessionStats>;
@@ -34,6 +30,7 @@ interface UsagePulseApi {
   requestSessionStats: () => Promise<SessionStats | null>;
   onSessionStatsUpdated: (handler: (stats: SessionStats) => void) => () => void;
   openExternal: (url: string) => Promise<void>;
+  isSecretStorageAvailable: () => Promise<boolean>;
   clearClipboard: () => Promise<void>;
   copyToClipboard: (text: string) => Promise<void>;
   getAlarmStatus: () => Promise<AlarmStatusReport>;
@@ -43,7 +40,6 @@ interface UsagePulseApi {
   dismissAlarm: () => Promise<void>;
   snoozeAlarm: () => Promise<void>;
   onAlarmPayload: (handler: (payload: AlarmPopupPayload) => void) => () => void;
-  onManualCredentialContext: (handler: (context: ManualCredentialContext) => void) => () => void;
   onAuthUpdated: (handler: (status: AuthStatus) => void) => () => void;
   onSnapshotUpdated: (handler: (snapshot: CombinedSnapshot) => void) => () => void;
 }

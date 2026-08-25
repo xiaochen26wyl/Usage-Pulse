@@ -1,32 +1,46 @@
-Modified MIT License (Attribution Required, Non-Commercial)
+MIT License (Non-Commercial by Default)
 
 Copyright (c) 2026 W.Y. LI
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
 in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, and distribute copies of the Software,
-subject to the following conditions:
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, subject to the following conditions:
 
-1. Attribution. The above copyright notice, this permission notice, and a
-   clear attribution to the original developer, W.Y. LI, as the creator of
-   the Software shall be included in all copies, substantial portions, and
-   any modified or derivative versions of the Software that are distributed,
-   published, or otherwise made available to others.
+1. The above copyright notice and this permission notice shall be included in
+   all copies or substantial portions of the Software.
 
-2. Non-Commercial Use Only. The Software, in whole or in part, and any
-   modified or derivative works based on the Software, may NOT be used,
-   sold, sublicensed, or distributed for commercial purposes. Commercial
-   purposes include, without limitation, selling the Software or any
-   derivative of it, bundling it into a paid product or service, or using
-   it as the basis for a product or service from which revenue is derived.
-   Any commercial use requires prior written permission from W.Y. LI.
+2. This software is licensed for non-commercial use only by default.
 
-3. No Sale of Copies. You may not sell copies of the Software, whether
-   modified or unmodified.
+COMMERCIAL USE & PROJECT ACQUISITION
 
-The above conditions apply to all copies or substantial portions of the
-Software, as well as to any modified or derivative works.
+Any commercial use, distribution in commercial products, or use within a
+company requires a separate commercial license.
+
+Full project buyout (exclusive rights transfer) is also available.
+After buyout, the buyer will receive:
+
+- Full ownership of the project
+- All rights to relicense, close source, or continue development
+- Complete transfer of maintenance and future rights
+- Ownership transfer of the public GitHub repository
+
+The original author (W.Y. LI) retains:
+
+- A perpetual personal-use right
+- The right to keep a new private GitHub repository for personal development,
+  testing, or personal use only (not public, not redistributed, and without
+  inviting other collaborators)
+- The author agrees not to continue maintaining the same public project name
+  or the same public repository after buyout
+
+This buyout is a full ownership transfer that still respects the original
+author's reasonable personal-use needs. Interested parties should contact the
+author to negotiate pricing and sign a formal agreement.
+
+For commercial license or full buyout pricing, please contact via LinkedIn:
+https://www.linkedin.com/in/wenyu-li-1a9868bb/
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,

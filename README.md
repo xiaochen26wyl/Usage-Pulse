@@ -46,7 +46,7 @@ Running `claude` the first time opens a browser to complete OAuth login, which w
 - Low-quota alerts can be toggled independently for Cursor and Claude.
 - Quota-reset alerts can be toggled independently for Cursor and Claude.
 - Notification cooldown is configurable, avoiding repeated alerts with the same content in a short window.
-- Available in both Traditional Chinese and English, switchable from the in-app settings panel.
+- Available in Traditional Chinese, English, Japanese, and Korean from the in-app language menu.
 - The app can be quit directly from the UI or the tray menu ("Quit Usage-Pulse").
 
 ### Security notes
@@ -68,22 +68,22 @@ The one Keychain write is intentional: after you finish the official `claude set
 
 ### License and important notice
 
-Usage-Pulse is released under the **MIT License with additional terms** (see [`LICENSE`](LICENSE)):
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-1. **Attribution required.** Any copy, substantial portion, or derivative work that is distributed must keep the copyright notice and clearly credit the original developer, **W.Y. LI**.
-2. **Non-commercial use only.** The software and any derivative of it may **not** be sold, sublicensed, bundled into a paid product or service, or otherwise used to generate revenue without prior written permission from W.Y. LI.
-3. **No sale of copies**, modified or unmodified.
-
-**Why the extra restriction:** Usage-Pulse ships with LINE Messaging API notification support, which means users enter their own LINE channel credentials into the app. Those credentials are encrypted locally, but a modified build distributed by someone else could remove or subvert that protection. Forbidding commercial redistribution is intended to reduce the incentive to repackage this project into a paid, look-alike installer that tricks users into handing over their tokens.
+Usage-Pulse uses an **MIT-style license with a non-commercial default** (full terms in [`LICENSE`](LICENSE)). **Personal use is free.** Commercial use, company use, or a full project buyout requires the author's agreement — please contact via [LinkedIn](https://www.linkedin.com/in/wenyu-li-1a9868bb/) (details in `LICENSE`).
 
 **Only download Usage-Pulse from this repository's official GitHub Releases page.** Builds from any other source are not published by the original developer, and their handling of your credentials cannot be trusted.
 
-**Usage-Pulse is free forever.** The original developer never charges for this software. If anyone asks you to pay for it, it is not the official release.
-
 ### Support
 
-- Threads: [@xiaochen26wyl](https://www.threads.com/@xiaochen26wyl)
-- LINE: <https://lin.ee/6XYi49XZ>
+If Usage-Pulse helps you, please consider sponsoring via [GitHub Sponsors](https://github.com/sponsors/xiaochen26wyl).
+
+- Instagram: [@xiaochen26wyl](https://www.instagram.com/xiaochen26wyl/)
+- WhatsApp: <https://wa.me/message/ZENT2RTQIGPEI1>
+
+### Developer
+
+- W.Y. LI — [LinkedIn](https://www.linkedin.com/in/wenyu-li-1a9868bb/) (commercial licensing & buyout)
 
 ---
 
@@ -129,7 +129,7 @@ claude
 - 低額度通知可分別開關（Cursor、Claude 各自控制）。
 - 配額重置／到期提醒可分別開關：Cursor 到期、Claude Code 5 小時到點、每週到點、訂閱到期（月繳／年繳）各自獨立。
 - 通知冷卻時間可設定，避免同內容短時間重複提醒。
-- 支援繁體中文與英文介面，可在 App 設定面板內切換。
+- 支援繁體中文、英文、日文、韓文介面，可在 App 標題列語言選單切換。
 - 可在 UI 或 Tray 選單直接使用「結束 Usage-Pulse」。
 
 ### 安全性說明
@@ -151,20 +151,30 @@ claude
 
 ### 授權與重要聲明
 
-Usage-Pulse 採用 **MIT 授權並附加條款**（完整條文見 [`LICENSE`](LICENSE)）：
+Usage-Pulse 採用 **MIT 風格授權，預設僅限非商業使用**（完整條文見 [`LICENSE`](LICENSE)）。**個人使用完全免費**；商業使用、公司內使用或專案買斷須經作者同意，請透過 [LinkedIn](https://www.linkedin.com/in/wenyu-li-1a9868bb/) 洽談（細節見 `LICENSE`）。
 
-1. **需標示原作者**：任何散布的副本、實質部分或改作版本，都必須保留著作權聲明，並清楚標示原開發者 **W.Y. LI**。
-2. **僅限非商業使用**：本軟體及其任何改作版本，**不得**販售、再授權、包裝進付費產品或服務，或以任何方式用於營利；如需商業使用，須事先取得 W.Y. LI 的書面同意。
-3. **不得販售副本**：無論是否經過修改，都不得販售本軟體的副本。
-
-**為什麼要加上這條限制：** Usage-Pulse 內建 LINE Messaging API 通知功能，使用者會在 App 內填入自己的 LINE 憑證。這些憑證在本機是加密保存的，但若有人拿走原始碼、做出修改過的版本再散布，就可能移除或繞過這層保護。禁止商業散布的目的，是降低有心人士把本專案重新包裝成付費或仿冒安裝檔、誘導使用者交出 token 的動機。
+若這個專案對你有幫助，歡迎透過 [GitHub Sponsors](https://github.com/sponsors/xiaochen26wyl) 贊助。
 
 **請只從本 repo 官方的 GitHub Releases 頁面下載 Usage-Pulse。** 任何其他來源的安裝檔都不是原開發者發佈的版本，無法保證它如何處理你的憑證。
-
-**Usage-Pulse 永久免費。** 原開發者絕不會對本軟體收費；若有人要你付費取得，那就不是官方版本。
 
 ### 客服聯繫
 
 - Threads：[@xiaochen26wyl](https://www.threads.com/@xiaochen26wyl)
 - LINE：<https://lin.ee/6XYi49XZ>
+
+### 開發者
+
+- W.Y. LI — [LinkedIn](https://www.linkedin.com/in/wenyu-li-1a9868bb/)（商業授權／買斷）
+
+---
+
+## Usage-Pulse
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+**Personal use is free** | **Commercial use or buyout requires the author's agreement**
+
+If this project helps you, please consider [GitHub Sponsors](https://github.com/sponsors/xiaochen26wyl).
+
+For commercial licensing or buyout, contact via [LinkedIn](https://www.linkedin.com/in/wenyu-li-1a9868bb/). Full terms: [`LICENSE`](LICENSE).
 

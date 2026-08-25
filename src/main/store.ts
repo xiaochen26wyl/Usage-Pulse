@@ -9,6 +9,7 @@ import type {
   ClaudeBillingCadence,
   CombinedSnapshot,
   CredentialState,
+  Language,
   ServiceType,
   TrayValueColorMode
 } from "@shared/types";
@@ -18,6 +19,7 @@ import { migrateLaunchWithIde } from "@main/ide-presence";
 import { decryptSecret, encryptSecret } from "@main/secure-store";
 
 const TRAY_VALUE_COLOR_MODES: ReadonlySet<TrayValueColorMode> = new Set(["system", "white", "black"]);
+const LANGUAGES: ReadonlySet<Language> = new Set(["zh", "en", "ja", "ko"]);
 
 // Settings fields listed here are encrypted at rest via the OS keychain (see secure-store.ts)
 // whenever they're written to the electron-store JSON file, and decrypted on read. Add future
@@ -53,13 +55,6 @@ export interface CredentialRecord {
   rotatedAt: string | null;
   checkedAt: string;
   state: CredentialState;
-  // How many *completed* sweeps in a row concluded the credential is unusable.
-  // Reset to 0 by any usable read. The manual-entry window is only offered once
-  // automatic detection has genuinely failed twice.
-  autoFailureCount?: number;
-  // When the manual-entry window was last put in front of the user, so a
-  // persistently broken credential does not reopen it on every sweep.
-  manualPromptShownAt?: string | null;
 }
 
 interface UsagePulseStore {
@@ -148,12 +143,22 @@ export const settingsStore = {
     if (!TRAY_VALUE_COLOR_MODES.has(merged.trayValueColorMode)) {
       merged.trayValueColorMode = DEFAULT_SETTINGS.trayValueColorMode;
     }
+    if (!LANGUAGES.has(merged.language)) {
+      merged.language = DEFAULT_SETTINGS.language;
+    }
     merged.waterReminderMinutes = clampWaterReminderMinutes(merged.waterReminderMinutes);
     merged.waterCupSizeMl = normalizeWaterCupSize(merged.waterCupSizeMl);
     merged.enableWaterReminder = Boolean(merged.enableWaterReminder);
     merged.enableClaudeWeeklyResetAlarm = Boolean(merged.enableClaudeWeeklyResetAlarm);
     merged.enableClaudeBillingAlarm = Boolean(merged.enableClaudeBillingAlarm);
     merged.claudeBillingCadence = merged.claudeBillingCadence === "annual" ? "annual" : "monthly";
+    if (merged.launchAtStartup && merged.launchWithIde) {
+      if (patch.launchAtStartup === true) {
+        merged.launchWithIde = false;
+      } else {
+        merged.launchAtStartup = false;
+      }
+    }
     store.set("settings", encryptSettings(merged));
     return merged;
   }

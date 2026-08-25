@@ -73,6 +73,7 @@ const createPopup = (): BrowserWindow => {
     webPreferences: {
       preload: join(__dirname, "../preload/index.js"),
       contextIsolation: true,
+      sandbox: true,
       nodeIntegration: false,
       // The alarm chime is synthesised on load with no click to authorise it,
       // so the default autoplay gate has to be lifted for this window.

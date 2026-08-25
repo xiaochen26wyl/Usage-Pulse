@@ -1,6 +1,6 @@
 export type ServiceType = "cursor" | "claude";
 
-export type Language = "zh" | "en";
+export type Language = "zh" | "en" | "ja" | "ko";
 
 // How menu-bar quota values (line 2) are coloured. Brand labels on line 1 stay
 // on their service accents regardless of this setting.
@@ -105,6 +105,11 @@ export interface AppSettings {
   // When on, a tiny login helper starts Usage-Pulse only after Cursor or
   // Claude Code is running. The menu-bar app itself is not a login item.
   launchWithIde: boolean;
+  // When on, Usage-Pulse itself is registered as a normal OS login item and
+  // starts on every boot. Mutually exclusive with launchWithIde — settingsStore
+  // enforces this, since "always launch at boot" and "only launch once the IDE
+  // is running" are contradictory goals.
+  launchAtStartup: boolean;
   notifyCooldownMinutes: number;
   enableCursorResetAlarm: boolean;
   // 5-hour session reset only. Weekly used to share this switch; existing
@@ -119,11 +124,13 @@ export interface AppSettings {
   enableAlarmPopup: boolean;
   // Independent of the token: off skips LINE even when a token is stored.
   enableLineNotification: boolean;
+  // Stored encrypted and never handed back to a renderer in cleartext — see
+  // LINE_TOKEN_MASK.
   lineChannelAccessToken: string;
-  // A Claude Code OAuth token the user pasted in themselves (`claude
-  // setup-token`), used when automatic detection cannot reach the Keychain or
-  // the credentials file. Stored encrypted and never handed back to a renderer
-  // in cleartext — see CLAUDE_MANUAL_TOKEN_MASK.
+  // The token the "re-detect" flow captures from running `claude setup-token`
+  // in a terminal, kept as a fallback for when the Keychain write it also
+  // performs cannot be confirmed. Stored encrypted and never handed back to a
+  // renderer in cleartext — see CLAUDE_MANUAL_TOKEN_MASK.
   claudeManualOAuthToken: string;
   // Poll Claude Code only when its CLI has actually been active since the last
   // successful fetch. Idle ticks skip the request but keep the normal interval.
@@ -171,6 +178,11 @@ export interface SessionStats {
 // What a renderer sees in place of a stored manual token. The renderer only
 // ever needs to know whether one is set, so the value itself never crosses IPC.
 export const CLAUDE_MANUAL_TOKEN_MASK = "__stored__";
+
+// Same contract for the LINE channel access token. It is a live credential —
+// anyone holding it can broadcast to the user's official account — so the
+// renderer, which only needs to know whether one is stored, gets this instead.
+export const LINE_TOKEN_MASK = "__stored__";
 
 export interface MonitorResult {
   snapshot: CombinedSnapshot;
@@ -272,17 +284,8 @@ export interface AlarmStatusReport {
 }
 
 
-// What the manual-credential window needs to render itself: which service is
-// stuck and why automatic detection gave up.
-export interface ManualCredentialContext {
-  service: ServiceType;
-  state: CredentialState;
-  message: string;
-  language: Language;
-  hasStoredToken: boolean;
-}
-
-// The outcome of validating a pasted token. `message` is already localized.
+// The outcome of the "re-detect" flow (Keychain lookup, or a `claude
+// setup-token` run when that comes up empty). `message` is already localized.
 export interface ManualTokenResult {
   ok: boolean;
   message: string;
