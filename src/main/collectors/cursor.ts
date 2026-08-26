@@ -155,7 +155,7 @@ export const collectCursorQuota = async (): Promise<ScrapeResult> => {
       label: t(lang, "window.label.cursorModels"),
       remaining: null,
       total: null,
-      percent: Math.round(autoPercentUsed * 100) / 100,
+      percent: Math.round(autoPercentUsed * 100),
       resetsAt: null,
       message: t(lang, "window.desc.cursorModels")
     });
@@ -167,7 +167,7 @@ export const collectCursorQuota = async (): Promise<ScrapeResult> => {
       label: t(lang, "window.label.otherModels"),
       remaining: null,
       total: null,
-      percent: Math.round(apiPercentUsed * 100) / 100,
+      percent: Math.round(apiPercentUsed * 100),
       resetsAt: null,
       message: t(lang, "window.desc.otherModels")
     });
