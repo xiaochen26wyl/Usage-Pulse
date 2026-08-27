@@ -90,5 +90,3 @@ export const closeSessionSummary = (): void => {
 export const destroySessionWindow = (): void => {
   closeSessionSummary();
 };
-
-export const isSessionSummaryOpen = (): boolean => Boolean(window && !window.isDestroyed());

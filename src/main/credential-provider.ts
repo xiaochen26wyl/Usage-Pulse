@@ -358,20 +358,3 @@ export const getClaudeCodeOAuthToken = async (): Promise<string> => {
   return (await readClaudeCredential()).token;
 };
 
-export const hasCursorAccessToken = async (): Promise<boolean> => {
-  try {
-    await getCursorAccessToken();
-    return true;
-  } catch {
-    return false;
-  }
-};
-
-export const hasClaudeCodeOAuthToken = async (): Promise<boolean> => {
-  try {
-    await getClaudeCodeOAuthToken();
-    return true;
-  } catch {
-    return false;
-  }
-};
