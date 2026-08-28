@@ -49,6 +49,59 @@ test("footer.license mentions non-commercial default in every language", () => {
   assert.match(t("ko", "footer.license"), /비상업/);
 });
 
+test("the Keychain re-detect keys resolve to a non-empty, distinct string in every language", () => {
+  const keys = [
+    "setupToken.keychainFound",
+    "setupToken.keychainWriteFailed",
+    "button.refreshQuota",
+    "button.refreshQuota.tooltip",
+    "button.redetect.tooltip",
+    "button.updateUi"
+  ] as const;
+  for (const key of keys) {
+    const values = langs.map((lang) => t(lang, key));
+    for (const value of values) {
+      assert.ok(value.length > 0, `${key} is empty`);
+      assert.notEqual(value, key, `${key} did not resolve to a translation`);
+    }
+    assert.equal(new Set(values).size, langs.length, `${key} is not distinct across languages`);
+  }
+});
+
+test("the manual token fallback keys resolve to a non-empty, distinct string in every language", () => {
+  const keys = [
+    "manualToken.prompt",
+    "manualToken.copyCommand",
+    "manualToken.copied",
+    "manualToken.inputPlaceholder",
+    "manualToken.submit",
+    "manualToken.invalidFormat",
+    "manualToken.saved",
+    "claudeLogin.hint",
+    "claudeLogin.exited"
+  ] as const;
+  for (const key of keys) {
+    const values = langs.map((lang) => t(lang, key));
+    for (const value of values) {
+      assert.ok(value.length > 0, `${key} is empty`);
+      assert.notEqual(value, key, `${key} did not resolve to a translation`);
+    }
+    assert.equal(new Set(values).size, langs.length, `${key} is not distinct across languages`);
+  }
+});
+
+test("the quit-status keys resolve to a non-empty, distinct string in every language", () => {
+  const keys = ["line.tpl.quitTitle", "line.tpl.altQuit", "window.label.cursorOverall"] as const;
+  for (const key of keys) {
+    const values = langs.map((lang) => t(lang, key));
+    for (const value of values) {
+      assert.ok(value.length > 0, `${key} is empty`);
+      assert.notEqual(value, key, `${key} did not resolve to a translation`);
+    }
+    assert.equal(new Set(values).size, langs.length, `${key} is not distinct across languages`);
+  }
+});
+
 test("localeForLanguage maps each UI language", () => {
   assert.equal(localeForLanguage("zh"), "zh-TW");
   assert.equal(localeForLanguage("en"), "en-US");

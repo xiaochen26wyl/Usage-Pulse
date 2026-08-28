@@ -17,9 +17,16 @@ interface UsagePulseApi {
   getAuthStatus: () => Promise<AuthStatus>;
   checkAuth: (service: ServiceType) => Promise<CredentialStatus>;
   runSetupToken: () => Promise<ManualTokenResult>;
+  submitManualToken: (token: string) => Promise<ManualTokenResult>;
+  sendClaudeLoginInput: (data: string) => void;
+  resizeClaudeLoginPty: (cols: number, rows: number) => void;
+  onClaudeLoginData: (handler: (chunk: string) => void) => () => void;
+  onClaudeLoginExit: (handler: (exitCode: number) => void) => () => void;
+  onManualTokenCaptured: (handler: (token: string) => void) => () => void;
+  onSetupTokenSpawnError: (handler: (message: string) => void) => () => void;
   getLatestSnapshot: () => Promise<CombinedSnapshot | null>;
-  clearManualCredential: (service: ServiceType) => Promise<void>;
   sendLineTest: () => Promise<boolean>;
+  sendLineStatus: () => Promise<boolean>;
   quitApp: () => Promise<void>;
   getSessionStats: () => Promise<SessionStats>;
   logWaterCup: (sizeMl?: WaterCupSizeMl) => Promise<SessionStats>;

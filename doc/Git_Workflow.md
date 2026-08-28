@@ -2,7 +2,7 @@
 
 Usage-Pulse 功能開發的 Git 節奏：**`main` 保持穩定**。**每次開工**開新功能分支並 sync `origin/main`；開發中用**推送**只推功能分支；**收工**才合併回 `main` 並清理分支。**例外**：若你已在 `main` 上開發，「推送」「收工」會直接 `push origin/main`（見 §1、§3）。
 
-**Agent 觸發語正文**見根目錄 [`CLAUDE.md`](../CLAUDE.md) **§5**；Cursor [`.cursorrules`](../.cursorrules) **§5** 指向本檔與該節。
+**Agent 觸發語正文**見根目錄 [`CLAUDE.md`](../CLAUDE.md) **§4**；Cursor [`.cursorrules`](../.cursorrules) 的 Git 日常流程一節指向本檔與該節。
 
 ---
 
@@ -158,7 +158,7 @@ git merge --abort
 
 ---
 
-## 7. Agent Issue 判斷（§5 摘要）
+## 7. Agent Issue 判斷（§4 摘要）
 
 推送與收工／完工共用，Agent 自決、不問：
 

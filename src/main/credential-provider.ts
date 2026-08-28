@@ -5,18 +5,21 @@ import { homedir, userInfo } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import type { SqlJsStatic } from "sql.js";
+import type { CredentialSource } from "@shared/types";
 
 const execFileAsync = promisify(execFile);
 
 /**
  * Supplies the token the "re-detect" flow captured from `claude setup-token`,
- * if one is stored. Injected rather than imported from the store, so this
- * module keeps depending on nothing but the OS — the same reason
- * credential-monitor takes its quota refresher by injection.
+ * plus its recorded expiry, if one is stored. Injected rather than imported
+ * from the store, so this module keeps depending on nothing but the OS — the
+ * same reason credential-monitor takes its quota refresher by injection.
  */
-let manualClaudeTokenProvider: (() => string | null | undefined) | null = null;
+let manualClaudeTokenProvider: (() => { token: string; expiresAt: string | null } | null) | null = null;
 
-export const setManualClaudeTokenProvider = (provider: () => string | null | undefined): void => {
+export const setManualClaudeTokenProvider = (
+  provider: () => { token: string; expiresAt: string | null } | null
+): void => {
   manualClaudeTokenProvider = provider;
 };
 const require = createRequire(import.meta.url);
@@ -111,18 +114,26 @@ const toIsoOrNull = (ms: number | null): string | null =>
   ms === null ? null : new Date(ms).toISOString();
 
 // A token plus whatever expiry we could derive for it. `expiresAt` is null when
-// neither the surrounding blob nor the token's own claims declare one.
+// neither the surrounding blob nor the token's own claims declare one. `source`
+// records which ranked source in readClaudeCredential handed it over, so a
+// later 401 can be attributed to the right one.
 export interface RawCredential {
   token: string;
   expiresAt: string | null;
+  source: CredentialSource;
 }
 
-const toCredential = (token: string, explicitExpiryMs: number | null): RawCredential => ({
+const toCredential = (
+  token: string,
+  explicitExpiryMs: number | null,
+  source: CredentialSource
+): RawCredential => ({
   token,
-  expiresAt: toIsoOrNull(explicitExpiryMs ?? decodeJwtExpiryMs(token))
+  expiresAt: toIsoOrNull(explicitExpiryMs ?? decodeJwtExpiryMs(token)),
+  source
 });
 
-const parseCredentialFromRawText = (rawText: string): RawCredential | null => {
+const parseCredentialFromRawText = (rawText: string, source: CredentialSource): RawCredential | null => {
   const trimmed = rawText.trim();
   if (!trimmed) {
     return null;
@@ -131,10 +142,10 @@ const parseCredentialFromRawText = (rawText: string): RawCredential | null => {
   try {
     const parsed = JSON.parse(trimmed) as unknown;
     const token = pickAccessTokenFromUnknown(parsed);
-    return token ? toCredential(token, pickExpiresAtFromUnknown(parsed)) : null;
+    return token ? toCredential(token, pickExpiresAtFromUnknown(parsed), source) : null;
   } catch {
     const token = pickAccessTokenFromUnknown(trimmed);
-    return token ? toCredential(token, null) : null;
+    return token ? toCredential(token, null, source) : null;
   }
 };
 
@@ -210,7 +221,7 @@ export const readCursorCredentialFromStateDbPath = async (dbPath: string): Promi
     size > CURSOR_STATE_DB_LARGE_FILE_THRESHOLD_BYTES
       ? await readValueFromLargeStateDb(dbPath, CURSOR_ACCESS_TOKEN_KEY, size)
       : await runReadOnlySqliteQuery(dbPath, CURSOR_ACCESS_TOKEN_KEY);
-  const credential = parseCredentialFromRawText(raw);
+  const credential = parseCredentialFromRawText(raw, "cursorStateDb");
   if (!credential) {
     throw new Error("找不到 Cursor access token，請先在 Cursor Desktop 登入。");
   }
@@ -244,7 +255,7 @@ export const peekClaudeKeychainCredential = async (): Promise<RawCredential | nu
       CLAUDE_KEYCHAIN_SERVICE,
       "-w"
     ]);
-    return parseCredentialFromRawText(stdout);
+    return parseCredentialFromRawText(stdout, "keychain");
   } catch {
     return null;
   }
@@ -338,7 +349,7 @@ const resolveClaudeCredentialsPath = (): string => {
 const readClaudeCredentialFromFile = async (): Promise<RawCredential | null> => {
   try {
     const raw = await readFile(resolveClaudeCredentialsPath(), "utf-8");
-    return parseCredentialFromRawText(raw);
+    return parseCredentialFromRawText(raw, "file");
   } catch {
     return null;
   }
@@ -351,16 +362,17 @@ export const readCursorCredential = async (): Promise<RawCredential> => {
 export const readClaudeCredential = async (): Promise<RawCredential> => {
   const envToken = process.env.CLAUDE_CODE_OAUTH_TOKEN?.trim();
   if (envToken) {
-    return toCredential(envToken, null);
+    return toCredential(envToken, null, "env");
   }
 
   // A token the "re-detect" flow captured from `claude setup-token`. It sits
   // above the Keychain/file sources deliberately: it only ever exists because
   // that flow already wrote it to the Keychain too, so this is the fallback
   // for when that write silently failed.
-  const capturedToken = manualClaudeTokenProvider?.()?.trim();
+  const captured = manualClaudeTokenProvider?.();
+  const capturedToken = captured?.token.trim();
   if (capturedToken) {
-    return toCredential(capturedToken, null);
+    return toCredential(capturedToken, captured?.expiresAt ? Date.parse(captured.expiresAt) : null, "manual");
   }
 
   const fromKeychain = await peekClaudeKeychainCredential();

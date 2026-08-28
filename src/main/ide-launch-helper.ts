@@ -63,7 +63,7 @@ const buildMacLaunchAgentPlist = (watcherScriptPath: string): string => `<?xml v
     <string>${xmlEscape(watcherScriptPath)}</string>
   </array>
   <key>StartInterval</key>
-  <integer>15</integer>
+  <integer>1800</integer>
   <key>RunAtLoad</key>
   <true/>
   <key>ProcessType</key>
@@ -91,7 +91,7 @@ while ($true) {
       Start-Process -FilePath $exe
     }
   }
-  Start-Sleep -Seconds 15
+  Start-Sleep -Seconds 1800
 }
 `;
 

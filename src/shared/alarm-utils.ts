@@ -162,6 +162,30 @@ export const collectAlarmTargets = (
 export const mayFire = (fireAt: string, observedFireAt: string | null | undefined): boolean =>
   Boolean(observedFireAt) && observedFireAt === fireAt;
 
+export type AlarmAction = "schedule" | "fire" | "skip";
+
+/**
+ * What rearm() should do with one target right now.
+ *
+ * "due" (within DUE_GRACE_MS) and "expired" (later than that) used to be
+ * handled differently — only "due" ever checked mayFire, so anything noticed
+ * more than 60 seconds late (a laptop asleep across a reset, most commonly)
+ * was silently dropped even when it had legitimately been watched go from
+ * pending to due. Collapsing them here means both are judged the same way:
+ * ring only for the exact fireAt this app watched arm while still in the
+ * future, however late it was finally noticed.
+ */
+export const decideAlarmAction = (
+  fireAt: string,
+  nowMs: number,
+  observedPendingFireAt: string | null | undefined
+): AlarmAction => {
+  if (classifyFire(fireAt, nowMs) === "pending") {
+    return "schedule";
+  }
+  return mayFire(fireAt, observedPendingFireAt) ? "fire" : "skip";
+};
+
 export const nextTarget = (targets: AlarmTarget[], nowMs: number): AlarmTarget | null => {
   let best: AlarmTarget | null = null;
   let bestMs = Number.POSITIVE_INFINITY;

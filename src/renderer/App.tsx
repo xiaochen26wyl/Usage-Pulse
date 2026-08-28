@@ -1,6 +1,7 @@
 import {
   useEffect,
   useState,
+  type ChangeEvent,
   type ClipboardEvent,
   type KeyboardEvent,
 } from "react";
@@ -13,6 +14,7 @@ import {
   type CombinedSnapshot,
   type CredentialState,
   type CredentialStatus,
+  type ErrorCode,
   type Language,
   type QuotaSnapshot,
   type QuotaWindow,
@@ -62,8 +64,8 @@ const LANGUAGE_OPTIONS: Array<{ value: Language; label: string }> = [
 const SESSION_WINDOW_MS = 5 * 60 * 60 * 1000;
 
 const defaultSettings: AppSettings = {
-  cursorIntervalMinutes: 10,
-  claudeIntervalMinutes: 10,
+  enableCursorMonitoring: true,
+  enableClaudeMonitoring: true,
   cursorAdvancedModelsLowThresholdPercent: 20,
   enableCursorAdvancedModelsLowAlert: true,
   cursorModelsLowThresholdPercent: 20,
@@ -87,6 +89,7 @@ const defaultSettings: AppSettings = {
   enableLineNotification: true,
   lineChannelAccessToken: "",
   claudeManualOAuthToken: "",
+  claudeManualOAuthTokenExpiresAt: null,
   claudeUseCliActivityPolling: true,
   enableWaterReminder: true,
   waterReminderMinutes: 50,
@@ -212,7 +215,19 @@ export const App = () => {
     cursor: "",
     claude: "",
   });
-  const [claudeCommandCopied, setClaudeCommandCopied] = useState(false);
+  // Shown once "Get Credentials" opens a fresh claude-login window — lets the
+  // user paste (or receive an auto-filled) token back here instead of dead-
+  // ending on an error message.
+  const [claudeNeedsManualFallback, setClaudeNeedsManualFallback] = useState(false);
+  // True whenever main has already confirmed real quota data is sitting
+  // there ready to view (a single re-detect check, or a manual submit, both
+  // came back with real usage windows) — the header button becomes an
+  // explicit "Update UI" confirmation instead of the numbers changing on
+  // their own underneath the user.
+  const [claudeReadyToApply, setClaudeReadyToApply] = useState(false);
+  const [manualTokenInput, setManualTokenInput] = useState("");
+  const [manualTokenSubmitting, setManualTokenSubmitting] = useState(false);
+  const [manualTokenCopied, setManualTokenCopied] = useState(false);
   const [lineToken, setLineToken] = useState("");
   // False only on hosts with no OS keychain available, where a saved token
   // would land in the settings file as plain text. The user is told rather
@@ -227,6 +242,11 @@ export const App = () => {
     isError: false,
   });
   const [testingLineToken, setTestingLineToken] = useState(false);
+  const [sendingLineStatus, setSendingLineStatus] = useState(false);
+  // Reveals the token input again once a token is already stored (the
+  // collapsed "connected" state hides it by default). Reset to false whenever
+  // a save succeeds, so the panel collapses back down.
+  const [showLineTokenInput, setShowLineTokenInput] = useState(false);
   const [now, setNow] = useState<number>(Date.now());
   const [alarmStatus, setAlarmStatus] = useState<AlarmStatusReport | null>(
     null,
@@ -290,29 +310,28 @@ export const App = () => {
       setSessionStats(next);
     });
 
+    // The claude-login PTY auto-detected the printed token — fill it in
+    // (in the clear, not masked) so the user can confirm/adjust it before
+    // submitting rather than it applying itself silently.
+    const unsubscribeTokenCaptured = window.usagePulse.onManualTokenCaptured((token) => {
+      setManualTokenInput(token);
+    });
+
+    const unsubscribeSpawnError = window.usagePulse.onSetupTokenSpawnError((message) => {
+      setAuthMessage((prev) => ({ ...prev, claude: message }));
+    });
+
     return () => {
       unsubscribeSnapshot();
       unsubscribeAuth();
       unsubscribeSession();
+      unsubscribeTokenCaptured();
+      unsubscribeSpawnError();
     };
   }, []);
 
   const clampSettings = (value: AppSettings): AppSettings => ({
     ...value,
-    cursorIntervalMinutes: roundToStep(
-      value.cursorIntervalMinutes,
-      5,
-      60,
-      5,
-      10,
-    ),
-    claudeIntervalMinutes: roundToStep(
-      value.claudeIntervalMinutes,
-      5,
-      60,
-      5,
-      10,
-    ),
     cursorAdvancedModelsLowThresholdPercent: roundToStep(
       value.cursorAdvancedModelsLowThresholdPercent,
       5,
@@ -402,30 +421,48 @@ export const App = () => {
 
   // Scoped to one service: the Cursor card re-reads only Cursor's credential and
   // the Claude Code card only Claude's, so retrying one never disturbs the other.
+  //
+  // Claude is fire-and-forget rather than awaited end-to-end: the manual
+  // paste box (below) needs to appear the instant the user clicks, racing
+  // alongside the automatic capture instead of waiting for it to finish or
+  // fail first. `checkingAuth.claude` still stays true for the whole run —
+  // the header button remains a disabled status pill throughout — it's only
+  // this function's own `await` that no longer blocks the render.
+  // Scoped to one service: the Cursor card re-reads only Cursor's credential and
+  // the Claude Code card only Claude's, so retrying one never disturbs the other.
+  // For claude this is now always fast (a local Keychain+expiry check, at most
+  // one API validation call, or just opening the claude-login window) — no more
+  // fire-and-forget needed, a plain await covers every outcome.
   const refreshAuthStatus = async (service: ServiceType) => {
     setCheckingAuth((prev) => ({ ...prev, [service]: true }));
-    try {
-      if (service === "claude") {
-        setAuthMessage((prev) => ({
-          ...prev,
-          claude: t(lang, "setupToken.waiting"),
-        }));
-        const result = await window.usagePulse.runSetupToken();
-        const [next, latestSnapshot, nextSettings] = await Promise.all([
-          window.usagePulse.checkAuth("claude"),
-          window.usagePulse.getLatestSnapshot(),
-          window.usagePulse.getSettings(),
-        ]);
-        setAuthStatus((prev) => ({ ...prev, claude: next }));
-        setSnapshot(latestSnapshot);
-        setSettings(nextSettings);
-        setAuthMessage((prev) => ({
-          ...prev,
-          claude: result.message || t(lang, result.ok ? "app.authRefreshed" : "app.authRefreshFailed"),
-        }));
-        return;
-      }
 
+    if (service === "claude") {
+      setAuthMessage((prev) => ({ ...prev, claude: t(lang, "setupToken.waiting") }));
+      try {
+        const result = await window.usagePulse.runSetupToken();
+        setAuthMessage((prev) => ({ ...prev, claude: result.message }));
+        if (result.readyToApply) {
+          // Already confirmed real quota data is ready — don't apply it
+          // automatically, let the user press "Update UI" to pull it in.
+          setClaudeNeedsManualFallback(false);
+          setClaudeReadyToApply(true);
+        } else if (result.needsManualFallback) {
+          setManualTokenInput("");
+          setClaudeReadyToApply(false);
+          setClaudeNeedsManualFallback(true);
+        }
+      } catch (error) {
+        setAuthMessage((prev) => ({
+          ...prev,
+          claude: error instanceof Error ? error.message : t(lang, "app.authRefreshFailed"),
+        }));
+      } finally {
+        setCheckingAuth((prev) => ({ ...prev, claude: false }));
+      }
+      return;
+    }
+
+    try {
       const next = await window.usagePulse.checkAuth(service);
       setAuthStatus((prev) => ({ ...prev, [service]: next }));
       setAuthMessage((prev) => ({
@@ -442,6 +479,87 @@ export const App = () => {
       }));
     } finally {
       setCheckingAuth((prev) => ({ ...prev, [service]: false }));
+    }
+  };
+
+  // The "Update UI" confirmation: main already told us real quota data is
+  // ready (a single re-detect check or a manual submit both came back with
+  // real usage windows) — this is the one explicit click that actually pulls
+  // it onto the screen. If it turns out there's nothing to show after all,
+  // that's step 5 of the flow: fall back to the "Get Credentials" state
+  // rather than sitting in a state that looks confirmed but shows nothing.
+  const applyClaudeUpdate = async () => {
+    setCheckingAuth((prev) => ({ ...prev, claude: true }));
+    try {
+      const [next, latestSnapshot] = await Promise.all([
+        window.usagePulse.checkAuth("claude"),
+        window.usagePulse.getLatestSnapshot(),
+      ]);
+      setAuthStatus((prev) => ({ ...prev, claude: next }));
+      setSnapshot(latestSnapshot);
+      setClaudeReadyToApply(false);
+      const hasValues = (latestSnapshot?.claude.windows.length ?? 0) > 0;
+      if (!hasValues) {
+        setAuthMessage((prev) => ({ ...prev, claude: t(lang, "app.authRefreshFailed") }));
+      }
+    } finally {
+      setCheckingAuth((prev) => ({ ...prev, claude: false }));
+    }
+  };
+
+  const copyManualSetupCommand = async () => {
+    try {
+      await window.usagePulse.copyToClipboard("claude setup-token");
+      setManualTokenCopied(true);
+      setTimeout(() => setManualTokenCopied(false), 3000);
+    } catch (error) {
+      console.error(error);
+    }
+  };
+
+  // Applied by hand instead of letting the browser do it: clearing the
+  // system clipboard afterward races the default paste action otherwise,
+  // which is why pasting used to leave the field empty (see clearSystemClipboard).
+  const handleManualTokenPaste = (event: ClipboardEvent<HTMLInputElement>) => {
+    event.preventDefault();
+    const pasted = event.clipboardData.getData("text").trim();
+    if (pasted) {
+      setManualTokenInput(pasted);
+      setAuthMessage((prev) => ({ ...prev, claude: "" }));
+    }
+    clearSystemClipboard();
+  };
+
+  const handleManualTokenChange = (event: ChangeEvent<HTMLInputElement>) => {
+    setManualTokenInput(event.target.value);
+    setAuthMessage((prev) => ({ ...prev, claude: "" }));
+  };
+
+  const submitManualToken = async () => {
+    const token = manualTokenInput.trim();
+    if (!token) {
+      setAuthMessage((prev) => ({ ...prev, claude: t(lang, "manualToken.invalidFormat") }));
+      return;
+    }
+    setManualTokenSubmitting(true);
+    try {
+      const result = await window.usagePulse.submitManualToken(token);
+      setAuthMessage((prev) => ({ ...prev, claude: result.message }));
+      if (result.ok) {
+        setManualTokenInput("");
+        setClaudeNeedsManualFallback(false);
+        // Don't apply automatically — same "Update UI" confirmation step as
+        // the re-detect path, so a hand-pasted token gets no less scrutiny
+        // before its numbers land on screen.
+        setClaudeReadyToApply(Boolean(result.readyToApply));
+      }
+    } catch (error) {
+      setAuthMessage((prev) => ({
+        ...prev,
+        claude: error instanceof Error ? error.message : t(lang, "app.authRefreshFailed"),
+      }));
+    } finally {
+      setManualTokenSubmitting(false);
     }
   };
 
@@ -467,12 +585,22 @@ export const App = () => {
       });
       setSettings(next);
       setLineToken(next.lineChannelAccessToken);
-      setLineTokenMessage({ text: t(lang, "line.saved"), isError: false });
+      setShowLineTokenInput(false);
+      // A pasted token is easy to get wrong (truncated, wrong field copied);
+      // sending a test message immediately tells the user whether it actually
+      // works instead of leaving them to remember to press "test" themselves.
+      await handleSendLineTest();
     } catch (error) {
       console.error(error);
     } finally {
       setSavingLineToken(false);
     }
+  };
+
+  const handleChangeLineToken = () => {
+    setLineToken("");
+    setLineTokenMessage({ text: "", isError: false });
+    setShowLineTokenInput(true);
   };
 
   const handleSendLineTest = async () => {
@@ -488,6 +616,25 @@ export const App = () => {
       setLineTokenMessage({ text: t(lang, "line.testFail"), isError: true });
     } finally {
       setTestingLineToken(false);
+    }
+  };
+
+  // Sends the real "final status" bubbles (same ones quit sends) from the
+  // already-cached snapshot, so the user can check the actual Cursor/Claude
+  // numbers on LINE right now instead of waiting to quit the app.
+  const handleSendLineStatus = async () => {
+    setSendingLineStatus(true);
+    try {
+      const ok = await window.usagePulse.sendLineStatus();
+      setLineTokenMessage({
+        text: t(lang, ok ? "line.statusSuccess" : "line.statusFail"),
+        isError: !ok,
+      });
+    } catch (error) {
+      console.error(error);
+      setLineTokenMessage({ text: t(lang, "line.statusFail"), isError: true });
+    } finally {
+      setSendingLineStatus(false);
     }
   };
 
@@ -511,16 +658,6 @@ export const App = () => {
   const logWaterCup = async (sizeMl: WaterCupSizeMl) => {
     try {
       setSessionStats(await window.usagePulse.logWaterCup(sizeMl));
-    } catch (error) {
-      console.error(error);
-    }
-  };
-
-  const copyClaudeLoginCommand = async () => {
-    try {
-      await window.usagePulse.copyToClipboard("claude");
-      setClaudeCommandCopied(true);
-      setTimeout(() => setClaudeCommandCopied(false), 3000);
     } catch (error) {
       console.error(error);
     }
@@ -578,18 +715,18 @@ export const App = () => {
     }
   };
 
-  // settings:get hands back a placeholder for the manual token, never the token
-  // itself, so all the UI can know is whether one is stored.
-  const hasManualToken = Boolean(settings.claudeManualOAuthToken);
+  // settings:get hands back a placeholder for the fallback token, never the
+  // token itself, so all the UI can know is whether one is stored. There is
+  // deliberately no manual "clear" action here: a fallback token this stale
+  // is dropped automatically by the main process the moment a real quota
+  // fetch proves it dead (see monitor-engine's applyScrapeResult), so a
+  // button that races the same decision would only invite clearing a token
+  // that's actually still fine.
+  const hasFallbackToken = Boolean(settings.claudeManualOAuthToken);
 
-  const clearManualToken = async () => {
-    try {
-      await window.usagePulse.clearManualCredential("claude");
-      await refreshBaseData();
-    } catch (error) {
-      console.error(error);
-    }
-  };
+  // Same placeholder contract as hasFallbackToken above: settings:get never
+  // hands back the real LINE token, only whether one is stored.
+  const hasLineToken = Boolean(settings.lineChannelAccessToken);
 
   const quitApp = async () => {
     try {
@@ -618,9 +755,28 @@ export const App = () => {
   // Lives inside each quota card rather than in a section of its own: a card
   // showing "no data" is almost always explained by the credential right above
   // it, and the re-detect button here only ever touches this one service.
-  const renderCredentialRow = (service: ServiceType) => {
+  const renderCredentialRow = (service: ServiceType, errorCode?: ErrorCode) => {
     const credential = authStatus[service];
     const message = authMessage[service];
+
+    // Claude: the button always stays — it's also the "manually refresh
+    // usage now" entry point, still useful when the credential is healthy.
+    // Only relabel/restyle it toward "needs a fresh login" when the
+    // credential is either confirmed missing, or the last usage fetch came
+    // back with a real 401 (claudeLoginExpired). Everything else (429,
+    // network hiccups, ...) keeps the quiet "refresh" presentation.
+    const needsFreshLogin =
+      service === "claude" &&
+      (credential.state === "missing" || errorCode === "claudeLoginExpired");
+
+    // Cursor: its expiresAt is a real JWT expiry, so `state` alone reliably
+    // says whether the credential is actually broken. The button's only job
+    // is fixing a broken credential, so it stays hidden entirely otherwise.
+    const cursorCredentialBroken =
+      service === "cursor" &&
+      (credential.state === "expired" || credential.state === "missing" || credential.state === "error");
+    const showButton = service === "claude" || cursorCredentialBroken;
+    const needsAttention = needsFreshLogin || cursorCredentialBroken;
 
     return (
       <div className="credential-row">
@@ -630,17 +786,36 @@ export const App = () => {
           >
             {t(lang, credentialStateKeys[credential.state])}
           </span>
-          <button
-            type="button"
-            className="warning-btn"
-            style={{ width: "auto" }}
-            onClick={() => refreshAuthStatus(service)}
-            disabled={checkingAuth[service]}
-          >
-            {checkingAuth[service]
-              ? t(lang, "button.detecting")
-              : t(lang, "button.redetect")}
-          </button>
+          {service === "claude" && claudeReadyToApply ? (
+            <button
+              type="button"
+              className="primary-btn"
+              style={{ width: "auto" }}
+              onClick={applyClaudeUpdate}
+              disabled={checkingAuth.claude}
+            >
+              {checkingAuth.claude ? t(lang, "button.detecting") : t(lang, "button.updateUi")}
+            </button>
+          ) : showButton ? (
+            <button
+              type="button"
+              className={needsAttention ? "warning-btn" : "ghost-btn"}
+              style={{ width: "auto" }}
+              onClick={() => refreshAuthStatus(service)}
+              disabled={checkingAuth[service]}
+              title={
+                needsAttention
+                  ? t(lang, "button.redetect.tooltip")
+                  : t(lang, "button.refreshQuota.tooltip")
+              }
+            >
+              {checkingAuth[service]
+                ? t(lang, "button.detecting")
+                : needsAttention
+                  ? t(lang, "button.redetect")
+                  : t(lang, "button.refreshQuota")}
+            </button>
+          ) : null}
         </div>
         <p className="meta-text" style={{ margin: "6px 0 0" }}>
           {credential.checkedAt
@@ -675,29 +850,71 @@ export const App = () => {
             {message}
           </p>
         ) : null}
-        {service === "claude" ? renderManualCredentialRow() : null}
+        {service === "claude" ? renderFallbackCredentialRow() : null}
+        {service === "claude" && claudeNeedsManualFallback ? renderManualTokenFallback() : null}
       </div>
     );
   };
 
-  // Claude Code only. Shows whether the token the re-detect flow captured is
-  // still the one in use, with a way to drop it if it turns out to be bad.
-  const renderManualCredentialRow = () =>
-    hasManualToken ? (
+  // Claude Code only. Read-only: notes whether the token the re-detect flow
+  // captured is still the one in use. No manual clear action — the main
+  // process drops it on its own once a real quota fetch confirms it's dead.
+  const renderFallbackCredentialRow = () =>
+    hasFallbackToken ? (
       <div className="quota-header" style={{ marginTop: "8px", gap: "8px" }}>
         <span className="meta-text" style={{ margin: 0 }}>
-          {t(lang, "manualToken.inUse")}
+          {t(lang, "credential.usingFallbackToken")}
         </span>
-        <button
-          type="button"
-          className="danger-btn"
-          style={{ width: "auto" }}
-          onClick={clearManualToken}
-        >
-          {t(lang, "manualToken.clearButton")}
-        </button>
       </div>
     ) : null;
+
+  // Claude Code only, shown once "Get Credentials" opens a fresh claude-login
+  // window. Not masked: the claude-login PTY may have already auto-filled a
+  // captured token here, and the user needs to actually see it to confirm
+  // it's right before submitting, not stare at asterisks.
+  const renderManualTokenFallback = () => (
+    <div className="callout-warning" style={{ marginTop: "8px" }}>
+      <p style={{ margin: 0 }}>{t(lang, "manualToken.prompt")}</p>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: "8px",
+          marginTop: "8px",
+        }}
+      >
+        <code>claude setup-token</code>
+        <button
+          type="button"
+          className="warning-btn"
+          style={{ width: "auto" }}
+          onClick={copyManualSetupCommand}
+        >
+          {manualTokenCopied ? t(lang, "manualToken.copied") : t(lang, "manualToken.copyCommand")}
+        </button>
+      </div>
+      <label className="field" style={{ marginTop: "8px", marginBottom: 0 }}>
+        <input
+          type="text"
+          autoComplete="off"
+          spellCheck={false}
+          placeholder={t(lang, "manualToken.inputPlaceholder")}
+          value={manualTokenInput}
+          onChange={handleManualTokenChange}
+          onPaste={handleManualTokenPaste}
+        />
+      </label>
+      <button
+        type="button"
+        className="warning-btn"
+        style={{ width: "auto", marginTop: "8px" }}
+        onClick={submitManualToken}
+        disabled={manualTokenSubmitting || !manualTokenInput.trim()}
+      >
+        {manualTokenSubmitting ? t(lang, "button.detecting") : t(lang, "manualToken.submit")}
+      </button>
+    </div>
+  );
 
   const renderUsagePercentBar = (window: QuotaWindow, service: ServiceType) => (
     <div className="window-bar" key={window.key}>
@@ -705,7 +922,7 @@ export const App = () => {
         <span className="window-bar-label">{window.label}</span>
         <span className="meta-text" style={{ margin: 0 }}>
           {t(lang, "window.usagePercent", {
-            percent: Math.round(window.percent ?? 0),
+            percent: Math.round(Math.max(0, Math.min(100, window.percent ?? 0))),
           })}
         </span>
       </div>
@@ -821,6 +1038,21 @@ export const App = () => {
       const next = await window.usagePulse.saveSettings(
         clampSettings({ ...settings, language: nextLang }),
       );
+      setSettings(next);
+    } catch (error) {
+      console.error(error);
+    }
+  };
+
+  // Lives on the quota card itself (not the batched Settings panel below), so
+  // it takes effect immediately rather than waiting on the "save settings"
+  // button — same immediacy as changeLanguage above.
+  const setMonitoringEnabled = async (service: ServiceType, enabled: boolean) => {
+    const key: "enableCursorMonitoring" | "enableClaudeMonitoring" =
+      service === "cursor" ? "enableCursorMonitoring" : "enableClaudeMonitoring";
+    setSettings((prev) => ({ ...prev, [key]: enabled }));
+    try {
+      const next = await window.usagePulse.saveSettings({ [key]: enabled });
       setSettings(next);
     } catch (error) {
       console.error(error);
@@ -951,6 +1183,25 @@ export const App = () => {
               return (
                 <div className="quota-card quota-card-claude" key={service}>
                   <div className="quota-header">
+                    <label className="field switch-row" style={{ margin: 0 }}>
+                      <span>{t(lang, "monitor.enableClaude")}</span>
+                      <input
+                        type="checkbox"
+                        className="toggle"
+                        checked={settings.enableClaudeMonitoring}
+                        onChange={(event) =>
+                          setMonitoringEnabled("claude", event.target.checked)
+                        }
+                      />
+                    </label>
+                  </div>
+                  {!settings.enableClaudeMonitoring ? (
+                    <p className="meta-text" style={{ marginTop: "8px" }}>
+                      {t(lang, "monitor.disabledHint")}
+                    </p>
+                  ) : (
+                    <>
+                  <div className="quota-header">
                     <strong>{serviceNames[service]}</strong>
                     <span
                       className={`status-tag status-${item?.status || "unknown"}`}
@@ -958,7 +1209,7 @@ export const App = () => {
                       {item?.status || "unknown"}
                     </span>
                   </div>
-                  {renderCredentialRow(service)}
+                  {renderCredentialRow(service, item?.errorCode)}
                   {barWindows.length ? (
                     <div className="window-bars">
                       {sessionWindow &&
@@ -985,36 +1236,8 @@ export const App = () => {
                       {item?.message || t(lang, "app.notFetchedYet")}
                     </p>
                   )}
-                  {item?.errorCode === "claudeLoginExpired" ? (
-                    <div
-                      className="callout-warning"
-                      style={{ marginTop: "8px" }}
-                    >
-                      <p style={{ margin: 0 }}>
-                        {t(lang, "auth.claude.reloginCta")}
-                      </p>
-                      <div
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: "8px",
-                          marginTop: "8px",
-                        }}
-                      >
-                        <code>claude</code>
-                        <button
-                          type="button"
-                          className="warning-btn"
-                          style={{ width: "auto" }}
-                          onClick={copyClaudeLoginCommand}
-                        >
-                          {claudeCommandCopied
-                            ? t(lang, "auth.claude.copied")
-                            : t(lang, "auth.claude.copyCommand")}
-                        </button>
-                      </div>
-                    </div>
-                  ) : null}
+                    </>
+                  )}
                 </div>
               );
             }
@@ -1039,6 +1262,25 @@ export const App = () => {
                 : 0;
             return (
               <div className="quota-card quota-card-cursor" key={service}>
+                <div className="quota-header">
+                  <label className="field switch-row" style={{ margin: 0 }}>
+                    <span>{t(lang, "monitor.enableCursor")}</span>
+                    <input
+                      type="checkbox"
+                      className="toggle"
+                      checked={settings.enableCursorMonitoring}
+                      onChange={(event) =>
+                        setMonitoringEnabled("cursor", event.target.checked)
+                      }
+                    />
+                  </label>
+                </div>
+                {!settings.enableCursorMonitoring ? (
+                  <p className="meta-text" style={{ marginTop: "8px" }}>
+                    {t(lang, "monitor.disabledHint")}
+                  </p>
+                ) : (
+                  <>
                 <div className="quota-header">
                   <strong>{serviceNames[service]}</strong>
                   <span
@@ -1103,6 +1345,8 @@ export const App = () => {
                   <p className="meta-text" style={{ marginTop: "8px" }}>
                     {item?.message || t(lang, "app.notFetchedYet")}
                   </p>
+                )}
+                  </>
                 )}
               </div>
             );
@@ -1182,6 +1426,7 @@ export const App = () => {
           </select>
         </label>
 
+        {settings.enableCursorMonitoring && (
         <div className="quota-card service-block service-block-cursor">
           <div className="quota-header">
             <strong>{serviceNames.cursor}</strong>
@@ -1224,7 +1469,9 @@ export const App = () => {
             </p>
           )}
         </div>
+        )}
 
+        {settings.enableClaudeMonitoring && (
         <div className="quota-card service-block service-block-claude">
           <div className="quota-header">
             <strong>{serviceNames.claude}</strong>
@@ -1373,6 +1620,7 @@ export const App = () => {
             </p>
           )}
         </div>
+        )}
 
         <div className="quota-card service-block" style={{ marginTop: "12px" }}>
           <p className="meta-text">
@@ -1562,56 +1810,118 @@ export const App = () => {
         <p className="meta-text" style={{ marginBottom: "10px" }}>
           {t(lang, "line.desc")}
         </p>
-        <div className="callout-warning">
-          ⚠️ {t(lang, "line.clipboardWarning")}
-        </div>
-        <p className="meta-text" style={{ margin: "8px 0 12px" }}>
-          {t(lang, "line.pasteHint")}
-        </p>
 
-        {secretStorageOk ? null : (
-          <div className="callout-warning">
-            ⚠️ {t(lang, "settings.insecureStorage")}
-          </div>
+        {!settings.enableLineNotification ? (
+          <p className="meta-text">{t(lang, "line.notInUseHint")}</p>
+        ) : hasLineToken && !showLineTokenInput ? (
+          <>
+            <div className="quota-header" style={{ gap: "8px" }}>
+              <span className="meta-text" style={{ margin: 0 }}>
+                {t(lang, "line.tokenInUse")}
+              </span>
+              <button
+                type="button"
+                className="ghost-btn"
+                style={{ width: "auto" }}
+                onClick={handleSendLineStatus}
+                disabled={sendingLineStatus}
+              >
+                {sendingLineStatus
+                  ? t(lang, "line.sendStatusSending")
+                  : t(lang, "line.sendStatus")}
+              </button>
+              <button
+                type="button"
+                className="warning-btn"
+                style={{ width: "auto" }}
+                onClick={handleChangeLineToken}
+              >
+                {t(lang, "line.changeToken")}
+              </button>
+            </div>
+            {lineTokenMessage.text ? (
+              <p
+                className={
+                  lineTokenMessage.isError ? "form-error" : "meta-text"
+                }
+                style={{ margin: "6px 0 0" }}
+              >
+                {lineTokenMessage.text}
+              </p>
+            ) : null}
+          </>
+        ) : (
+          <>
+            <div className="callout-warning">
+              ⚠️ {t(lang, "line.clipboardWarning")}
+            </div>
+            <p className="meta-text" style={{ margin: "8px 0 12px" }}>
+              {t(lang, "line.pasteHint")}
+            </p>
+
+            {secretStorageOk ? null : (
+              <div className="callout-warning">
+                ⚠️ {t(lang, "settings.insecureStorage")}
+              </div>
+            )}
+
+            <label className="field">
+              <span>{t(lang, "line.tokenLabel")}</span>
+              <input
+                type="text"
+                autoComplete="off"
+                spellCheck={false}
+                placeholder={t(lang, "line.tokenPlaceholder")}
+                value={maskToken(lineToken)}
+                onPaste={handleTokenPaste}
+                onKeyDown={handleTokenKeyDown}
+                // Controlled by the mask: every mutation goes through the paste
+                // and key handlers above, so there is nothing for onChange to
+                // apply.
+                onChange={() => undefined}
+              />
+            </label>
+
+            <div className="alarm-actions-row">
+              <button
+                className="primary-btn primary-btn-line"
+                onClick={handleSaveLineCredentials}
+                disabled={savingLineToken}
+              >
+                {savingLineToken
+                  ? t(lang, "button.saving")
+                  : t(lang, "line.save")}
+              </button>
+              <button
+                className="ghost-btn"
+                onClick={handleSendLineTest}
+                disabled={testingLineToken || !settings.lineChannelAccessToken}
+              >
+                {testingLineToken
+                  ? t(lang, "line.testSending")
+                  : t(lang, "line.test")}
+              </button>
+              {hasLineToken ? (
+                <button
+                  type="button"
+                  className="ghost-btn"
+                  onClick={() => setShowLineTokenInput(false)}
+                >
+                  {t(lang, "button.cancel")}
+                </button>
+              ) : null}
+            </div>
+            {lineTokenMessage.text ? (
+              <p
+                className={
+                  lineTokenMessage.isError ? "form-error" : "meta-text"
+                }
+              >
+                {lineTokenMessage.text}
+              </p>
+            ) : null}
+          </>
         )}
-
-        <label className="field">
-          <span>{t(lang, "line.tokenLabel")}</span>
-          <input
-            type="text"
-            autoComplete="off"
-            spellCheck={false}
-            placeholder={t(lang, "line.tokenPlaceholder")}
-            value={maskToken(lineToken)}
-            onPaste={handleTokenPaste}
-            onKeyDown={handleTokenKeyDown}
-            // Controlled by the mask: every mutation goes through the paste and
-            // key handlers above, so there is nothing for onChange to apply.
-            onChange={() => undefined}
-          />
-        </label>
-
-        <div className="alarm-actions-row">
-          <button
-            className="primary-btn primary-btn-line"
-            onClick={handleSaveLineCredentials}
-            disabled={savingLineToken}
-          >
-            {savingLineToken ? t(lang, "button.saving") : t(lang, "line.save")}
-          </button>
-          <button
-            className="ghost-btn"
-            onClick={handleSendLineTest}
-            disabled={testingLineToken || !settings.lineChannelAccessToken}
-          >
-            {testingLineToken ? t(lang, "line.testSending") : t(lang, "line.test")}
-          </button>
-        </div>
-        {lineTokenMessage.text ? (
-          <p className={lineTokenMessage.isError ? "form-error" : "meta-text"}>
-            {lineTokenMessage.text}
-          </p>
-        ) : null}
       </section>
 
       <section className="panel">

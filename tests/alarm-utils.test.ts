@@ -6,6 +6,7 @@ import {
   clampTimeoutMs,
   classifyFire,
   collectAlarmTargets,
+  decideAlarmAction,
   nextTarget
 } from "../src/shared/alarm-utils";
 import type { AppSettings, CombinedSnapshot, QuotaSnapshot } from "../src/shared/types";
@@ -15,8 +16,6 @@ const at = (offsetMs: number) => new Date(NOW + offsetMs).toISOString();
 
 const settings = (patch: Partial<AppSettings> = {}): AppSettings =>
   ({
-    cursorIntervalMinutes: 10,
-    claudeIntervalMinutes: 10,
     cursorAdvancedModelsLowThresholdPercent: 20,
     enableCursorAdvancedModelsLowAlert: true,
     cursorModelsLowThresholdPercent: 20,
@@ -179,6 +178,36 @@ test("nextTarget picks the soonest future firing and ignores past ones", () => {
 test("nextTarget returns null when nothing is in the future", () => {
   const targets = collectAlarmTargets(snapshot({ resetsAt: at(-60_000) }, {}), settings(), "zh");
   assert.equal(nextTarget(targets, NOW), null);
+});
+
+test("decideAlarmAction schedules a firing that is still in the future", () => {
+  assert.equal(decideAlarmAction(at(60_000), NOW, undefined), "schedule");
+});
+
+test("decideAlarmAction rings a firing observed pending shortly before it went due", () => {
+  // Mirrors the pre-fix "due" path: noticed within DUE_GRACE_MS of on-time.
+  assert.equal(decideAlarmAction(at(-1_000), NOW, at(-1_000)), "fire");
+});
+
+test("decideAlarmAction still rings a firing observed pending long before it was finally noticed", () => {
+  // This is the sleep/restart catch-up this function restores: the app (or
+  // the whole machine) was asleep for hours across the reset, but this exact
+  // fireAt was legitimately watched go from pending to due before that.
+  assert.equal(decideAlarmAction(at(-2 * 60 * 60_000), NOW, at(-2 * 60 * 60_000)), "fire");
+});
+
+test("decideAlarmAction stays silent for a firing never observed pending", () => {
+  // First sighting is already past — e.g. a fresh install, or a credential
+  // outage that only just recovered. Never rings out of thin air.
+  assert.equal(decideAlarmAction(at(-2 * 60 * 60_000), NOW, undefined), "skip");
+  assert.equal(decideAlarmAction(at(-1_000), NOW, undefined), "skip");
+});
+
+test("decideAlarmAction stays silent once the target has moved on to a new occurrence", () => {
+  // Observed pending for an *old* fireAt, but the current snapshot already
+  // reports a newer one (the real reset already happened and rolled over) —
+  // must not fire for the stale, superseded occurrence.
+  assert.equal(decideAlarmAction(at(-60_000), NOW, at(-3 * 60 * 60_000)), "skip");
 });
 
 test("clampTimeoutMs keeps delays inside the setTimeout ceiling", () => {

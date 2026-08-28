@@ -239,6 +239,42 @@ export const buildExhaustedFlex = (
 };
 
 /**
+ * The "final status" bubble sent when the app quits — one per quota window
+ * still worth reporting. Unlike buildLowQuotaFlex/buildExhaustedFlex, this
+ * takes an already-formatted `valueText` (e.g. "63%", "3.2h", "$12.3") instead
+ * of a raw percent, so callers can hand it the exact same string the tray
+ * already shows (countdown fallback included) without reformatting it here.
+ * Always the service's own accent, never EXHAUSTED_RED — this is a neutral
+ * snapshot taken on the way out, not an alert, even when valueText is "0%".
+ */
+export const buildQuitStatusFlex = (options: {
+  service: ServiceType;
+  serviceLabel: string;
+  windowLabel: string;
+  valueText: string;
+  resetAt?: string | null;
+  lang: Language;
+  now?: Date;
+}): LineFlexMessage => {
+  const { service, serviceLabel, windowLabel, valueText, resetAt, lang } = options;
+  const rows: BubbleRow[] = [{ label: t(lang, "line.tpl.remaining"), value: valueText }];
+  const resetText = formatTime(resetAt, lang);
+  if (resetText) {
+    rows.push({ label: t(lang, "line.tpl.resetAt"), value: resetText });
+  }
+
+  return bubble({
+    accent: SERVICE_ACCENT[service],
+    altText: t(lang, "line.tpl.altQuit", { service: serviceLabel, label: windowLabel, value: valueText }),
+    title: t(lang, "line.tpl.quitTitle"),
+    subtitle: `${serviceLabel} · ${windowLabel}`,
+    rows,
+    lang,
+    now: options.now ?? new Date(),
+  });
+};
+
+/**
  * Everything that isn't a quota threshold — credential expiry, reset alarms.
  * Same white bubble, same service accent, just a free-form body line.
  */

@@ -4,8 +4,10 @@ import type { QuotaSnapshot, QuotaWindow } from "../src/shared/types";
 import {
   claudeCountdownTargetAt,
   claudeTrayValueText,
+  claudeWeeklyTrayValueText,
   cursorCountdownTargetAt,
   cursorTrayValueText,
+  findClaudeWeeklyWindow,
   formatCountdown,
   formatCountdownWithDays,
   snapshotValueText
@@ -59,6 +61,16 @@ const claudeSnapshot = (sessionRemaining: number | null, resetsAt: string | null
     percent: 80
   });
 
+const claudeWeeklySnapshot = (
+  weeklyKey: string,
+  weeklyRemaining: number | null,
+  resetsAt: string | null
+): QuotaSnapshot =>
+  makeSnapshot("claude", [{ key: weeklyKey, remaining: weeklyRemaining, percent: weeklyRemaining, resetsAt }], {
+    remaining: 80,
+    percent: 80
+  });
+
 test("cursor tray value shows cursor models while they last", () => {
   // cursor_models stores used%, so 58% used reads as 42% remaining.
   assert.equal(cursorTrayValueText(cursorSnapshot(58, 85), NOW), "42%");
@@ -108,6 +120,36 @@ test("claude tray value keeps 0% when no reset time is known", () => {
 
 test("claude tray value falls back to the snapshot figure without a session window", () => {
   assert.equal(claudeTrayValueText(makeSnapshot("claude", [], { remaining: 80, percent: 80 }), NOW), "80%");
+});
+
+test("claude weekly tray value shows the weekly percentage", () => {
+  assert.equal(claudeWeeklyTrayValueText(claudeWeeklySnapshot("weekly_all", 47, null), NOW), "47%");
+});
+
+test("claude weekly tray value counts down in days once the weekly window is spent", () => {
+  const resetsAt = new Date(NOW + 4.2 * 24 * 60 * 60 * 1000).toISOString();
+  assert.equal(claudeWeeklyTrayValueText(claudeWeeklySnapshot("weekly_all", 0, resetsAt), NOW), "4d");
+
+  const soon = new Date(NOW + 23 * 60 * 60 * 1000).toISOString();
+  assert.equal(claudeWeeklyTrayValueText(claudeWeeklySnapshot("weekly_all", 0, soon), NOW), "23.0h");
+});
+
+test("claude weekly tray value falls back to the snapshot figure without a weekly window", () => {
+  assert.equal(claudeWeeklyTrayValueText(makeSnapshot("claude", [], { remaining: 80, percent: 80 }), NOW), "80%");
+});
+
+test("findClaudeWeeklyWindow prefers weekly_all, then weekly_scoped, then weekly", () => {
+  const allOnly = claudeWeeklySnapshot("weekly_all", 10, null);
+  assert.equal(findClaudeWeeklyWindow(allOnly)?.key, "weekly_all");
+
+  const scopedOnly = claudeWeeklySnapshot("weekly_scoped", 10, null);
+  assert.equal(findClaudeWeeklyWindow(scopedOnly)?.key, "weekly_scoped");
+
+  const plainOnly = claudeWeeklySnapshot("weekly", 10, null);
+  assert.equal(findClaudeWeeklyWindow(plainOnly)?.key, "weekly");
+
+  const none = makeSnapshot("claude", []);
+  assert.equal(findClaudeWeeklyWindow(none), null);
 });
 
 test("formatCountdown switches units at one hour and never shows 0m", () => {

@@ -1,20 +1,20 @@
 import { execFile } from "node:child_process";
-import { access, constants, readFile, unlink, writeFile } from "node:fs/promises";
+import { access, constants } from "node:fs/promises";
 import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 
-const SETUP_TOKEN_PREFIX = "sk-ant-oat01-";
+// Exported so a hand-pasted token (the manual fallback when automatic
+// capture fails) can be format-checked with the same rule the captured-output
+// parser below uses, instead of a second, possibly-diverging definition.
+export const SETUP_TOKEN_PREFIX = "sk-ant-oat01-";
 // Official tokens are ~108 characters. Terminal wrap used to yield a 79-char
 // stump that the usage API rejects; refuse anything shorter than this floor.
-const MIN_TOKEN_LENGTH = 100;
-const SETUP_TOKEN_TIMEOUT_MS = 10 * 60_000;
-const POLL_MS = 500;
-const CAPTURE_FILE_NAME = "setup-token-capture.txt";
+export const MIN_TOKEN_LENGTH = 100;
 
-export type SetupTokenErrorCode = "notFound" | "timeout" | "inProgress" | "noToken" | "launchFailed";
+export type SetupTokenErrorCode = "notFound" | "launchFailed";
 
 export class SetupTokenError extends Error {
   constructor(public readonly code: SetupTokenErrorCode) {
@@ -24,7 +24,19 @@ export class SetupTokenError extends Error {
 }
 
 /**
- * Pulls a long-lived `sk-ant-oat01-` token out of CLI stdout. The official
+ * `claude setup-token` prints "valid for 1 year". No expiry claim lives
+ * inside the token itself (it isn't a JWT), so this is the only place that
+ * duration is recorded — it lets the re-detect flow trust a stored token
+ * without ever calling the usage API just to find out whether it's still good.
+ */
+export const computeSetupTokenExpiryIso = (): string => {
+  const expiry = new Date();
+  expiry.setFullYear(expiry.getFullYear() + 1);
+  return expiry.toISOString();
+};
+
+/**
+ * Pulls a long-lived `sk-ant-oat01-` token out of CLI output. The official
  * command wraps the value across two lines at typical terminal widths, so
  * whitespace between the prefix and the rest of the body is discarded.
  */
@@ -58,7 +70,7 @@ export const extractSetupTokenFromOutput = (text: string): string | null => {
 // to be checked properly rather than by substring. A pattern like
 // `claude\.ai[^\s]*` happily matches `https://claude.ai.evil.com/…`, where
 // `claude.ai` is only a prefix of the real registrable domain.
-const AUTH_URL_HOSTS = ["claude.ai", "anthropic.com"] as const;
+const AUTH_URL_HOSTS = ["claude.ai", "claude.com", "anthropic.com"] as const;
 
 const isTrustedAuthHost = (hostname: string): boolean => {
   const host = hostname.toLowerCase();
@@ -66,8 +78,12 @@ const isTrustedAuthHost = (hostname: string): boolean => {
 };
 
 export const extractAuthUrlFromOutput = (text: string): string | null => {
-  // Collect candidates loosely, then let the URL parser decide.
-  const candidates = text.match(/https:\/\/[^\s"'<>]+/gi);
+  // Collect candidates loosely, then let the URL parser decide. Raw PTY
+  // output carries ANSI/OSC-8 escape bytes (e.g. a terminal hyperlink's
+  // `\x1B]8;;<url>\x07` wrapper) right up against the URL text with no
+  // whitespace in between — excluding control characters (\x00-\x1f, \x7f)
+  // keeps those out of the match instead of gluing them onto the end.
+  const candidates = text.match(/https:\/\/[^\s"'<>\x00-\x1f\x7f]+/gi);
   if (!candidates) {
     return null;
   }
@@ -114,7 +130,7 @@ const isExecutable = async (filePath: string): Promise<boolean> => {
   }
 };
 
-const resolveClaudeBinary = async (): Promise<string> => {
+export const resolveClaudeBinary = async (): Promise<string> => {
   const names = binaryNames();
   const searchDirs = [...extraBinDirs(), ...(process.env.PATH || "").split(delimiter)];
   for (const dir of searchDirs) {
@@ -144,138 +160,4 @@ const resolveClaudeBinary = async (): Promise<string> => {
   }
 
   throw new SetupTokenError("notFound");
-};
-
-const appleScriptQuote = (value: string): string => `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
-
-const shellSingleQuote = (value: string): string => `'${value.replace(/'/g, `'\\''`)}'`;
-
-const launchSetupTokenWindow = async (claudePath: string, capturePath: string): Promise<void> => {
-  const pathPrefix = extraBinDirs().join(":");
-  if (process.platform === "darwin") {
-    const command = [
-      `export PATH=${shellSingleQuote(pathPrefix)}:"$PATH"`,
-      `${shellSingleQuote(claudePath)} setup-token 2>&1 | tee ${shellSingleQuote(capturePath)}`,
-      `echo`,
-      `echo ${shellSingleQuote("Usage-Pulse is watching this output. You can close the window after login finishes.")}`
-    ].join("; ");
-    const script = `tell application "Terminal"\nactivate\ndo script ${appleScriptQuote(command)}\nend tell`;
-    await execFileAsync("osascript", ["-e", script]);
-    return;
-  }
-
-  if (process.platform === "win32") {
-    const psCommand = [
-      `& ${shellSingleQuote(claudePath)} setup-token *>&1 | Tee-Object -FilePath ${shellSingleQuote(capturePath)}`,
-      `Write-Host "Usage-Pulse is watching this output. You can close the window after login finishes."`
-    ].join("; ");
-    await execFileAsync("cmd.exe", [
-      "/c",
-      "start",
-      "Usage-Pulse Claude",
-      "powershell.exe",
-      "-NoExit",
-      "-Command",
-      psCommand
-    ]);
-    return;
-  }
-
-  throw new SetupTokenError("launchFailed");
-};
-
-const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
-
-const watchCaptureFile = async (
-  capturePath: string,
-  onAuthUrl?: (url: string) => void
-): Promise<string> => {
-  const startedAt = Date.now();
-  let openedUrl: string | null = null;
-
-  while (Date.now() - startedAt < SETUP_TOKEN_TIMEOUT_MS) {
-    let text = "";
-    try {
-      text = await readFile(capturePath, "utf-8");
-    } catch {
-      text = "";
-    }
-
-    if (onAuthUrl && !openedUrl) {
-      const url = extractAuthUrlFromOutput(text);
-      if (url) {
-        openedUrl = url;
-        onAuthUrl(url);
-      }
-    }
-
-    const token = extractSetupTokenFromOutput(text);
-    if (token) {
-      return token;
-    }
-
-    await sleep(POLL_MS);
-  }
-
-  throw new SetupTokenError("timeout");
-};
-
-let inFlight: Promise<string> | null = null;
-
-const collectSetupToken = async (options: {
-  userDataDir: string;
-  onAuthUrl?: (url: string) => void;
-}): Promise<string> => {
-  const claudePath = await resolveClaudeBinary();
-  const capturePath = join(options.userDataDir, CAPTURE_FILE_NAME);
-  await writeFile(capturePath, "", { mode: 0o600 });
-
-  try {
-    try {
-      await launchSetupTokenWindow(claudePath, capturePath);
-    } catch (error) {
-      if (error instanceof SetupTokenError) {
-        throw error;
-      }
-      throw new SetupTokenError("launchFailed");
-    }
-    return await watchCaptureFile(capturePath, options.onAuthUrl);
-  } finally {
-    // Overwrite before unlinking: the token sat in this file in cleartext for
-    // as long as the login took, and truncating it first means a crash between
-    // these two lines cannot leave a readable copy behind.
-    await writeFile(capturePath, "", { mode: 0o600 }).catch(() => undefined);
-    await unlink(capturePath).catch(() => undefined);
-  }
-};
-
-/**
- * Clears a capture file left behind by a previous run that died mid-login.
- * Called at startup, before anything else can read the directory.
- */
-export const clearStaleSetupTokenCapture = async (userDataDir: string): Promise<void> => {
-  const capturePath = join(userDataDir, CAPTURE_FILE_NAME);
-  try {
-    await writeFile(capturePath, "", { mode: 0o600, flag: "r+" });
-  } catch {
-    // Nothing there, or not writable — either way there is nothing to clear.
-  }
-  await unlink(capturePath).catch(() => undefined);
-};
-
-/**
- * Opens a system terminal running the official CLI's long-lived-token command
- * and returns the token printed to that window. The value never leaves main.
- */
-export const runClaudeSetupToken = (options: {
-  userDataDir: string;
-  onAuthUrl?: (url: string) => void;
-}): Promise<string> => {
-  if (inFlight) {
-    return Promise.reject(new SetupTokenError("inProgress"));
-  }
-  inFlight = collectSetupToken(options).finally(() => {
-    inFlight = null;
-  });
-  return inFlight;
 };

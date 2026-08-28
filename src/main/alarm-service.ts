@@ -8,10 +8,9 @@ import type {
 } from "@shared/types";
 import {
   MAX_TIMEOUT_MS,
-  classifyFire,
   clampTimeoutMs,
   collectAlarmTargets,
-  mayFire,
+  decideAlarmAction,
   nextTarget
 } from "@shared/alarm-utils";
 import { isTrusted } from "@shared/snapshot-trust";
@@ -74,43 +73,43 @@ export class AlarmService {
         alarmLastGoodStore.set(target.id, target.fireAt, nowIso());
       }
 
-      const fireClass = classifyFire(target.fireAt, nowMs);
+      const action = decideAlarmAction(target.fireAt, nowMs, alarmPendingStore.get(target.id)?.fireAt);
 
-      if (fireClass === "expired") {
+      if (action === "schedule") {
+        // Still in the future: this is the observation that earns it the
+        // right to ring later, however late that turns out to be — including
+        // a sleep/restart that carries it well past the on-time grace window.
+        alarmPendingStore.set(target.id, { fireAt: target.fireAt, seenAt: nowIso() });
+
+        const deltaMs = Date.parse(target.fireAt) - nowMs;
+        // A wait longer than a signed 32-bit int would fire instantly, so park on
+        // the ceiling and rebuild the schedule when that placeholder elapses.
+        const isClamped = deltaMs > MAX_TIMEOUT_MS;
+        const timer = setTimeout(() => {
+          this.timers.delete(target.id);
+          if (isClamped) {
+            this.rearm("clamped");
+            return;
+          }
+          this.fire(target);
+        }, clampTimeoutMs(deltaMs));
+
+        this.timers.set(target.id, timer);
         continue;
       }
 
-      if (fireClass === "due") {
-        if (!mayFire(target.fireAt, alarmPendingStore.get(target.id)?.fireAt)) {
-          // First sighting, and it is already past. Consume it so a later
-          // re-arm does not keep reconsidering it, but stay quiet: we never
-          // watched this window run down, so we cannot claim it just reset.
-          alarmStore.set(target.id, { fireAt: target.fireAt, firedAt: nowIso() });
-          console.log(`[Usage-Pulse] alarm ${target.id} skipped: fireAt was never observed pending`);
-          continue;
-        }
-        this.fire(target);
+      if (action === "skip") {
+        // Either never observed pending (e.g. a fresh install or first sighting
+        // already past), or the current fireAt has moved on since it was last
+        // recorded pending. Consume it so a later re-arm does not keep
+        // reconsidering it, but stay quiet: we cannot claim this exact
+        // occurrence just reset.
+        alarmStore.set(target.id, { fireAt: target.fireAt, firedAt: nowIso() });
+        console.log(`[Usage-Pulse] alarm ${target.id} skipped: fireAt was never observed pending`);
         continue;
       }
 
-      // Still in the future: this is the observation that earns it the right to
-      // ring later.
-      alarmPendingStore.set(target.id, { fireAt: target.fireAt, seenAt: nowIso() });
-
-      const deltaMs = Date.parse(target.fireAt) - nowMs;
-      // A wait longer than a signed 32-bit int would fire instantly, so park on
-      // the ceiling and rebuild the schedule when that placeholder elapses.
-      const isClamped = deltaMs > MAX_TIMEOUT_MS;
-      const timer = setTimeout(() => {
-        this.timers.delete(target.id);
-        if (isClamped) {
-          this.rearm("clamped");
-          return;
-        }
-        this.fire(target);
-      }, clampTimeoutMs(deltaMs));
-
-      this.timers.set(target.id, timer);
+      this.fire(target);
     }
 
     if (reason !== "poll") {

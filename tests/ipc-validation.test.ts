@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  asClaudeManualToken,
   asClipboardText,
   asServiceType,
   asSettingsPatch,
@@ -55,6 +56,20 @@ test("asClipboardText allows the CLI commands the UI copies, but no control char
   assert.equal(asClipboardText("claude\nrm -rf ~"), null);
   assert.equal(asClipboardText("x".repeat(257)), null);
   assert.equal(asClipboardText(42), null);
+});
+
+test("asClaudeManualToken accepts a well-formed pasted token, trimmed", () => {
+  const token = `sk-ant-oat01-${"a".repeat(95)}`;
+  assert.equal(asClaudeManualToken(`  ${token}  \n`), token);
+});
+
+test("asClaudeManualToken rejects the wrong prefix, short values, and control characters", () => {
+  assert.equal(asClaudeManualToken(`sk-ant-api01-${"a".repeat(95)}`), null);
+  assert.equal(asClaudeManualToken("sk-ant-oat01-tooshort"), null);
+  assert.equal(asClaudeManualToken(`sk-ant-oat01-${"a".repeat(40)}\nrm -rf ~`), null);
+  assert.equal(asClaudeManualToken(""), null);
+  assert.equal(asClaudeManualToken(undefined), null);
+  assert.equal(asClaudeManualToken(42), null);
 });
 
 test("asWaterCupSize normalises to a supported cup and ignores junk", () => {

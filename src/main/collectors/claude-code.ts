@@ -1,10 +1,11 @@
 import axios from "axios";
-import type { Language, ScrapeResult } from "@shared/types";
+import type { CredentialSource, Language, ScrapeResult } from "@shared/types";
 import { t } from "@shared/i18n";
 import { nextBillingAt, parseSubscriptionCreatedAt } from "@shared/claude-billing";
 import { buildClaudeScrapeResult, extractLimits, selectPrimaryLimits } from "@shared/claude-usage";
+import { stabilizeResetTime } from "@shared/monitor-utils";
 import { latestFutureReset, readClaudeCliQuotaEvents } from "@main/collectors/claude-cli-log";
-import { getClaudeCodeOAuthToken } from "@main/credential-provider";
+import { readClaudeCredential } from "@main/credential-provider";
 import { settingsStore } from "@main/store";
 
 const CLAUDE_USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
@@ -36,10 +37,26 @@ interface CliResetTimes {
   weekly: string | null;
 }
 
+// latestFutureReset rescans a sliding log window on every call, so its
+// "newest future candidate" can drift poll-to-poll (a new log line appears)
+// even though the real window hasn't rolled over. Re-notification dedupe
+// keys off this value downstream, so a stable value here — held until it
+// actually elapses, only then replaced — is what keeps one real low-quota
+// occurrence from firing more than once.
+let stableFallbackResets: CliResetTimes = { session: null, weekly: null };
+
+const applyStabilization = (key: keyof CliResetTimes, candidate: string | null, nowMs: number): string | null => {
+  const next = stabilizeResetTime(stableFallbackResets[key], candidate, nowMs);
+  stableFallbackResets[key] = next;
+  return next;
+};
+
 /**
  * Reset times recovered from the CLI's own logs, for the windows the API left
  * blank. Best effort in every sense: a failure here just means we carry on
- * without a reset time, exactly as before.
+ * without a reset time, exactly as before — except we prefer a still-live
+ * cached value over a hard null, so a transient log-read hiccup doesn't
+ * itself look like a state change.
  */
 const readCliResetTimes = async (needSession: boolean, needWeekly: boolean): Promise<CliResetTimes> => {
   if (!needSession && !needWeekly) {
@@ -49,17 +66,31 @@ const readCliResetTimes = async (needSession: boolean, needWeekly: boolean): Pro
     const nowMs = Date.now();
     const events = await readClaudeCliQuotaEvents(nowMs - CLI_LOG_LOOKBACK_MS);
     return {
-      session: needSession ? latestFutureReset(events, SESSION_LIMIT_TYPES, nowMs) : null,
-      weekly: needWeekly ? latestFutureReset(events, WEEKLY_LIMIT_TYPES, nowMs) : null
+      session: needSession ? applyStabilization("session", latestFutureReset(events, SESSION_LIMIT_TYPES, nowMs), nowMs) : null,
+      weekly: needWeekly ? applyStabilization("weekly", latestFutureReset(events, WEEKLY_LIMIT_TYPES, nowMs), nowMs) : null
     };
   } catch {
-    return { session: null, weekly: null };
+    return {
+      session: needSession ? stableFallbackResets.session : null,
+      weekly: needWeekly ? stableFallbackResets.weekly : null
+    };
   }
 };
 
-export class ClaudeLoginExpiredError extends Error {}
+export class ClaudeLoginExpiredError extends Error {
+  constructor(
+    message: string,
+    readonly source: CredentialSource
+  ) {
+    super(message);
+  }
+}
 
-const fetchUsagePayload = async (token: string, lang: Language): Promise<Record<string, unknown>> => {
+const fetchUsagePayload = async (
+  token: string,
+  lang: Language,
+  source: CredentialSource
+): Promise<Record<string, unknown>> => {
   try {
     const response = await axios.get(CLAUDE_USAGE_URL, {
       headers: oauthHeaders(token),
@@ -69,7 +100,11 @@ const fetchUsagePayload = async (token: string, lang: Language): Promise<Record<
   } catch (error) {
     if (axios.isAxiosError(error)) {
       if (error.response?.status === 401) {
-        throw new ClaudeLoginExpiredError(t(lang, "error.claudeLoginExpired"));
+        // An env-supplied credential outranks every other source, so telling the
+        // user to re-authorize would send them to fix something that stays
+        // shadowed. Name the env var instead.
+        const key = source === "env" ? "error.claudeLoginExpiredEnvVar" : "error.claudeLoginExpired";
+        throw new ClaudeLoginExpiredError(t(lang, key), source);
       }
       if (error.response?.status === 429) {
         throw new Error(t(lang, "error.claudeRateLimited"));
@@ -83,9 +118,12 @@ const fetchUsagePayload = async (token: string, lang: Language): Promise<Record<
  * Fetches usage for a known token. Shared by the scheduled collector and by
  * the setup-token / paste-token path so validation is the same scrape.
  */
-export const collectClaudeCodeQuotaFromToken = async (token: string): Promise<ScrapeResult> => {
+export const collectClaudeCodeQuotaFromToken = async (
+  token: string,
+  source: CredentialSource = "manual"
+): Promise<ScrapeResult> => {
   const lang = settingsStore.get().language;
-  const payload = await fetchUsagePayload(token, lang);
+  const payload = await fetchUsagePayload(token, lang, source);
   const limits = extractLimits(payload, lang);
   if (limits.length === 0) {
     return buildClaudeScrapeResult(limits, lang);
@@ -149,5 +187,8 @@ export const validateClaudeOAuthToken = async (token: string): Promise<ScrapeRes
 };
 
 export const collectClaudeCodeQuota = async (): Promise<ScrapeResult> => {
-  return collectClaudeCodeQuotaFromToken(await getClaudeCodeOAuthToken());
+  // Read the whole credential, not just the token: a 401 below has to be
+  // attributable to the source that supplied it (see claude-fallback-decision).
+  const { token, source } = await readClaudeCredential();
+  return collectClaudeCodeQuotaFromToken(token, source);
 };

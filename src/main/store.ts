@@ -127,8 +127,6 @@ export const settingsStore = {
       ...current,
       ...patch
     };
-    merged.cursorIntervalMinutes = clamp(Number(merged.cursorIntervalMinutes || 10), 5, 60);
-    merged.claudeIntervalMinutes = clamp(Number(merged.claudeIntervalMinutes || 10), 5, 60);
     merged.cursorAdvancedModelsLowThresholdPercent = clamp(
       Number(merged.cursorAdvancedModelsLowThresholdPercent || 20),
       5,
@@ -149,6 +147,8 @@ export const settingsStore = {
     merged.waterReminderMinutes = clampWaterReminderMinutes(merged.waterReminderMinutes);
     merged.waterCupSizeMl = normalizeWaterCupSize(merged.waterCupSizeMl);
     merged.enableWaterReminder = Boolean(merged.enableWaterReminder);
+    merged.enableCursorMonitoring = Boolean(merged.enableCursorMonitoring);
+    merged.enableClaudeMonitoring = Boolean(merged.enableClaudeMonitoring);
     merged.enableClaudeWeeklyResetAlarm = Boolean(merged.enableClaudeWeeklyResetAlarm);
     merged.enableClaudeBillingAlarm = Boolean(merged.enableClaudeBillingAlarm);
     merged.claudeBillingCadence = merged.claudeBillingCadence === "annual" ? "annual" : "monthly";

@@ -42,12 +42,13 @@ Running `claude` the first time opens a browser to complete OAuth login, which w
 > Why the numbers can look different from Claude Desktop's own "Plan usage limits" panel: Usage-Pulse shows **remaining** quota, while Claude Desktop's panel shows **used** quota. `44%` remaining and `56%` used describe the same state (they add up to 100%) — not a data error.
 
 ### Behavior
-- Periodic background checks of Cursor / Claude quota (default: every 10 minutes).
-- Low-quota alerts can be toggled independently for Cursor and Claude.
-- Quota-reset alerts can be toggled independently for Cursor and Claude.
-- Notification cooldown is configurable, avoiding repeated alerts with the same content in a short window.
+- Periodic background checks of Cursor / Claude quota (about every 15 minutes; about every 10 minutes once a window is running low). Claude Code can skip the API entirely while the CLI has been idle (this can be turned off in Settings).
+- Low-quota alerts are per window: Cursor models and advanced / other models separately; Claude Code 5-hour, weekly, and the 5-hour lockout (cooldown) separately.
+- Quota-reset / due alerts are independent: Cursor period-end; Claude Code 5-hour, weekly, and subscription renewal (monthly / annual) each have their own switch.
+- How you are notified is two peer switches: an always-on-top popup in the top-right (quota / reset popups are silent; the water reminder plays a short chime; auto-closes after about 1 minute; snooze 5 minutes) and LINE broadcast.
+- Notification cooldown is configurable, avoiding repeated quota-change alerts with the same content in a short window.
 - Available in Traditional Chinese, English, Japanese, and Korean from the in-app language menu.
-- The app can be quit directly from the UI or the tray menu ("Quit Usage-Pulse").
+- The app can be quit directly from the UI or the tray menu ("Quit Usage-Pulse"). If LINE is on, quit sends a final status from the last cached reading (no extra API call).
 
 ### Security notes
 
@@ -60,10 +61,10 @@ Running `claude` the first time opens a browser to complete OAuth login, which w
 - Never writes `~/.claude/.credentials.json`
 - Never auto-refreshes tokens on your behalf
 
-The one Keychain write is intentional: after you finish the official `claude setup-token` login from **Re-detect Credentials**, Usage-Pulse stores that long-lived token in the `Claude Code-credentials` item so the next re-detect can find it. It does not create a login of its own.
+The one Keychain write is intentional: **Re-detect Credentials** opens an in-app window running the official `claude setup-token`. After you finish the browser login, paste the printed token in Settings — Usage-Pulse then stores that long-lived token in the `Claude Code-credentials` item so the next re-detect can find it. It does not create a login of its own. An encrypted fallback copy is kept in the app store and never shown in the UI; there is no manual-clear button.
 
 #### Data storage
-- The app stores general settings (check interval, notification toggles, cooldown time, language) locally via `electron-store`.
+- The app stores general settings (notification toggles, cooldown time, language, and the rest of Settings) locally via `electron-store`. There is no user-facing check-interval setting.
 - OAuth tokens are used in-memory for API requests. A long-lived `setup-token` is also stored in the official Keychain item (and the encrypted app store) after you complete that login.
 
 ### License and important notice
@@ -78,8 +79,11 @@ Usage-Pulse uses an **MIT-style license with a non-commercial default** (full te
 
 If Usage-Pulse helps you, please consider sponsoring via [GitHub Sponsors](https://github.com/sponsors/xiaochen26wyl).
 
+- Threads: [@xiaochen26wyl](https://www.threads.com/@xiaochen26wyl)
+- LINE: <https://lin.ee/6XYi49XZ>
 - Instagram: [@xiaochen26wyl](https://www.instagram.com/xiaochen26wyl/)
 - WhatsApp: <https://wa.me/message/ZENT2RTQIGPEI1>
+- LinkedIn: [W.Y. LI](https://www.linkedin.com/in/wenyu-li-1a9868bb/)
 
 ### Developer
 
@@ -125,12 +129,13 @@ claude
 > 為什麼數字看起來跟 Claude Desktop 自己的「Plan usage limits」面板不一樣：Usage-Pulse 顯示的是**剩餘**配額，Claude Desktop 面板顯示的是**已使用**配額。「剩餘 44%」跟「已使用 56%」其實是同一個狀態（相加等於 100%），不是資料錯誤。
 
 ### 功能行為
-- 背景定時檢查 Cursor / Claude 配額（預設 10 分鐘）。
-- 低額度通知可分別開關（Cursor、Claude 各自控制）。
+- 背景定時檢查 Cursor / Claude 配額（約每 15 分鐘；視窗偏低時約每 10 分鐘）。Claude Code 可在 CLI 無活動時完全跳過 API（可在設定關閉）。
+- 低額度通知依視窗分開：Cursor 模型與進階／其他模型各自獨立；Claude Code 為 5 小時、每週，以及 5 小時用盡鎖定（cooldown）。
 - 配額重置／到期提醒可分別開關：Cursor 到期、Claude Code 5 小時到點、每週到點、訂閱到期（月繳／年繳）各自獨立。
-- 通知冷卻時間可設定，避免同內容短時間重複提醒。
+- 提醒方式是兩個平級開關：螢幕右上角置頂彈窗（配額／重置彈窗靜音；喝水提醒有短提示音；約 1 分鐘自動關閉；可延後 5 分鐘）與 LINE 廣播。
+- 通知冷卻時間可設定，避免同內容短時間重複提醒配額變化。
 - 支援繁體中文、英文、日文、韓文介面，可在 App 標題列語言選單切換。
-- 可在 UI 或 Tray 選單直接使用「結束 Usage-Pulse」。
+- 可在 UI 或 Tray 選單直接使用「結束 Usage-Pulse」。若 LINE 開啟，結束時會用最後一次快取用量送出現況（不再打 API）。
 
 ### 安全性說明
 
@@ -143,10 +148,10 @@ claude
 - 不會寫入 `~/.claude/.credentials.json`
 - 不會替你自動刷新 token
 
-唯一的 Keychain 寫入是刻意的：在「重新偵測憑證」裡用官方 `claude setup-token` 完成登入後，Usage-Pulse 會把那組永久 token 寫進 `Claude Code-credentials`，下次重新偵測才讀得到。不會自己做一套登入。
+唯一的 Keychain 寫入是刻意的：「重新偵測憑證」會開啟 App 內視窗跑官方 `claude setup-token`。你在瀏覽器完成授權後，把印出的 token 貼到設定頁——Usage-Pulse 才把那組永久 token 寫進 `Claude Code-credentials`，下次重新偵測才讀得到。不會自己做一套登入。加密備援存在 App store，介面上看不到明文，也沒有手動清除按鈕。
 
 #### 資料落地
-- 應用程式會在本機 `electron-store` 保存一般設定（檢查頻率、通知開關、冷卻時間、語言）。
+- 應用程式會在本機 `electron-store` 保存一般設定（通知開關、冷卻時間、語言與其他設定項）。沒有使用者可調的檢查頻率。
 - OAuth token 用於執行期間請求 API。`setup-token` 永久憑證在你完成官方登入後，會寫入 Keychain 與 App 自己的加密 store。
 
 ### 授權與重要聲明
@@ -161,6 +166,9 @@ Usage-Pulse 採用 **MIT 風格授權，預設僅限非商業使用**（完整�
 
 - Threads：[@xiaochen26wyl](https://www.threads.com/@xiaochen26wyl)
 - LINE：<https://lin.ee/6XYi49XZ>
+- Instagram：[@xiaochen26wyl](https://www.instagram.com/xiaochen26wyl/)
+- WhatsApp：<https://wa.me/message/ZENT2RTQIGPEI1>
+- LinkedIn：[W.Y. LI](https://www.linkedin.com/in/wenyu-li-1a9868bb/)
 
 ### 開發者
 

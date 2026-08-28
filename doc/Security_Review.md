@@ -186,3 +186,36 @@ pnpm typecheck && pnpm check:readonly && pnpm test:unit && pnpm build && pnpm sm
 1. **升級 Electron 至 39.8.10+ 與 electron-builder 至 26.15.0+**（M1）。這是目前最大的單一曝險，因為沒有自動更新機制，已安裝的使用者不會拿到任何 Chromium 修補。
 2. **導入更新機制或至少發布 checksum**（M1／L6），讓使用者有辦法確認手上的版本並取得後續修補。
 3. **macOS 簽章與公證**（L6）。
+
+---
+
+## 現況更新（2026-08-28）
+
+> 以下對照工作區現況，**不改寫** 2026-08-25 當時的發現與修補紀錄。驗證表裡的測試筆數、preload 方法數是當時數字，本次未重跑檢測。
+
+### M1 — Electron 已升級；其餘仍在
+
+- Electron 已升到 `package.json` 的 `^43.4.1`（lock 為 43.4.1）。當時「33 EOL」的敘述不再適用。
+- **仍無** `electron-updater`；已安裝的使用者不會自動拿到 Chromium 修補。
+- `electron-builder` 仍為 `25.1.8`。
+- 文末「仍待處理」第 1 條改讀：Electron 大版本升級已做；未解的是自動更新、builder 26+、checksum、簽章（L6）。
+
+### Renderer 進入點
+
+當時列的 `credential.html` 已不存在。現有四個進入點：`index.html`、`alarm.html`、`session.html`、**`claude-login.html`**（嚴格 CSP + `sandbox: true`）。`window-hardening.ts` 的 process-wide 掛載會涵蓋新視窗。
+
+### L3 — `tee` 截檔已移除；殘留面改到 in-app PTY
+
+`setup-token-capture.txt` 與系統 Terminal + `tee` 路徑已刪。登入改為 `node-pty` 跑 `claude setup-token`，可見輸出在 in-app xterm（`claude-login.html`）。
+
+仍屬「過程中可見」的殘留：
+
+- in-app xterm 捲動緩衝會顯示印出的 `sk-ant-oat01-…`
+- raw PTY 輸出經 `claude-login:data` 進登入視窗 renderer
+- tray 的 `credential:manual-token-captured` 推送 **cleartext** token；Settings（`App.tsx`）目前尚未訂閱
+
+### 新增表面（本次未做完整重測）
+
+- `node-pty` 繼承完整 `process.env`；`package.json` 以 `asarUnpack` 帶出 native helper；`postinstall` 的 `scripts/fix-node-pty-permissions.mjs` 對 `spawn-helper` `chmod` 755（開發機／建置鏈）。
+- IPC：`claude-login:input`／`resize`（renderer→main）、`claude-login:data`／`exit`（main→renderer）。`claude-login:input` 只檢查 `typeof string`，無長度上限、無 sender 視窗限制（preload 為各視窗共用）。`resize` 有 `asPtySize`（1–500）。
+- 憑證寫入仍只經 `credential-provider.ts` 的 `add-generic-password` 例外；`check-readonly.mjs` 清單無需為 PTY 檔新增例外。

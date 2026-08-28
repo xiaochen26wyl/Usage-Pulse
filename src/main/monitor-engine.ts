@@ -9,7 +9,7 @@ import type {
   ScrapeResult,
   ServiceType
 } from "@shared/types";
-import { isDuplicateInCooldown } from "@shared/monitor-utils";
+import { isDuplicateInCooldown, shouldClearLowQuotaLatch } from "@shared/monitor-utils";
 import { isColdReading, isTrusted } from "@shared/snapshot-trust";
 import { buildExhaustedFlex, buildLowQuotaFlex } from "@shared/line-templates";
 import { localeForLanguage, t } from "@shared/i18n";
@@ -28,7 +28,6 @@ import { credentialStore, notificationStore, settingsStore, snapshotStore } from
 import { SERVICE_LABELS } from "./config";
 
 type TriggerType = "scheduled" | "manual" | "startup" | "credential" | "confirm";
-type IntervalKey = "cursorIntervalMinutes" | "claudeIntervalMinutes";
 
 // How long to wait before re-reading a service whose first believable reading
 // already looked like an emergency. Long enough that the state has to persist,
@@ -42,12 +41,40 @@ const CONFIRM_DELAY_MS = 90_000;
 // re-read ("confirm") are allowed past it; both are bounded by construction.
 const MIN_CLAUDE_FETCH_GAP_MS = 5 * 60_000;
 
+// A recovered reading must clear its threshold by more than this many points
+// before the low-quota latch is cleared, so rounding/borderline noise right
+// at the threshold cannot flip-flop clear-then-refire the same LINE alert.
+const RECOVERY_HYSTERESIS_PERCENT = 5;
+
+// Polling cadence: 15 minutes normally, tightened to 10 minutes once any of a
+// service's windows is running low, so a user who's about to run dry gets
+// checked on more often without paying that cost while quota is healthy.
+const FAST_POLL_THRESHOLD_PERCENT = 20;
+const FAST_POLL_INTERVAL_MS = 10 * 60_000;
+const NORMAL_POLL_INTERVAL_MS = 15 * 60_000;
+
 // How far back to look in the CLI's own logs when corroborating a lockout.
 // Wider than the 5-hour window so a rejection recorded at its start is still
 // in scope.
 const CLI_LOG_LOOKBACK_MS = 6 * 60 * 60_000;
 
 const nowIso = () => new Date().toISOString();
+
+// Only used when a service's monitoring is disabled and no snapshot has ever
+// been fetched for it, so runCheck() still has something well-formed to hand
+// back instead of throwing.
+const unknownSnapshot = (service: ServiceType): QuotaSnapshot => ({
+  service,
+  remaining: null,
+  total: null,
+  percent: null,
+  unit: "percent",
+  resetsAt: null,
+  windows: [],
+  status: "unknown",
+  message: "",
+  fetchedAt: nowIso()
+});
 
 const clampPercent = (value: number): number => Math.max(0, Math.min(100, value));
 
@@ -136,9 +163,19 @@ const evaluateClaudeLowFlags = (windows: QuotaWindow[], settings: AppSettings): 
   };
 };
 
-const intervalKeyMap: Record<ServiceType, IntervalKey> = {
-  cursor: "cursorIntervalMinutes",
-  claude: "claudeIntervalMinutes"
+// Next polling delay for `service`, based on the most recently fetched
+// snapshot: fast tier if any of its windows is at or below the fast-poll
+// threshold, normal tier otherwise (including when there's no snapshot yet).
+const nextPollDelayMs = (service: ServiceType): number => {
+  const snapshot = snapshotStore.get()?.[service] ?? null;
+  const windows = snapshot?.windows ?? [];
+  const isLow =
+    service === "cursor"
+      ? cursorWindowState(findWindow(windows, "cursor_models"), FAST_POLL_THRESHOLD_PERCENT).low ||
+        cursorWindowState(findWindow(windows, "other_models"), FAST_POLL_THRESHOLD_PERCENT).low
+      : claudeWindowState(findWindow(windows, "session"), FAST_POLL_THRESHOLD_PERCENT).low ||
+        claudeWindowState(findClaudeWeeklyWindow(windows), FAST_POLL_THRESHOLD_PERCENT).low;
+  return isLow ? FAST_POLL_INTERVAL_MS : NORMAL_POLL_INTERVAL_MS;
 };
 
 const makeQuotaSnapshot = (
@@ -161,7 +198,8 @@ const makeQuotaSnapshot = (
     message,
     isError,
     errorCode,
-    source
+    source,
+    credentialSource
   } = scrapeResult;
   const percent = toPercent(remaining, total);
 
@@ -194,6 +232,7 @@ const makeQuotaSnapshot = (
       message,
       errorCode,
       source,
+      credentialSource,
       fetchedAt: nowIso()
     },
     cursorFlags,
@@ -257,6 +296,24 @@ export class MonitorEngine extends EventEmitter {
     return true;
   }
 
+  /**
+   * One-shot gate for low-quota-style alerts: fires the first time `key` is
+   * seen for this scope, then stays silent for every later poll that reports
+   * the same key, no matter how much time passes. `key` encodes the exact
+   * occurrence (threshold + reset time), so the only ways back in are the
+   * ones that should count as a new occurrence — the window resetting, the
+   * threshold being edited — while a caller clearing the scope on genuine
+   * recovery is what lets the *same* occurrence alert again later.
+   */
+  private shouldNotifyOnce(scope: string, key: string): boolean {
+    const last = notificationStore.get(scope);
+    if (last.key === key) {
+      return false;
+    }
+    notificationStore.set(scope, key, nowIso());
+    return true;
+  }
+
   start(): void {
     this.reschedule();
   }
@@ -271,10 +328,10 @@ export class MonitorEngine extends EventEmitter {
    * follow-up before it ever got to run, silently dropping every held alert.
    */
   stop(): void {
-    // Cursor runs on a plain interval; Claude Code re-arms a timeout after each
-    // tick so an idle CLI can stretch the gap.
+    // Both services re-arm a timeout after each tick — Cursor's interval and
+    // Claude's idle-stretching both need to pick their own next delay.
     if (this.timers.cursor) {
-      clearInterval(this.timers.cursor);
+      clearTimeout(this.timers.cursor);
       this.timers.cursor = null;
     }
     if (this.timers.claude) {
@@ -288,19 +345,41 @@ export class MonitorEngine extends EventEmitter {
     this.stop();
     const settings = settingsStore.get();
 
-    this.timers.cursor = setInterval(() => {
-      this.checkService("cursor", "scheduled").catch((error) => {
-        this.emit("error", error);
-      });
-    }, settings[intervalKeyMap.cursor] * 60_000);
+    if (settings.enableCursorMonitoring) {
+      this.scheduleCursorTick(nextPollDelayMs("cursor"));
+    }
 
     // Claude Code re-arms itself after each tick instead of running on a fixed
     // interval, so an idle CLI can stretch the gap rather than keep asking
     // Anthropic a question whose answer cannot have changed.
-    this.scheduleClaudeTick(settings[intervalKeyMap.claude] * 60_000);
+    if (settings.enableClaudeMonitoring) {
+      this.scheduleClaudeTick(nextPollDelayMs("claude"));
+    }
 
     // Reapply alarms based on new settings
     alarmService.rearm("settings");
+  }
+
+  private scheduleCursorTick(delayMs: number): void {
+    const existing = this.timers.cursor;
+    if (existing) {
+      clearTimeout(existing);
+    }
+    this.timers.cursor = setTimeout(() => {
+      void this.cursorTick();
+    }, delayMs);
+  }
+
+  private async cursorTick(): Promise<void> {
+    try {
+      await this.checkService("cursor", "scheduled");
+    } catch (error) {
+      this.emit("error", error);
+    } finally {
+      if (settingsStore.get().enableCursorMonitoring) {
+        this.scheduleCursorTick(nextPollDelayMs("cursor"));
+      }
+    }
   }
 
   private scheduleClaudeTick(delayMs: number): void {
@@ -344,7 +423,6 @@ export class MonitorEngine extends EventEmitter {
 
   private async claudeTick(): Promise<void> {
     const settings = settingsStore.get();
-    let nextDelayMs = settings.claudeIntervalMinutes * 60_000;
 
     try {
       // When activity polling is on and the CLI has been idle, skip the API
@@ -358,7 +436,9 @@ export class MonitorEngine extends EventEmitter {
     } catch (error) {
       this.emit("error", error);
     } finally {
-      this.scheduleClaudeTick(nextDelayMs);
+      if (settingsStore.get().enableClaudeMonitoring) {
+        this.scheduleClaudeTick(nextPollDelayMs("claude"));
+      }
     }
   }
 
@@ -368,8 +448,9 @@ export class MonitorEngine extends EventEmitter {
 
   // Fires one low-quota-style alert independently: its own desktop
   // notification, its own LINE bubble, and, if enabled, its own alarm popup —
-  // deduped per alert id so it doesn't repeat every poll while the underlying
-  // state is unchanged.
+  // one-shot per alert id (see shouldNotifyOnce) so crossing into low or
+  // exhausted rings exactly once and then stays quiet, no matter how long
+  // that state persists, until the caller's dedupeKey actually changes.
   private fireLowQuotaAlert(options: {
     id: LowQuotaAlertSource;
     service: ServiceType;
@@ -387,7 +468,7 @@ export class MonitorEngine extends EventEmitter {
     countdownTarget?: string | null;
   }): boolean {
     const { id, service, kind, dedupeKey, label, reason, settings, combined, countdownTarget } = options;
-    if (!this.shouldNotify(`lowquota:${id}`, dedupeKey, settings)) {
+    if (!this.shouldNotifyOnce(`lowquota:${id}`, dedupeKey)) {
       return false;
     }
 
@@ -428,6 +509,12 @@ export class MonitorEngine extends EventEmitter {
    * necessarily under its threshold too, and sending both is the same news
    * twice. A window with no exhausted id of its own (Claude Code's 5-hour
    * session, which has the cooldown alert instead) only ever fires the low one.
+   *
+   * Both alerts are one-shot per occurrence (see shouldNotifyOnce): once the
+   * window is neither low nor exhausted, this clears both ids' latches so the
+   * next time it dips back under the threshold — even under the same
+   * threshold and reset time — earns its own fresh notification instead of
+   * being mistaken for the occurrence that already rang.
    */
   private fireWindowAlert(options: {
     service: ServiceType;
@@ -450,9 +537,10 @@ export class MonitorEngine extends EventEmitter {
         id: exhaustedId,
         service,
         kind: "exhausted",
-        // Keyed by the reset time rather than the threshold: a window parked at
-        // 0% would otherwise re-alert every notifyCooldownMinutes, while a new
-        // cycle that runs dry again deserves its own alert.
+        // Keyed by the reset time rather than the threshold: a window parked
+        // at 0% must stay silent for as long as it's the *same* exhausted
+        // occurrence, while a new cycle that runs dry again deserves its own
+        // alert.
         dedupeKey: resetAt ?? "exhausted",
         label,
         reason: t(lang, "reason.quotaExhaustedNotify", {
@@ -471,6 +559,15 @@ export class MonitorEngine extends EventEmitter {
     }
 
     if (!state.low) {
+      if (shouldClearLowQuotaLatch(state.remainingPercent, threshold, RECOVERY_HYSTERESIS_PERCENT)) {
+        // Fully recovered: clear both latches so a later dip under the
+        // threshold — even with the same threshold and reset time as before —
+        // is treated as a new occurrence rather than the one that already fired.
+        notificationStore.clear(`lowquota:${lowId}`);
+        if (exhaustedId) {
+          notificationStore.clear(`lowquota:${exhaustedId}`);
+        }
+      }
       return false;
     }
 
@@ -478,7 +575,10 @@ export class MonitorEngine extends EventEmitter {
       id: lowId,
       service,
       kind: "low",
-      dedupeKey: `${threshold}`,
+      // Threshold + reset time together identify "this occurrence": editing
+      // the threshold in settings, or the window rolling over to a new
+      // reset time, both count as a fresh occurrence worth its own alert.
+      dedupeKey: `${threshold}|${resetAt ?? "none"}`,
       label,
       reason: t(lang, "reason.lowQuotaNotify", { service: `${serviceLabel}·${label}`, threshold }),
       settings,
@@ -573,32 +673,37 @@ export class MonitorEngine extends EventEmitter {
         }) || notified;
     }
 
-    // Deduped by resetsAt (not by a fixed cooldown window), so a fresh
-    // cooldown period always gets its own popup even if the previous one
-    // notified recently, while re-polling during the *same* cooldown period
-    // still re-reminds at the normal notifyCooldownMinutes cadence.
-    if (settings.enableClaudeCooldownAlert && flags.cooldownActive && claudeSnapshot.resetsAt) {
-      const label = t(lang, "alertLabel.claudeCooldown");
-      notified =
-        this.fireLowQuotaAlert({
-          id: "claude-cooldown",
-          service: "claude",
-          // Service colour, not the red "used up" template: the 5-hour window
-          // refills on its own at resetsAt, nothing is spent for good.
-          kind: "low",
-          dedupeKey: claudeSnapshot.resetsAt,
-          remainingPercent: 0,
-          resetAt: claudeSnapshot.resetsAt,
-          label,
-          reason: t(lang, "reason.claudeCooldownNotify", {
-            resetTime: new Date(claudeSnapshot.resetsAt).toLocaleString(
-              localeForLanguage(lang)
-            )
-          }),
-          settings,
-          combined,
-          countdownTarget: claudeSnapshot.resetsAt
-        }) || notified;
+    // One-shot per resetsAt: a fresh cooldown period always gets its own
+    // popup even if the previous one just fired, but re-polling during the
+    // *same* cooldown period stays silent no matter how long it drags on.
+    if (flags.cooldownActive && claudeSnapshot.resetsAt) {
+      if (settings.enableClaudeCooldownAlert) {
+        const label = t(lang, "alertLabel.claudeCooldown");
+        notified =
+          this.fireLowQuotaAlert({
+            id: "claude-cooldown",
+            service: "claude",
+            // Service colour, not the red "used up" template: the 5-hour window
+            // refills on its own at resetsAt, nothing is spent for good.
+            kind: "low",
+            dedupeKey: claudeSnapshot.resetsAt,
+            remainingPercent: 0,
+            resetAt: claudeSnapshot.resetsAt,
+            label,
+            reason: t(lang, "reason.claudeCooldownNotify", {
+              resetTime: new Date(claudeSnapshot.resetsAt).toLocaleString(
+                localeForLanguage(lang)
+              )
+            }),
+            settings,
+            combined,
+            countdownTarget: claudeSnapshot.resetsAt
+          }) || notified;
+      }
+    } else {
+      // Cooldown lifted: clear the latch so the next cooldown window — even
+      // one that lands on the same resetsAt by coincidence — rings fresh.
+      notificationStore.clear("lowquota:claude-cooldown");
     }
 
     return notified;
@@ -764,6 +869,25 @@ export class MonitorEngine extends EventEmitter {
 
     const settings = settingsStore.get();
     const lang = settings.language;
+
+    // A stored fallback token never carries its own expiry (see
+    // credential-provider's toCredential for a setup-token capture), so the
+    // periodic credential sweep can never see it go stale on its own — this
+    // 401 is the only unambiguous proof it's dead.
+    //
+    // Dropping it is only safe once two things are known, and neither can be
+    // checked from here: that this 401 belongs to the stored token rather than
+    // to a source outranking it, and that something different sits underneath
+    // to fall back to. Both need an await (peeking the Keychain), and this
+    // method is synchronous by contract. So report the suspicion and let the
+    // listener in index.ts decide — see claude-fallback-decision.ts.
+    if (
+      service === "claude" &&
+      scrapeResult.errorCode === "claudeLoginExpired" &&
+      settings.claudeManualOAuthToken
+    ) {
+      this.emit("claude-fallback-suspect", scrapeResult.credentialSource);
+    }
     const previous = previousServiceSnapshot ?? snapshotStore.get()?.[service] ?? null;
     const { snapshot: nextServiceSnapshot, cursorFlags, claudeFlags } = makeQuotaSnapshot(
       service,
@@ -855,21 +979,31 @@ export class MonitorEngine extends EventEmitter {
   }
 
   async runCheck(trigger: TriggerType): Promise<MonitorResult> {
+    const settings = settingsStore.get();
     const [cursorResult, claudeResult] = await Promise.all([
-      this.checkService("cursor", trigger),
-      this.checkService("claude", trigger)
+      settings.enableCursorMonitoring ? this.checkService("cursor", trigger) : Promise.resolve(null),
+      settings.enableClaudeMonitoring ? this.checkService("claude", trigger) : Promise.resolve(null)
     ]);
 
-    const lang = settingsStore.get().language;
-    const snapshot = this.getLatestSnapshot() ?? cursorResult.snapshot;
+    const lang = settings.language;
     const noChangeText = t(lang, "reason.noChange");
-    const reasons = [cursorResult.reason, claudeResult.reason].filter((reason) => reason && reason !== noChangeText);
+    const reasons = [cursorResult?.reason, claudeResult?.reason].filter(
+      (reason): reason is string => Boolean(reason) && reason !== noChangeText
+    );
+    const stored = this.getLatestSnapshot();
+    const snapshot: CombinedSnapshot = stored ??
+      cursorResult?.snapshot ??
+      claudeResult?.snapshot ?? {
+        cursor: unknownSnapshot("cursor"),
+        claude: unknownSnapshot("claude"),
+        fetchedAt: nowIso()
+      };
 
     return {
       snapshot,
-      changed: cursorResult.changed || claudeResult.changed,
-      lowAlert: cursorResult.lowAlert || claudeResult.lowAlert,
-      notified: cursorResult.notified || claudeResult.notified,
+      changed: Boolean(cursorResult?.changed || claudeResult?.changed),
+      lowAlert: Boolean(cursorResult?.lowAlert || claudeResult?.lowAlert),
+      notified: Boolean(cursorResult?.notified || claudeResult?.notified),
       reason: reasons.length > 0 ? reasons.join("；") : noChangeText
     };
   }

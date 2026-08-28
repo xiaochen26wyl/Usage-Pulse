@@ -45,10 +45,20 @@ export interface QuotaSnapshot {
   message: string;
   errorCode?: ErrorCode;
   source?: QuotaSource;
+  // Which credential source the failing request used. A source label only —
+  // never token material — so it is safe to hand across IPC.
+  credentialSource?: CredentialSource;
   fetchedAt: string;
 }
 
 export type ErrorCode = "claudeLoginExpired";
+
+// Which of readClaudeCredential's ranked sources actually supplied the token a
+// request used. Without this, a 401 tells us a credential is dead but not
+// *which* one — and the self-heal that drops a stale fallback token would fire
+// on 401s belonging to a completely different source (see
+// claude-fallback-decision.ts). "cursorStateDb" is Cursor's only source.
+export type CredentialSource = "env" | "manual" | "keychain" | "file" | "cursorStateDb";
 
 export interface CombinedSnapshot {
   cursor: QuotaSnapshot;
@@ -80,8 +90,10 @@ export interface AuthStatus {
 }
 
 export interface AppSettings {
-  cursorIntervalMinutes: number;
-  claudeIntervalMinutes: number;
+  // Opt-in per-service monitoring: off means the service's quota card and
+  // settings block are hidden, and its credential is never probed.
+  enableCursorMonitoring: boolean;
+  enableClaudeMonitoring: boolean;
   // Cursor's low-quota warning is split by model tier: "advanced models" is the
   // other_models/apiPercentUsed window (pay-as-you-go premium models), "cursor
   // models" is the cursor_models/autoPercentUsed window (Cursor's own Grok/Composer).
@@ -132,6 +144,12 @@ export interface AppSettings {
   // performs cannot be confirmed. Stored encrypted and never handed back to a
   // renderer in cleartext — see CLAUDE_MANUAL_TOKEN_MASK.
   claudeManualOAuthToken: string;
+  // When claudeManualOAuthToken was issued plus its known validity (`claude
+  // setup-token` tokens are documented as valid for 1 year, and carry no
+  // expiry claim of their own — see computeSetupTokenExpiryIso). Lets the
+  // re-detect flow decide the credential is still good without ever calling
+  // the usage API just to find out.
+  claudeManualOAuthTokenExpiresAt: string | null;
   // Poll Claude Code only when its CLI has actually been active since the last
   // successful fetch. Idle ticks skip the request but keep the normal interval.
   claudeUseCliActivityPolling: boolean;
@@ -208,6 +226,10 @@ export interface ScrapeResult {
   isError?: boolean;
   errorCode?: ErrorCode;
   source?: QuotaSource;
+  // Which credential source produced the token behind this result. Only set on
+  // the Claude error path today, where it decides whether a stored fallback
+  // token is the one the API just rejected.
+  credentialSource?: CredentialSource;
 }
 
 export interface NotifyPayload {
@@ -289,4 +311,20 @@ export interface AlarmStatusReport {
 export interface ManualTokenResult {
   ok: boolean;
   message: string;
+  // True only when persistClaudeToken's Keychain write threw. The token is
+  // still usable (settings-store fallback), but the user should know the
+  // Keychain copy did not actually get written, since that fallback is
+  // silent and easy to lose track of (e.g. a settings reset would drop it).
+  keychainWriteFailed?: boolean;
+  // True only when the automatic `claude setup-token` capture itself failed
+  // (no claude binary, timed out, no terminal, nothing in the output) — not
+  // for a login that is merely already in progress elsewhere. Tells the
+  // renderer to offer the manual "copy the command, paste the token back"
+  // fallback instead of just showing an error and dead-ending.
+  needsManualFallback?: boolean;
+  // True only when this result already confirms real quota data is sitting
+  // in main, ready to view. The renderer never applies it automatically —
+  // it shows an explicit "Update UI" confirmation button instead, so the
+  // user always sees which credential state actually reached the screen.
+  readyToApply?: boolean;
 }

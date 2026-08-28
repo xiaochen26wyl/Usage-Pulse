@@ -1,6 +1,7 @@
 import axios from "axios";
 import type { QuotaWindow, ScrapeResult } from "@shared/types";
 import { t } from "@shared/i18n";
+import { clampPercentFromRatio } from "@shared/monitor-utils";
 import { getCursorAccessToken } from "@main/credential-provider";
 import { settingsStore } from "@main/store";
 
@@ -155,7 +156,7 @@ export const collectCursorQuota = async (): Promise<ScrapeResult> => {
       label: t(lang, "window.label.cursorModels"),
       remaining: null,
       total: null,
-      percent: Math.round(autoPercentUsed * 100),
+      percent: clampPercentFromRatio(autoPercentUsed),
       resetsAt: null,
       message: t(lang, "window.desc.cursorModels")
     });
@@ -167,7 +168,7 @@ export const collectCursorQuota = async (): Promise<ScrapeResult> => {
       label: t(lang, "window.label.otherModels"),
       remaining: null,
       total: null,
-      percent: Math.round(apiPercentUsed * 100),
+      percent: clampPercentFromRatio(apiPercentUsed),
       resetsAt: null,
       message: t(lang, "window.desc.otherModels")
     });

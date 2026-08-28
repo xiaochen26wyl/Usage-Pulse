@@ -47,3 +47,22 @@ test("extractAuthUrlFromOutput picks the official login URL", () => {
 test("extractAuthUrlFromOutput ignores unrelated hosts", () => {
   assert.equal(extractAuthUrlFromOutput("see https://example.com/login"), null);
 });
+
+// The real `claude setup-token` (v2.1.245) prints a claude.com URL, not
+// claude.ai — caught by driving the actual CLI inside a node-pty session.
+test("extractAuthUrlFromOutput accepts the current claude.com OAuth host", () => {
+  const url =
+    "https://claude.com/cai/oauth/authorize?code=true&client_id=abc&response_type=code&redirect_uri=https%3A%2F%2Fplatform.claude.com%2Foauth%2Fcode%2Fcallback";
+  assert.equal(extractAuthUrlFromOutput(`Browser didn't open? Use the url below to sign in:\n${url}\n`), url);
+});
+
+// Also caught live: node-pty hands back the raw byte stream, so a terminal
+// hyperlink's OSC-8 wrapper (`\x1B]8;;<url>\x07`) sits directly against the
+// URL with no whitespace — without excluding control bytes, the match used
+// to swallow the escape sequence (and the link's repeated display text)
+// straight into the "URL" handed to shell.openExternal.
+test("extractAuthUrlFromOutput stops at an OSC-8 hyperlink terminator, not just whitespace", () => {
+  const url = "https://claude.com/cai/oauth/authorize?code=true&state=abc";
+  const text = `\x1B]8;;${url}\x07${url}\x1B]8;;\x07\n`;
+  assert.equal(extractAuthUrlFromOutput(text), url);
+});

@@ -147,3 +147,21 @@ export const claudeCountdownTargetAt = (snapshot: QuotaSnapshot): string | null 
   }
   return session.resetsAt ?? null;
 };
+
+// Same three-key fallback chain as monitor-engine.ts's findClaudeWeeklyWindow
+// (duplicated deliberately: shared/ must not depend on main/).
+export const findClaudeWeeklyWindow = (snapshot: QuotaSnapshot): QuotaSnapshot["windows"][number] | null =>
+  findWindow(snapshot, "weekly_all") ?? findWindow(snapshot, "weekly_scoped") ?? findWindow(snapshot, "weekly");
+
+// Mirrors claudeTrayValueText, but for the weekly window. Weekly resets can be
+// days out, so the exhausted fallback counts down in days rather than hours.
+export const claudeWeeklyTrayValueText = (snapshot: QuotaSnapshot, nowMs: number): string => {
+  const weekly = findClaudeWeeklyWindow(snapshot);
+  if (weekly && weekly.remaining !== null) {
+    if (Math.round(weekly.remaining) <= 0) {
+      return formatCountdownWithDays(weekly.resetsAt, nowMs) ?? "0%";
+    }
+    return `${Math.round(weekly.remaining)}%`;
+  }
+  return snapshotValueText(snapshot);
+};

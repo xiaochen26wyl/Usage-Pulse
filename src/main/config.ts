@@ -6,8 +6,8 @@ export const SERVICE_LABELS: Record<ServiceType, string> = {
 };
 
 export const DEFAULT_SETTINGS: AppSettings = {
-  cursorIntervalMinutes: 10,
-  claudeIntervalMinutes: 10,
+  enableCursorMonitoring: true,
+  enableClaudeMonitoring: true,
   cursorAdvancedModelsLowThresholdPercent: 20,
   enableCursorAdvancedModelsLowAlert: true,
   cursorModelsLowThresholdPercent: 20,
@@ -31,6 +31,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   enableLineNotification: true,
   lineChannelAccessToken: "",
   claudeManualOAuthToken: "",
+  claudeManualOAuthTokenExpiresAt: null,
   claudeUseCliActivityPolling: true,
   enableWaterReminder: true,
   waterReminderMinutes: 50,

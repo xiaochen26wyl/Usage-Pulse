@@ -28,3 +28,7 @@ out/
 CLAUDE.md
 .cursorrules
 .cursor/
+.claude/
+
+# 開發／資安本機文件（不上傳 GitHub）
+doc/

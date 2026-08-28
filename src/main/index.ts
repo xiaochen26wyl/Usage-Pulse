@@ -6,6 +6,7 @@ import type {
   AppSettings,
   AuthStatus,
   CombinedSnapshot,
+  CredentialSource,
   CredentialStatus,
   ManualTokenResult,
   ScrapeResult,
@@ -29,7 +30,14 @@ import { destroyAlarmWindow, closeAlarmPopup, getAlarmPayload, snoozeAlarmPopup 
 import { closeSessionSummary, destroySessionWindow, showSessionSummary } from "@main/session-window";
 import { sessionTracker } from "@main/session-tracker";
 import { waterReminder } from "@main/water-reminder";
-import { clearStaleSetupTokenCapture, runClaudeSetupToken, SetupTokenError } from "@main/claude-setup-token";
+import { computeSetupTokenExpiryIso, SetupTokenError } from "@main/claude-setup-token";
+import {
+  destroyClaudeLoginWindow,
+  openClaudeLoginWindow,
+  resizeClaudeLoginPty,
+  writeClaudeLoginPtyInput
+} from "@main/claude-login-window";
+import { decideClaudeFallbackClear } from "@main/claude-fallback-decision";
 import { validateClaudeOAuthToken } from "@main/collectors/claude-code";
 import { credentialMonitor } from "@main/credential-monitor";
 import {
@@ -41,7 +49,9 @@ import { applyAppLoginItem } from "@main/app-login-item";
 import { applyIdeLaunchHelper } from "@main/ide-launch-helper";
 import { IdePresenceMonitor, probeIdeRunning } from "@main/ide-presence";
 import {
+  asClaudeManualToken,
   asClipboardText,
+  asPtySize,
   asServiceType,
   asSettingsPatch,
   asWaterCupSize
@@ -50,6 +60,7 @@ import { redact } from "@main/log-redaction";
 import { isSecretStorageAvailable } from "@main/secure-store";
 import { sendLineBroadcast } from "@main/line-notifier";
 import { MonitorEngine } from "@main/monitor-engine";
+import { sendQuitStatusBroadcast } from "@main/quit-notifier";
 import { installWebContentsHardening } from "@main/window-hardening";
 import { settingsStore, snapshotStore } from "@main/store";
 import { destroyTrayRenderer, renderTrayImage } from "@main/tray-icon-renderer";
@@ -115,7 +126,12 @@ const cancelQuit = (): void => {
 // Wired before anything can read a credential: the hand-entered token has to be
 // visible to the provider from the very first sweep, not only after the first
 // settings save.
-setManualClaudeTokenProvider(() => settingsStore.get().claudeManualOAuthToken);
+setManualClaudeTokenProvider(() => {
+  const settings = settingsStore.get();
+  return settings.claudeManualOAuthToken
+    ? { token: settings.claudeManualOAuthToken, expiresAt: settings.claudeManualOAuthTokenExpiresAt }
+    : null;
+});
 
 // Explicit icon path: menubar's own default-icon fallback resolves via a
 // __dirname-relative lookup that breaks once menubar is bundled into
@@ -348,6 +364,82 @@ const stripMaskedSecrets = (patch: Partial<AppSettings>): Partial<AppSettings> =
   return result;
 };
 
+// Persists a Claude Code OAuth token the user submitted from the manual
+// paste box — whether they typed it themselves or it arrived pre-filled from
+// the claude-login PTY auto-detecting it, this is the one place a token
+// actually gets written down, so it goes through real API validation before
+// anything is treated as settled.
+const persistClaudeToken = async (token: string, savedMessage: string): Promise<ManualTokenResult> => {
+  const lang = settingsStore.get().language;
+  // A quota scrape can fail right after issuance (e.g. no usage window
+  // recorded yet) — that must not throw the token away and send the user
+  // back to log in again; store it regardless.
+  let scrapeResult: ScrapeResult | null = null;
+  try {
+    scrapeResult = await validateClaudeOAuthToken(token);
+  } catch (error) {
+    console.error("[Usage-Pulse] setup-token quota scrape failed, storing token anyway", redact(error));
+  }
+
+  let keychainWriteFailed = false;
+  try {
+    await writeClaudeSetupTokenToKeychain(token);
+  } catch (error) {
+    console.error("[Usage-Pulse] Keychain write for setup-token failed", redact(error));
+    keychainWriteFailed = true;
+  }
+  settingsStore.update({ claudeManualOAuthToken: token, claudeManualOAuthTokenExpiresAt: computeSetupTokenExpiryIso() });
+  // Whether the card actually ended up with numbers to show. scrapeResult
+  // is guaranteed non-empty when present (validateClaudeOAuthToken throws
+  // on an empty read), so only the retry branch below can leave this false.
+  let hasUsageWindows = Boolean(scrapeResult);
+  if (scrapeResult) {
+    try {
+      monitor.applyScrapeResult("claude", scrapeResult);
+    } catch (error) {
+      console.error("[Usage-Pulse] apply usage after setup-token failed", redact(error));
+    }
+  } else {
+    // The validation scrape above failed, so the card is still showing
+    // whatever it showed before this login (often the very "expired"
+    // reading that sent the user through this flow). credentialMonitor's
+    // own re-probe below re-reads the credential, not the quota — and its
+    // self-heal path funnels through the *scheduled* rate floor, which a
+    // login that just happened moments after a failed scheduled poll would
+    // still be inside. Retry the quota read directly with the "manual"
+    // trigger, the same way the keychainUsable branch below does, so a
+    // fresh login is never left showing stale numbers.
+    try {
+      const retryResult = await monitor.runServiceCheck("claude", "manual");
+      hasUsageWindows = retryResult.snapshot.claude.windows.length > 0;
+    } catch (error) {
+      console.error("[Usage-Pulse] post-login quota retry failed", redact(error));
+    }
+  }
+  await credentialMonitor.check("claude");
+  // The token is genuinely saved either way (settings-store fallback, at
+  // least) — this is a soft warning, not a failure, so it still reports
+  // ok:true. Two API calls this close together (the validate above, then
+  // this retry) commonly hit the usage endpoint's rate limit, so leaving
+  // the card blank without saying why reads as a broken login when it is
+  // really just "click Re-detect again shortly". A failed Keychain write
+  // takes priority over that message: not knowing the Keychain copy is
+  // missing is a bigger problem than not knowing the usage figure yet.
+  return {
+    ok: true,
+    message: keychainWriteFailed
+      ? t(lang, "setupToken.keychainWriteFailed")
+      : hasUsageWindows
+        ? savedMessage
+        : t(lang, "setupToken.savedNoUsageYet"),
+    keychainWriteFailed,
+    // Don't offer the "Update UI" confirmation button over a token that
+    // saved but came back with no usage windows yet — there would be
+    // nothing for that click to actually show.
+    readyToApply: hasUsageWindows
+  };
+};
+
 const setupIpcHandlers = (): void => {
   ipcMain.handle("settings:get", () => maskSecrets(settingsStore.get()));
   ipcMain.handle("settings:save", (_event, patch: unknown) => {
@@ -383,6 +475,11 @@ const setupIpcHandlers = (): void => {
     );
   });
 
+  // Lets Settings send the same "final status" bubbles quit sends, on demand —
+  // from the already-cached snapshot, so the user can check the real Cursor/
+  // Claude numbers on LINE right now instead of waiting to quit the app.
+  ipcMain.handle("line:send-status", (): Promise<boolean> => sendQuitStatusBroadcast());
+
   // Lets Settings warn when a stored token would sit on disk unencrypted.
   ipcMain.handle("app:secret-storage-available", (): boolean => isSecretStorageAvailable());
 
@@ -394,126 +491,98 @@ const setupIpcHandlers = (): void => {
     return target ? credentialMonitor.check(target) : Promise.resolve(null);
   });
 
-  // Claude "re-detect": Keychain first. Only if that item is missing do we
-  // open a terminal for `claude setup-token`, recover the printed token, and
-  // write it back to the same Keychain service (plus the encrypted app store).
+  // Claude "get credentials": local Keychain + recorded-expiry check first
+  // (no API call). Only if that comes up empty/expired, or the one quota
+  // check below it comes back empty, do we open the node-pty login window.
   ipcMain.handle("credential:run-setup-token", async (): Promise<ManualTokenResult> => {
     const lang = settingsStore.get().language;
     const setupTokenMessage = (code: SetupTokenError["code"]): string => {
       const keys = {
         notFound: "setupToken.claudeNotFound",
-        timeout: "setupToken.timeout",
-        inProgress: "setupToken.inProgress",
-        noToken: "setupToken.noToken",
         launchFailed: "setupToken.launchFailed"
       } as const;
       return t(lang, keys[code]);
     };
 
-    const persistClaudeToken = async (token: string, savedMessage: string): Promise<ManualTokenResult> => {
-      // Unlike a hand-pasted token, this one just came straight from the
-      // official CLI after a real login, so there is no typo risk to guard
-      // against. A quota scrape can still fail right after issuance (e.g. no
-      // usage window recorded yet) — that must not throw the token away and
-      // send the user back to log in again; store it regardless.
-      let scrapeResult: ScrapeResult | null = null;
-      try {
-        scrapeResult = await validateClaudeOAuthToken(token);
-      } catch (error) {
-        console.error("[Usage-Pulse] setup-token quota scrape failed, storing token anyway", redact(error));
-      }
-
-      try {
-        await writeClaudeSetupTokenToKeychain(token);
-      } catch (error) {
-        console.error("[Usage-Pulse] Keychain write for setup-token failed", redact(error));
-      }
-      settingsStore.update({ claudeManualOAuthToken: token });
-      if (scrapeResult) {
-        try {
-          monitor.applyScrapeResult("claude", scrapeResult);
-        } catch (error) {
-          console.error("[Usage-Pulse] apply usage after setup-token failed", redact(error));
-        }
-      } else {
-        // The validation scrape above failed, so the card is still showing
-        // whatever it showed before this login (often the very "expired"
-        // reading that sent the user through this flow). credentialMonitor's
-        // own re-probe below re-reads the credential, not the quota — and its
-        // self-heal path funnels through the *scheduled* rate floor, which a
-        // login that just happened moments after a failed scheduled poll would
-        // still be inside. Retry the quota read directly with the "manual"
-        // trigger, the same way the keychainUsable branch below does, so a
-        // fresh login is never left showing stale numbers.
-        try {
-          await monitor.runServiceCheck("claude", "manual");
-        } catch (error) {
-          console.error("[Usage-Pulse] post-login quota retry failed", redact(error));
-        }
-      }
-      await credentialMonitor.check("claude");
-      return { ok: true, message: savedMessage };
-    };
-
     const fromKeychain = await peekClaudeKeychainCredential();
-    const keychainExpiryMs = fromKeychain?.expiresAt ? Date.parse(fromKeychain.expiresAt) : Number.NaN;
+    const recordedExpiryIso = settingsStore.get().claudeManualOAuthTokenExpiresAt;
+    const knownExpiryMs = fromKeychain?.expiresAt
+      ? Date.parse(fromKeychain.expiresAt)
+      : recordedExpiryIso
+        ? Date.parse(recordedExpiryIso)
+        : Number.NaN;
     const keychainUsable =
-      Boolean(fromKeychain) && (Number.isNaN(keychainExpiryMs) || keychainExpiryMs > Date.now());
+      Boolean(fromKeychain) && (Number.isNaN(knownExpiryMs) || knownExpiryMs > Date.now());
+
     if (keychainUsable) {
       // A captured token from an earlier run of this flow outranks the Keychain
       // in readClaudeCredential's priority (it's the fallback for when a
       // Keychain write couldn't be confirmed) — so a stale one left over from
       // before would silently shadow the Keychain entry just confirmed above,
-      // and the quota fetch below would use the wrong credential. Since the
+      // and the quota check below would use the wrong credential. Since the
       // Keychain checked out here, it's authoritative; drop the fallback.
-      settingsStore.update({ claudeManualOAuthToken: "" });
-      // scrapeQuota() never rejects — a failed fetch resolves as an
-      // isError snapshot — so success is read off the result, not a catch.
+      settingsStore.update({ claudeManualOAuthToken: "", claudeManualOAuthTokenExpiresAt: null });
+      // The one and only API call this handler ever makes, and only because
+      // the local check above already passed — no retry, no polling.
       const checkResult = await monitor.runServiceCheck("claude", "manual").catch((error) => {
-        console.error("[Usage-Pulse] refresh after Keychain re-detect failed", redact(error));
+        console.error("[Usage-Pulse] single re-detect verification failed", redact(error));
         return null;
       });
       await credentialMonitor.check("claude");
-      if (checkResult && checkResult.snapshot.claude.status !== "error") {
-        return { ok: true, message: t(lang, "setupToken.keychainFound") };
+      if (checkResult && checkResult.snapshot.claude.windows.length > 0) {
+        return { ok: true, message: t(lang, "setupToken.keychainFound"), readyToApply: true };
       }
-      // The Keychain entry looked usable (often because it carries no expiry
-      // we could read at all) but the API just rejected it anyway. Don't dead-end
-      // here — fall through to a fresh `claude setup-token` login so a terminal
-      // and the login URL actually open instead of silently retrying the same
-      // dead token.
-      console.error(
-        "[Usage-Pulse] Keychain credential rejected by API on re-detect, falling back to setup-token login"
-      );
+      // Keychain looked usable but the single check came back empty/failed —
+      // don't dead-end here, fall through to a fresh login below.
+      console.error("[Usage-Pulse] Keychain credential produced no usage data on the single check, opening a fresh login");
     }
 
-    try {
-      const token = await runClaudeSetupToken({
-        userDataDir: app.getPath("userData"),
-        onAuthUrl: (url) => {
-          shell.openExternal(url).catch((error) => {
-            console.error("[Usage-Pulse] failed to open the setup-token login URL", redact(error));
-          });
+    openClaudeLoginWindow({
+      onAuthUrl: (url) => {
+        shell.openExternal(url).catch((error) => {
+          console.error("[Usage-Pulse] failed to open the setup-token login URL", redact(error));
+        });
+      },
+      onTokenCaptured: (token) => {
+        if (trayApp.window && !trayApp.window.isDestroyed()) {
+          trayApp.window.webContents.send("credential:manual-token-captured", token);
         }
-      });
-      return persistClaudeToken(token, t(lang, "setupToken.saved"));
-    } catch (error) {
-      if (error instanceof SetupTokenError) {
-        return { ok: false, message: setupTokenMessage(error.code) };
+      },
+      onSpawnError: (error) => {
+        if (trayApp.window && !trayApp.window.isDestroyed()) {
+          trayApp.window.webContents.send("credential:setup-token-spawn-error", setupTokenMessage(error.code));
+        }
       }
-      const detail = error instanceof Error ? error.message : t(lang, "app.authRefreshFailed");
-      return { ok: false, message: detail };
-    }
+    });
+    return { ok: true, message: t(lang, "setupToken.waiting"), needsManualFallback: true };
   });
 
-  // Clears the token the re-detect flow captured, so a stuck/bad one can be
-  // dropped without waiting for it to expire on its own.
-  ipcMain.handle("credential:clear-manual", async (_event, service: unknown) => {
-    if (asServiceType(service) !== "claude") {
-      return;
+  // Submits whatever is sitting in the paste box — typed by hand, or
+  // pre-filled by the claude-login PTY auto-detecting the printed token.
+  // Either way it goes through the exact same format check, API validation,
+  // and Keychain write; the box's origin doesn't earn a token any less scrutiny.
+  ipcMain.handle("credential:submit-manual-token", async (_event, tokenRaw: unknown): Promise<ManualTokenResult> => {
+    const lang = settingsStore.get().language;
+    const token = asClaudeManualToken(tokenRaw);
+    if (!token) {
+      return { ok: false, message: t(lang, "manualToken.invalidFormat") };
     }
-    settingsStore.update({ claudeManualOAuthToken: "" });
-    await credentialMonitor.check("claude");
+    return persistClaudeToken(token, t(lang, "manualToken.saved"));
+  });
+
+  // Passthrough for the claude-login window's embedded terminal: keystrokes
+  // in, raw PTY output out (the "claude-login:data" push, sent directly from
+  // claude-login-window.ts as they arrive).
+  ipcMain.on("claude-login:input", (_event, data: unknown) => {
+    if (typeof data === "string") {
+      writeClaudeLoginPtyInput(data);
+    }
+  });
+  ipcMain.on("claude-login:resize", (_event, size: unknown) => {
+    const parsed = asPtySize(size);
+    if (parsed) {
+      resizeClaudeLoginPty(parsed.cols, parsed.rows);
+    }
   });
 
   ipcMain.handle("monitor:get-latest", () => monitor.getLatestSnapshot());
@@ -582,10 +651,6 @@ const setupIpcHandlers = (): void => {
 };
 
 app.whenReady().then(async () => {
-  // A previous run that died mid-login can leave the setup-token capture file
-  // on disk with a live token in it.
-  await clearStaleSetupTokenCapture(app.getPath("userData")).catch(() => undefined);
-
   const settings = settingsStore.get();
   await applyIdeLaunchHelper(settings.launchWithIde).catch((error) => {
     console.error("[Usage-Pulse] failed to apply IDE launch helper", redact(error));
@@ -606,6 +671,40 @@ app.whenReady().then(async () => {
 
   monitor.on("error", (error: Error) => {
     console.error("[Usage-Pulse]", redact(error));
+  });
+
+  // A 401 came back while a fallback token is stored (see monitor-engine's
+  // applyScrapeResult). Whether that token is to blame needs a Keychain peek,
+  // so the decision lives here rather than in the synchronous scrape path.
+  monitor.on("claude-fallback-suspect", (usedSource?: CredentialSource) => {
+    void (async () => {
+      try {
+        const storedFallback = settingsStore.get().claudeManualOAuthToken;
+        const beneath = await peekClaudeKeychainCredential();
+        const decision = decideClaudeFallbackClear(usedSource, storedFallback, beneath?.token ?? null);
+
+        if (decision !== "clear") {
+          // Keeping it is the point: on "keepNotOurToken" the rejected request
+          // used a different source entirely, and on "keepNoFallbackBeneath"
+          // dropping it would either change nothing or leave no credential at
+          // all (Windows and Linux have no Keychain to fall back to).
+          console.error(`[Usage-Pulse] keeping Claude fallback token after 401 (${decision})`);
+          return;
+        }
+
+        settingsStore.update({ claudeManualOAuthToken: "", claudeManualOAuthTokenExpiresAt: null });
+        await credentialMonitor.check("claude");
+        // The credential that answers has genuinely changed, so the snapshot
+        // still on screen — "credential is no longer valid" — is now wrong.
+        // "manual" bypasses the Claude rate floor (shouldThrottleClaude), which
+        // is what makes this correction immediate rather than one poll late.
+        // It cannot loop: the fallback is empty now, so a repeat 401 re-enters
+        // applyScrapeResult with nothing left to suspect.
+        await monitor.runServiceCheck("claude", "manual");
+      } catch (error) {
+        console.error("[Usage-Pulse] Claude fallback re-check failed", redact(error));
+      }
+    })();
   });
 
   // Lets the periodic sweep reach an already-open window; without it the
@@ -688,13 +787,28 @@ app.whenReady().then(async () => {
   });
 });
 
-app.on("before-quit", () => {
-  clearTrayCountdownTick();
-  idePresenceMonitor.stop();
-  monitor.stop();
-  credentialMonitor.stop();
-  destroyAlarmWindow();
-  destroyTrayRenderer();
+let quitStatusSent = false;
+
+app.on("before-quit", (event) => {
+  if (quitStatusSent) {
+    // Second pass, triggered by our own app.quit() below — let it proceed.
+    return;
+  }
+  quitStatusSent = true;
+  event.preventDefault();
+
+  void sendQuitStatusBroadcast()
+    .catch((error) => console.warn("[Usage-Pulse] quit status broadcast threw", redact(error)))
+    .finally(() => {
+      clearTrayCountdownTick();
+      idePresenceMonitor.stop();
+      monitor.stop();
+      credentialMonitor.stop();
+      destroyAlarmWindow();
+      destroyClaudeLoginWindow();
+      destroyTrayRenderer();
+      app.quit();
+    });
 });
 
 app.on("window-all-closed", () => {});

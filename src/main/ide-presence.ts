@@ -3,7 +3,7 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 
-export const IDE_POLL_INTERVAL_MS = 12_000;
+export const IDE_POLL_INTERVAL_MS = 1_800_000;
 export const IDLE_POLLS_BEFORE_PROMPT = 2;
 
 const CURSOR_NAMES: Record<"darwin" | "win32", readonly string[]> = {

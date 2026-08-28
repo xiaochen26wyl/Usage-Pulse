@@ -1,6 +1,7 @@
 import type { AppSettings, ServiceType, WaterCupSizeMl } from "@shared/types";
 import { normalizeWaterCupSize } from "@shared/water";
 import { DEFAULT_SETTINGS } from "@main/config";
+import { MIN_TOKEN_LENGTH, SETUP_TOKEN_PREFIX } from "@main/claude-setup-token";
 
 /**
  * Everything arriving over IPC is renderer input, and renderer input is not
@@ -40,6 +41,48 @@ export const asClipboardText = (value: unknown): string | null => {
   }
   // No control characters: whatever lands on the clipboard is pasted into a shell.
   return CONTROL_CHARACTERS.test(value) ? null : value;
+};
+
+// A token the user hand-pastes into the manual fallback field, after running
+// `claude setup-token` themselves. Same shape check the captured-output
+// parser uses (SETUP_TOKEN_PREFIX/MIN_TOKEN_LENGTH), so an obviously-wrong
+// paste (empty, truncated, the wrong kind of key) is rejected before it ever
+// reaches the API or the Keychain, rather than surfacing as a confusing
+// downstream failure.
+export const asClaudeManualToken = (value: unknown): string | null => {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  if (trimmed.length < MIN_TOKEN_LENGTH || trimmed.length > MAX_TOKEN_LENGTH) {
+    return null;
+  }
+  if (!trimmed.startsWith(SETUP_TOKEN_PREFIX)) {
+    return null;
+  }
+  return CONTROL_CHARACTERS.test(trimmed) ? null : trimmed;
+};
+
+// A terminal resize the claude-login window reports on its own container
+// size — bounded so a compromised/misbehaving renderer can't ask the PTY to
+// allocate an absurd screen buffer.
+const MAX_PTY_DIMENSION = 500;
+
+export const asPtySize = (value: unknown): { cols: number; rows: number } | null => {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const { cols, rows } = value as { cols?: unknown; rows?: unknown };
+  if (typeof cols !== "number" || typeof rows !== "number") {
+    return null;
+  }
+  if (!Number.isInteger(cols) || !Number.isInteger(rows)) {
+    return null;
+  }
+  if (cols < 1 || cols > MAX_PTY_DIMENSION || rows < 1 || rows > MAX_PTY_DIMENSION) {
+    return null;
+  }
+  return { cols, rows };
 };
 
 /**

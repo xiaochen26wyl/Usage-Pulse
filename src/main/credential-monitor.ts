@@ -19,6 +19,20 @@ import { SERVICE_LABELS } from "./config";
 
 const SERVICES: ServiceType[] = ["cursor", "claude"];
 
+const enabledKeyMap: Record<ServiceType, "enableCursorMonitoring" | "enableClaudeMonitoring"> = {
+  cursor: "enableCursorMonitoring",
+  claude: "enableClaudeMonitoring"
+};
+
+// The proactive sweep (checkAll/checkIfDue) must never probe a service the
+// user opted out of; a manually-triggered check() (re-detect button, setup-
+// token flow) stays ungated since the UI that reaches it is itself hidden
+// when the service is disabled.
+const enabledServices = (): ServiceType[] => {
+  const settings = settingsStore.get();
+  return SERVICES.filter((service) => settings[enabledKeyMap[service]]);
+};
+
 const nowIso = () => new Date().toISOString();
 
 const readers: Record<ServiceType, () => Promise<RawCredential>> = {
@@ -84,7 +98,7 @@ export class CredentialMonitor extends EventEmitter {
   }
 
   async checkAll(): Promise<AuthStatus> {
-    await Promise.all(SERVICES.map((service) => this.check(service)));
+    await Promise.all(enabledServices().map((service) => this.check(service)));
     const status = this.getStatus();
     this.emit("auth", status);
     return status;
@@ -98,7 +112,7 @@ export class CredentialMonitor extends EventEmitter {
    * credential state from the previous day.
    */
   async checkIfDue(): Promise<void> {
-    const due = SERVICES.some((service) =>
+    const due = enabledServices().some((service) =>
       isCredentialCheckDue(credentialStore.get(service)?.checkedAt ?? null, Date.now())
     );
     if (due) {
