@@ -25,6 +25,7 @@ import {
   codexTrayValueText,
   cursorCountdownTargetAt,
   cursorTrayValueText,
+  localizeTrayUnknownValue,
   snapshotValueText
 } from "@shared/tray-display";
 import { alarmService } from "@main/alarm-service";
@@ -40,7 +41,7 @@ import {
   writeClaudeLoginPtyInput
 } from "@main/claude-login-window";
 import { decideSetupTokenAction } from "@main/claude-setup-token-decision";
-import { ClaudeLoginExpiredError, validateClaudeOAuthToken } from "@main/collectors/claude-code";
+import { ClaudeLoginExpiredError, ClaudeUsageScopeError, validateClaudeOAuthToken } from "@main/collectors/claude-code";
 import { credentialMonitor } from "@main/credential-monitor";
 import {
   peekClaudeKeychainCredential,
@@ -194,12 +195,17 @@ const trayValueFor = (service: ServiceType, snapshot: CombinedSnapshot, nowMs: n
 
 const trayTitleLine2 = (snapshot: CombinedSnapshot): string => {
   const nowMs = Date.now();
+  const lang = settingsStore.get().language;
   return enabledTrayServices()
     .map((service) => trayValueFor(service, snapshot, nowMs))
+    .map((valueText) => localizeTrayUnknownValue(valueText, lang))
     .join(" ");
 };
 
-const placeholderTrayLine2 = (): string => enabledTrayServices().map(() => "?").join(" ");
+const placeholderTrayLine2 = (): string =>
+  enabledTrayServices()
+    .map(() => localizeTrayUnknownValue("?", settingsStore.get().language))
+    .join(" ");
 
 // The Cursor and/or Claude slot counts down once its quota window is spent,
 // so re-render the tray from the cached snapshot on a timer. Purely local: it
@@ -253,13 +259,13 @@ const updateTrayText = async (snapshot: CombinedSnapshot): Promise<void> => {
   const settings = settingsStore.get();
   const toolTipLines = ["Usage-Pulse"];
   if (settings.enableCursorMonitoring) {
-    toolTipLines.push(`Cursor: ${snapshotValueText(snapshot.cursor)}`);
+    toolTipLines.push(`Cursor: ${localizeTrayUnknownValue(snapshotValueText(snapshot.cursor), lang)}`);
   }
   if (settings.enableClaudeMonitoring) {
-    toolTipLines.push(`Claude Code: ${snapshotValueText(snapshot.claude)}`);
+    toolTipLines.push(`Claude Code: ${localizeTrayUnknownValue(snapshotValueText(snapshot.claude), lang)}`);
   }
   if (settings.enableCodexMonitoring) {
-    toolTipLines.push(`Codex: ${snapshotValueText(snapshot.codex)}`);
+    toolTipLines.push(`Codex: ${localizeTrayUnknownValue(snapshotValueText(snapshot.codex), lang)}`);
   }
   if (settings.enableClaudeMonitoring && snapshot.claude.resetsAt) {
     const date = new Date(snapshot.claude.resetsAt);
@@ -433,7 +439,9 @@ const persistClaudeToken = async (token: string, savedMessage: string): Promise<
     if (error instanceof ClaudeLoginExpiredError) {
       return { ok: false, message: error.message || t(lang, "error.claudeLoginExpired") };
     }
-    console.error("[Usage-Pulse] setup-token quota scrape failed, storing token anyway", redact(error));
+    if (!(error instanceof ClaudeUsageScopeError)) {
+      console.error("[Usage-Pulse] setup-token quota scrape failed, storing token anyway", redact(error));
+    }
   }
 
   try {

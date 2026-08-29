@@ -24,7 +24,22 @@ const initSqlJs = require("sql.js") as (config?: {
 }) => Promise<SqlJsStatic>;
 
 const CURSOR_ACCESS_TOKEN_KEY = "cursorAuth/accessToken";
-const CLAUDE_KEYCHAIN_SERVICE = "Claude Code-credentials";
+const CLAUDE_CLI_KEYCHAIN_SERVICE = "Claude Code-credentials";
+// Keep the setup-token in a service owned by Usage-Pulse. A separate service is
+// important in addition to a separate account: Claude CLI or another client
+// searching by service alone must never select Usage-Pulse's credential.
+export const USAGE_PULSE_KEYCHAIN_SERVICE = "Usage-Pulse-Claude-setup-token";
+export const USAGE_PULSE_KEYCHAIN_ACCOUNT = "Usage-Pulse";
+
+export const buildClaudeSetupTokenKeychainArgs = (): string[] => [
+  "add-generic-password",
+  "-s",
+  USAGE_PULSE_KEYCHAIN_SERVICE,
+  "-a",
+  USAGE_PULSE_KEYCHAIN_ACCOUNT,
+  "-U",
+  "-w"
+];
 // sql.js loads the whole db file into the JS heap; beyond this size that becomes
 // slow/memory-heavy enough to effectively hang, so fall back to the sqlite3 CLI instead.
 const CURSOR_STATE_DB_LARGE_FILE_THRESHOLD_BYTES = 150 * 1024 * 1024;
@@ -247,7 +262,10 @@ const uniqueStrings = (values: Array<string | null | undefined>): string[] => {
   return result;
 };
 
-const readClaudeKeychainCredentialForAccount = async (account?: string): Promise<RawCredential | null> => {
+const readKeychainCredentialForService = async (
+  service: string,
+  account?: string
+): Promise<RawCredential | null> => {
   if (process.platform !== "darwin") {
     return null;
   }
@@ -256,7 +274,7 @@ const readClaudeKeychainCredentialForAccount = async (account?: string): Promise
     const args = [
       "find-generic-password",
       "-s",
-      CLAUDE_KEYCHAIN_SERVICE
+      service
     ];
     if (account) {
       args.push("-a", account);
@@ -270,12 +288,12 @@ const readClaudeKeychainCredentialForAccount = async (account?: string): Promise
   }
 };
 
-const readExistingKeychainAccount = async (): Promise<string | null> => {
+const readExistingKeychainAccount = async (service: string): Promise<string | null> => {
   try {
     const { stdout } = await execFileAsync("security", [
       "find-generic-password",
       "-s",
-      CLAUDE_KEYCHAIN_SERVICE
+      service
     ]);
     const match = stdout.match(/"acct"<blob>="([^"]+)"/);
     return match?.[1] ?? null;
@@ -289,14 +307,25 @@ export const peekClaudeKeychainCredential = async (): Promise<RawCredential | nu
     return null;
   }
 
-  const direct = await readClaudeKeychainCredentialForAccount();
-  if (direct) {
-    return direct;
+  // An explicitly saved setup-token is the app's intentional override. Read
+  // it first and only then inspect the Claude CLI's own item, which remains
+  // read-only throughout this module.
+  const usagePulseCredential = await readKeychainCredentialForService(
+    USAGE_PULSE_KEYCHAIN_SERVICE,
+    USAGE_PULSE_KEYCHAIN_ACCOUNT
+  );
+  if (usagePulseCredential) {
+    return usagePulseCredential;
   }
 
-  const existingAccount = await readExistingKeychainAccount();
-  for (const account of uniqueStrings([existingAccount, userInfo().username, "Usage-Pulse"])) {
-    const credential = await readClaudeKeychainCredentialForAccount(account);
+  const directClaudeCliCredential = await readKeychainCredentialForService(CLAUDE_CLI_KEYCHAIN_SERVICE);
+  if (directClaudeCliCredential) {
+    return directClaudeCliCredential;
+  }
+
+  const existingAccount = await readExistingKeychainAccount(CLAUDE_CLI_KEYCHAIN_SERVICE);
+  for (const account of uniqueStrings([existingAccount, userInfo().username])) {
+    const credential = await readKeychainCredentialForService(CLAUDE_CLI_KEYCHAIN_SERVICE, account);
     if (credential) {
       return credential;
     }
@@ -388,9 +417,32 @@ export const addGenericPasswordViaStdin = (
 };
 
 /**
- * Exception write: persist a long-lived setup-token into the same macOS
- * Keychain item the official CLI uses (`Claude Code-credentials`), so the next
- * re-detect and ordinary `readClaudeCredential` can find it.
+ * Persist the password as `security add-generic-password ... -w <secret>`.
+ * Prompting via stdin (`-w` with no value) exits 0 in Electron without storing
+ * the secret. Never rethrow the raw execFile error — Node copies argv onto
+ * `error.message`.
+ */
+export const addGenericPasswordWithSecret = async (
+  args: string[],
+  secret: string,
+  options: { timeoutMs?: number } = {}
+): Promise<void> => {
+  const timeoutMs = options.timeoutMs ?? KEYCHAIN_WRITE_TIMEOUT_MS;
+  try {
+    await execFileAsync("security", [...args, secret], { timeout: timeoutMs });
+  } catch (error) {
+    const stderr =
+      error && typeof error === "object" && "stderr" in error
+        ? String((error as { stderr: unknown }).stderr).trim().slice(0, 200)
+        : "";
+    throw new Error(stderr ? `Keychain write failed: ${stderr}` : "Keychain write failed");
+  }
+};
+
+/**
+ * Exception write: persist a long-lived setup-token into a Usage-Pulse-owned
+ * macOS Keychain item, so the next re-detect and ordinary `readClaudeCredential`
+ * can find it without modifying the official CLI's item.
  *
  * This is the only Keychain write Usage-Pulse performs. It does not write
  * `state.vscdb`, `~/.claude/.credentials.json`, or anything Cursor-related.
@@ -403,16 +455,15 @@ export const writeClaudeSetupTokenToKeychain = async (token: string): Promise<vo
   }
 
   const blob = JSON.stringify({ claudeAiOauth: { accessToken: token } });
-  const account = (await readExistingKeychainAccount()) || userInfo().username || "Usage-Pulse";
-  await addGenericPasswordViaStdin(
-    ["add-generic-password", "-s", CLAUDE_KEYCHAIN_SERVICE, "-a", account, "-U", "-w"],
-    blob
-  );
+  await addGenericPasswordWithSecret(buildClaudeSetupTokenKeychainArgs(), blob);
 
   // Do not report success based only on `security`'s exit code. Read the exact
   // account we wrote back so duplicate service entries cannot make verification
   // inspect an older Keychain item.
-  const saved = await readClaudeKeychainCredentialForAccount(account);
+  const saved = await readKeychainCredentialForService(
+    USAGE_PULSE_KEYCHAIN_SERVICE,
+    USAGE_PULSE_KEYCHAIN_ACCOUNT
+  );
   if (!saved || saved.token !== token) {
     throw new Error("Keychain write verification failed");
   }

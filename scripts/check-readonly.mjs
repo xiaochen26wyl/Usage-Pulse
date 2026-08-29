@@ -41,9 +41,9 @@ const writeHints = [
 ];
 
 // The single deliberate exception, recorded rather than hidden: writing a
-// `claude setup-token` value back into the same Keychain item the official CLI
-// uses, so the next re-detect can find it. Anything NOT listed here that trips a
-// write hint is a genuine violation.
+// `claude setup-token` into a Usage-Pulse-owned Keychain item so the next
+// re-detect can find it. Anything NOT listed here that trips a write hint is
+// a genuine violation.
 //
 // Each entry names the file and the exact write it is allowed to perform. Adding
 // to this list is a deliberate act that shows up in review.

@@ -1,7 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import type { ChildProcess } from "node:child_process";
-import { addGenericPasswordViaStdin } from "../src/main/credential-provider";
+import {
+  addGenericPasswordViaStdin,
+  buildClaudeSetupTokenKeychainArgs,
+  USAGE_PULSE_KEYCHAIN_ACCOUNT,
+  USAGE_PULSE_KEYCHAIN_SERVICE
+} from "../src/main/credential-provider";
 
 type FakeChild = Pick<ChildProcess, "stdin" | "stderr" | "on" | "kill">;
 
@@ -30,6 +35,20 @@ test("addGenericPasswordViaStdin writes the secret twice then resolves on exit 0
     timeoutMs: 1_000
   });
   assert.equal(written, "blob\nblob\n");
+});
+
+test("Claude setup-token writes to a Usage-Pulse-owned Keychain tuple", () => {
+  assert.deepEqual(buildClaudeSetupTokenKeychainArgs(), [
+    "add-generic-password",
+    "-s",
+    USAGE_PULSE_KEYCHAIN_SERVICE,
+    "-a",
+    USAGE_PULSE_KEYCHAIN_ACCOUNT,
+    "-U",
+    "-w"
+  ]);
+  assert.notEqual(USAGE_PULSE_KEYCHAIN_SERVICE, "Claude Code-credentials");
+  assert.equal(buildClaudeSetupTokenKeychainArgs().at(-1), "-w");
 });
 
 test("addGenericPasswordViaStdin times out and kills a spawn that never closes", async () => {

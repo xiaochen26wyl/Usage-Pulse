@@ -1,6 +1,15 @@
 import type { AppSettings, CombinedSnapshot, ServiceType } from "./types";
 import { buildQuitStatusFlex, type LineFlexMessage } from "./line-templates";
-import { claudeTrayValueText, claudeWeeklyTrayValueText, codexTrayValueText, codexWeeklyTrayValueText, cursorTrayValueText, findClaudeWeeklyWindow, findCodexWeeklyWindow } from "./tray-display";
+import {
+  UNKNOWN_TRAY_VALUE,
+  claudeTrayValueText,
+  claudeWeeklyTrayValueText,
+  codexTrayValueText,
+  codexWeeklyTrayValueText,
+  cursorTrayValueText,
+  findClaudeWeeklyWindow,
+  findCodexWeeklyWindow
+} from "./tray-display";
 import { t } from "./i18n";
 
 export interface QuitStatusOptions {
@@ -18,8 +27,8 @@ export interface QuitStatusOptions {
  * snapshot only (never fetches). Reuses the same tray display helpers the
  * menu bar itself uses, so the numbers (and the countdown fallback once a
  * window is spent) match exactly what the user already saw. A window whose
- * display value is "?" (monitoring off, or never successfully polled) is
- * skipped rather than sending noise. No dedupe/cooldown: every quit is its
+ * internal display value is unknown (monitoring off, or never successfully
+ * polled) is skipped rather than sending noise. No dedupe/cooldown: every quit is its
  * own occurrence, unlike the recurring low-quota alerts elsewhere.
  */
 export const buildQuitStatusMessages = (options: QuitStatusOptions): LineFlexMessage[] => {
@@ -33,7 +42,7 @@ export const buildQuitStatusMessages = (options: QuitStatusOptions): LineFlexMes
 
   if (settings.enableCursorMonitoring) {
     const valueText = cursorTrayValueText(snapshot.cursor, nowMs);
-    if (valueText !== "?") {
+    if (valueText !== UNKNOWN_TRAY_VALUE) {
       messages.push(
         buildQuitStatusFlex({
           service: "cursor",
@@ -49,7 +58,7 @@ export const buildQuitStatusMessages = (options: QuitStatusOptions): LineFlexMes
   }
 
   if (settings.enableClaudeMonitoring) {
-    // Gated on the window actually existing (not on the tray helper's "?"
+    // Gated on the window actually existing (not on the tray helper's unknown
     // output): both claudeTrayValueText and claudeWeeklyTrayValueText fall
     // back to the same generic top-level snapshotValueText when their own
     // window is missing, so checking "?" here could let one window's number

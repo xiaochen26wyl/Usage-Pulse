@@ -86,6 +86,13 @@ export class ClaudeLoginExpiredError extends Error {
   }
 }
 
+export class ClaudeUsageScopeError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ClaudeUsageScopeError";
+  }
+}
+
 const fetchUsagePayload = async (
   token: string,
   lang: Language,
@@ -111,16 +118,17 @@ const fetchUsagePayload = async (
         .replace(/sk-ant-[A-Za-z0-9_-]+/g, "sk-ant-[redacted]");
       fetch("http://127.0.0.1:7281/ingest/bbb5ca65-8181-454e-a9ef-2fe1fab4b231", {
         method: "POST",
-        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "5b3081" },
+        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "e7da19" },
         body: JSON.stringify({
-          sessionId: "5b3081",
-          hypothesisId: "H1",
+          sessionId: "e7da19",
+          runId: "pre-fix",
+          hypothesisId: "H1-H5",
           location: "claude-code.ts:fetchUsagePayload",
           message: "usage API request failed",
           data: {
             isAxios: axiosErr,
-            status: axiosErr ? error.response?.status ?? null : null,
-            code: axiosErr ? error.code ?? null : null,
+            status: axiosErr ? (error.response?.status ?? null) : null,
+            code: axiosErr ? (error.code ?? null) : null,
             dataPreview,
             tokenLen: token.length,
             tokenPrefixOk: token.startsWith("sk-ant-oat01-"),
@@ -137,6 +145,9 @@ const fetchUsagePayload = async (
       }
       if (error.response?.status === 429) {
         throw new Error(t(lang, "error.claudeRateLimited"));
+      }
+      if (error.response?.status === 403) {
+        throw new ClaudeUsageScopeError(t(lang, "error.claudeApiFailed"));
       }
     }
     throw new Error(t(lang, "error.claudeApiFailed"));
@@ -219,5 +230,20 @@ export const collectClaudeCodeQuota = async (): Promise<ScrapeResult> => {
   // Read the whole credential, not just the token, so a 401 below can still
   // tell the renderer which stored credential needs replacing.
   const { token, source } = await readClaudeCredential();
+  // #region agent log
+  fetch("http://127.0.0.1:7281/ingest/bbb5ca65-8181-454e-a9ef-2fe1fab4b231", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "e7da19" },
+    body: JSON.stringify({
+      sessionId: "e7da19",
+      runId: "pre-fix",
+      hypothesisId: "H4",
+      location: "claude-code.ts:collectClaudeCodeQuota",
+      message: "credential read before usage API",
+      data: { source, tokenLen: token.length, tokenPrefixOk: token.startsWith("sk-ant-oat01-") },
+      timestamp: Date.now()
+    })
+  }).catch(() => {});
+  // #endregion
   return collectClaudeCodeQuotaFromToken(token, source);
 };

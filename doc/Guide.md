@@ -37,15 +37,17 @@
 
 #### Claude Code
 - Local source:
-  - macOS Keychain `Claude Code-credentials`
+  - Usage-Pulse's own macOS Keychain `Usage-Pulse-Claude-setup-token` / `Usage-Pulse` (preferred)
+  - Official Claude CLI macOS Keychain `Claude Code-credentials` (read-only fallback)
 - Remote source: `https://api.anthropic.com/api/oauth/usage`
 - Corroborating local source: `~/.claude/projects/**/*.jsonl`, read-only, only the
   `quotaLimits` records — see "Restraint on the usage API" below
 - Metrics: remaining percentage for the 5-hour window and weekly quota
 
 #### Re-detecting a Claude Code credential
-On startup, `credentialMonitor.checkAll()` first checks whether the
-`Claude Code-credentials` Keychain item exists. The startup usage pass then calls
+On startup, `credentialMonitor.checkAll()` first checks Usage-Pulse's own
+`Usage-Pulse-Claude-setup-token` / `Usage-Pulse` item, then the official read-only
+`Claude Code-credentials` item. The startup usage pass then calls
 the usage API once so the interface reflects the stored credential immediately.
 If Keychain is missing, or the usage API returns `claudeLoginExpired`, the Claude
 card shows **Get Credentials**.
@@ -168,7 +170,7 @@ Two failure modes of the old reset alert are fixed here:
 ### Security constraints
 - OAuth tokens are only held briefly in memory except for the setup-token exception below.
 - Writing to `state.vscdb` or `.credentials.json` is forbidden.
-- The one Keychain write is the long-lived token from `claude setup-token`, stored in `Claude Code-credentials` after the user completes official CLI OAuth (browser Authentication code → in-app PTY → long-lived token in the main window → `persistClaudeToken`).
+- The one Keychain write is the long-lived token from `claude setup-token`, stored in Usage-Pulse's own `Usage-Pulse-Claude-setup-token` / `Usage-Pulse` item after the user completes official CLI OAuth (browser Authentication code → in-app PTY → long-lived token in the main window → `persistClaudeToken`). The official `Claude Code-credentials` item remains read-only.
 - During login the token is visible in the in-app xterm scrollback; raw PTY output reaches the login renderer over `claude-login:data`. It no longer lands in a system Terminal or a `tee` capture file.
 - On a 401 or missing quota data, return an actionable error message; never perform automatic token refresh.
 
@@ -239,15 +241,17 @@ Two failure modes of the old reset alert are fixed here:
 
 #### Claude Code
 - 本機來源：
-  - macOS Keychain `Claude Code-credentials`
+  - Usage-Pulse 自有的 macOS Keychain `Usage-Pulse-Claude-setup-token` / `Usage-Pulse`（優先）
+  - 官方 Claude CLI 的 macOS Keychain `Claude Code-credentials`（只讀 fallback）
 - 遠端來源：`https://api.anthropic.com/api/oauth/usage`
 - 佐證用本機來源：`~/.claude/projects/**/*.jsonl`，唯讀，且只取 `quotaLimits`
   紀錄——詳見下方「對 usage API 的節制」
 - 指標：5 小時視窗與每週配額剩餘百分比
 
 #### 重新偵測 Claude Code 憑證
-啟動時，`credentialMonitor.checkAll()` 會先檢查 `Claude Code-credentials`
-Keychain 項目是否存在。接著 startup usage pass 會打一次 usage API，讓介面立刻反映
+啟動時，`credentialMonitor.checkAll()` 會先檢查 Usage-Pulse 自己的
+`Usage-Pulse-Claude-setup-token` / `Usage-Pulse` 項目，再以只讀方式檢查官方的
+`Claude Code-credentials` 項目。接著 startup usage pass 會打一次 usage API，讓介面立刻反映
 已存憑證的數值。若 Keychain 沒有憑證，或 usage API 回 `claudeLoginExpired`，Claude
 卡片會顯示「獲取憑證」。
 
@@ -258,8 +262,9 @@ Keychain 項目是否存在。接著 startup usage pass 會打一次 usage API�
 瀏覽器授權後，使用者先把一次性的 Authentication code
 貼回 App 內 PTY 並按 Enter；CLI 交換完成後，再從指令視窗複製長效 token，貼到設定頁的
 輸入框並按「儲存憑證」。這會送 `credential:submit-manual-token` 到 main，由
-`persistClaudeToken` 檢查 token 格式、透過 `writeClaudeSetupTokenToKeychain` 寫入同一組
-Keychain，並打一次 usage API。Authentication code 不會送給 usage API，App 設定內也不再
+`persistClaudeToken` 檢查 token 格式、透過 `writeClaudeSetupTokenToKeychain` 寫入 Usage-Pulse
+自己的 Keychain 項目，並打一次 usage API。官方 Claude CLI 的項目不會被修改。
+Authentication code 不會送給 usage API，App 設定內也不再
 另外保存第二份 Claude 憑證。
 
 舊的系統終端機 + `tee` + `setup-token-capture.txt` 路徑已移除。Usage-Pulse 自己擁有
@@ -341,7 +346,7 @@ Cursor 是「到期提醒」（本期 `billingCycleEnd`，用量重設與計費�
 ### 安全約束
 - OAuth token 僅在記憶體中短暫使用，setup-token 永久憑證除外（見下）。
 - 禁止寫入 `state.vscdb`、`.credentials.json`。
-- 唯一的 Keychain 寫入：使用者在官方 CLI OAuth 完成後，先把瀏覽器 Authentication code 貼回 App 內 PTY，等 CLI 交換並印出長效 token，再把 `sk-ant-oat01-...` 貼入主畫面寫進 `Claude Code-credentials`（→ `persistClaudeToken`）。
+- 唯一的 Keychain 寫入：使用者在官方 CLI OAuth 完成後，先把瀏覽器 Authentication code 貼回 App 內 PTY，等 CLI 交換並印出長效 token，再把 `sk-ant-oat01-...` 貼入主畫面寫進 Usage-Pulse 自有的 `Usage-Pulse-Claude-setup-token` / `Usage-Pulse` 項目（→ `persistClaudeToken`）；官方 `Claude Code-credentials` 只讀、不會被修改。
 - 登入過程 token 會出現在 in-app xterm 捲動緩衝；raw PTY 輸出經 `claude-login:data` 進登入視窗 renderer。不再進系統 Terminal，也不再寫 `tee` 截檔。
 - 發生 401 / 配額資料缺失時，回傳可行動的錯誤訊息，不做自動 token refresh。
 

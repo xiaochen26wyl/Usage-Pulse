@@ -1,4 +1,4 @@
-import type { QuotaSnapshot } from "./types";
+import type { Language, QuotaSnapshot } from "./types";
 
 // Countdown units stay as the English single letters "d" / "h" / "m" in every
 // UI language: the menu bar only has room for a glyph or two next to the
@@ -6,13 +6,19 @@ import type { QuotaSnapshot } from "./types";
 export const COUNTDOWN_DAY_SUFFIX = "d";
 export const COUNTDOWN_HOUR_SUFFIX = "h";
 export const COUNTDOWN_MINUTE_SUFFIX = "m";
+export const UNKNOWN_TRAY_VALUE = "?";
+
+export const trayUnknownValueText = (lang: Language): string => (lang === "zh" ? "未知" : "N/A");
+
+export const localizeTrayUnknownValue = (valueText: string, lang: Language): string =>
+  valueText === UNKNOWN_TRAY_VALUE ? trayUnknownValueText(lang) : valueText;
 
 // The plain top-level figure for a snapshot — what the tooltip shows and what
 // the menu bar falls back to when no per-window value is available.
 export const snapshotValueText = (snapshot: QuotaSnapshot): string => {
   if (snapshot.unit === "usd") {
     if (snapshot.remaining === null) {
-      return "?";
+      return UNKNOWN_TRAY_VALUE;
     }
     return `$${snapshot.remaining.toFixed(1)}`;
   }
@@ -20,12 +26,12 @@ export const snapshotValueText = (snapshot: QuotaSnapshot): string => {
   if (snapshot.unit === "percent") {
     const value = snapshot.remaining ?? snapshot.percent;
     if (value === null) {
-      return "?";
+      return UNKNOWN_TRAY_VALUE;
     }
     return `${Math.round(value)}%`;
   }
 
-  return snapshot.remaining === null ? "?" : `${snapshot.remaining}`;
+  return snapshot.remaining === null ? UNKNOWN_TRAY_VALUE : `${snapshot.remaining}`;
 };
 
 const findWindow = (snapshot: QuotaSnapshot, key: string): QuotaSnapshot["windows"][number] | null =>

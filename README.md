@@ -31,7 +31,7 @@ This project follows a **Sidecar Observer** architecture: it only reads locally 
 > Cursor Desktop and the Claude Desktop app are read for their own local session state, but Usage-Pulse does **not** read Claude Desktop's internal (encrypted) credentials. Even if you only use Claude through the Claude Desktop app day to day, Usage-Pulse still needs a Claude Code setup-token saved in the macOS Keychain.
 
 #### Claude Code credential setup (about once a year)
-Usage-Pulse reads the macOS Keychain item `Claude Code-credentials` for Claude Code quota checks. If the item exists when the app opens, Usage-Pulse immediately runs one usage API check so the interface has fresh numbers. If it is missing or rejected by the API, the Claude card shows **Get Credentials**.
+Usage-Pulse reads its own macOS Keychain item (`Usage-Pulse-Claude-setup-token`, account `Usage-Pulse`) first for Claude Code quota checks, then falls back to the official CLI item `Claude Code-credentials` in read-only mode. If no usable item exists when the app opens, or the API rejects the credential, the Claude card shows **Get Credentials**.
 
 ```bash
 npm install -g @anthropic-ai/claude-code
@@ -54,7 +54,7 @@ Click **Get Credentials** to open the in-app command window running the official
 
 #### What local data is read
 - Cursor: `state.vscdb` (read-only)
-- Claude Code: macOS Keychain item `Claude Code-credentials` (read-only)
+- Claude Code: Usage-Pulse's own Keychain item first, then `Claude Code-credentials` (read-only)
 - Codex: `~/.codex/auth.json` (or `$CODEX_HOME/auth.json`), read-only; OS keyring is also read-only when the CLI stores credentials there
 
 #### What it never does
@@ -63,11 +63,11 @@ Click **Get Credentials** to open the in-app command window running the official
 - Never writes `~/.codex/auth.json`
 - Never auto-refreshes Cursor or Claude tokens. A Codex access token that has expired may be refreshed **in memory only** from the CLI's `refresh_token`; the new token is not written back. If that refresh fails, log in again with the Codex CLI so it can update the file.
 
-The one Keychain write is intentional: **Get Credentials** opens an in-app window running the official `claude setup-token`. After browser authorization, paste the one-time Authentication code into the in-app command window. Once the CLI exchanges it and prints the long-lived token, paste that token into Settings — Usage-Pulse stores it in the `Claude Code-credentials` item and immediately tries one usage API read. The browser code is not a usage API token. It does not create a login of its own and does not keep a second Claude token copy in the app settings.
+The one Keychain write is intentional: **Get Credentials** opens an in-app window running the official `claude setup-token`. After browser authorization, paste the one-time Authentication code into the in-app command window. Once the CLI exchanges it and prints the long-lived token, paste that token into Settings — Usage-Pulse stores it in its own `Usage-Pulse-Claude-setup-token` / `Usage-Pulse` item and immediately tries one usage API read. The official `Claude Code-credentials` item is never modified. The browser code is not a usage API token. Usage-Pulse does not keep a second Claude token copy in the app settings.
 
 #### Data storage
 - The app stores general settings (notification toggles, cooldown time, language, and the rest of Settings) locally via `electron-store`. There is no user-facing check-interval setting.
-- OAuth tokens are used in-memory for API requests. The long-lived `setup-token` is stored only in the official Keychain item after you complete that login.
+- OAuth tokens are used in-memory for API requests. The long-lived `setup-token` is stored only in Usage-Pulse's own Keychain item after you complete that login.
 
 ### License and important notice
 
@@ -120,7 +120,7 @@ Usage-Pulse 是跨平台桌面選單列工具，用於監控 Cursor、Claude Cod
 > Usage-Pulse **不會**讀取 Claude Desktop App 內部（加密）的登入狀態。就算你平常只用 Claude Desktop，Usage-Pulse 仍然需要一組已存進 macOS Keychain 的 Claude Code setup-token。
 
 #### Claude Code 憑證設定（約一年一次）
-Usage-Pulse 讀取 macOS Keychain 的 `Claude Code-credentials` 項目來抓 Claude Code 配額。程式開啟時若已找到這組憑證，會立刻打一次 usage API 更新介面數值；若 Keychain 沒有憑證，或 API 回報憑證失效，Claude 卡片會顯示「獲取憑證」。
+Usage-Pulse 會優先讀取自己的 macOS Keychain `Usage-Pulse-Claude-setup-token` / `Usage-Pulse` 項目，再以只讀方式讀取官方 CLI 的 `Claude Code-credentials` 項目來抓 Claude Code 配額。程式開啟時若找不到可用憑證，或 API 回報憑證失效，Claude 卡片會顯示「獲取憑證」。
 
 ```bash
 npm install -g @anthropic-ai/claude-code
@@ -143,7 +143,7 @@ npm install -g @anthropic-ai/claude-code
 
 #### 讀取哪些本機資料
 - Cursor：`state.vscdb`（只讀）
-- Claude Code：macOS Keychain 的 `Claude Code-credentials` 項目（只讀）
+- Claude Code：Usage-Pulse 自己的 Keychain 項目優先，再以只讀方式讀取 `Claude Code-credentials`
 - Codex：`~/.codex/auth.json`（或 `$CODEX_HOME/auth.json`）只讀；CLI 若把憑證放在 OS 憑證庫也只讀
 
 #### 不會做的事情
@@ -152,7 +152,7 @@ npm install -g @anthropic-ai/claude-code
 - 不會寫入 `~/.codex/auth.json`
 - 不會替你自動刷新 Cursor 或 Claude 的 token。Codex 的 access token 過期時，可用 CLI 的 `refresh_token` **只在記憶體**換新，不會寫回檔案。若刷新失敗，請再開一次 Codex CLI 讓它自己改檔。
 
-唯一的 Keychain 寫入是刻意的：「獲取憑證」會開啟 App 內視窗跑官方 `claude setup-token`。你在瀏覽器完成授權後，先把 Authentication code 貼進 App 內指令視窗，等 CLI 交換並印出長效 token，再把 token 貼到設定頁；Usage-Pulse 才把它寫進 `Claude Code-credentials`，並立刻嘗試讀取一次用量。瀏覽器的 Authentication code 不是 usage API token。不會自己做一套登入，也不會在 App 設定內再保留第二份 Claude token。
+唯一的 Keychain 寫入是刻意的：「獲取憑證」會開啟 App 內視窗跑官方 `claude setup-token`。你在瀏覽器完成授權後，先把 Authentication code 貼進 App 內指令視窗，等 CLI 交換並印出長效 token，再把 token 貼到設定頁；Usage-Pulse 會把它寫進自己的 `Usage-Pulse-Claude-setup-token` service、`Usage-Pulse` account 項目，並立刻嘗試讀取一次用量。官方的 `Claude Code-credentials` 項目只讀、不會被修改。瀏覽器的 Authentication code 不是 usage API token，也不會在 App 設定內再保留第二份 Claude token。
 
 #### 資料落地
 - 應用程式會在本機 `electron-store` 保存一般設定（通知開關、冷卻時間、語言與其他設定項）。沒有使用者可調的檢查頻率。

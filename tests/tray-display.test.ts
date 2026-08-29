@@ -13,6 +13,7 @@ import {
   findClaudeWeeklyWindow,
   formatCountdown,
   formatCountdownWithDays,
+  localizeTrayUnknownValue,
   snapshotValueText
 } from "../src/shared/tray-display";
 
@@ -187,6 +188,14 @@ test("snapshotValueText keeps the plain per-service figure for tooltips", () => 
   assert.equal(snapshotValueText(cursorSnapshot(58, 85)), "$12.3");
   assert.equal(snapshotValueText(claudeSnapshot(63, null)), "80%");
   assert.equal(snapshotValueText(makeSnapshot("cursor", [])), "?");
+});
+
+test("localized tray unknown text uses Chinese for zh and N/A elsewhere", () => {
+  assert.equal(localizeTrayUnknownValue("?", "zh"), "未知");
+  assert.equal(localizeTrayUnknownValue("?", "en"), "N/A");
+  assert.equal(localizeTrayUnknownValue("?", "ja"), "N/A");
+  assert.equal(localizeTrayUnknownValue("?", "ko"), "N/A");
+  assert.equal(localizeTrayUnknownValue("42%", "zh"), "42%");
 });
 
 test("codex tray value mirrors the Claude remaining-percent window", () => {
