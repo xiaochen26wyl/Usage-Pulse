@@ -5,6 +5,9 @@ import {
   claudeCountdownTargetAt,
   claudeTrayValueText,
   claudeWeeklyTrayValueText,
+  codexCountdownTargetAt,
+  codexTrayValueText,
+  codexWeeklyTrayValueText,
   cursorCountdownTargetAt,
   cursorTrayValueText,
   findClaudeWeeklyWindow,
@@ -184,4 +187,23 @@ test("snapshotValueText keeps the plain per-service figure for tooltips", () => 
   assert.equal(snapshotValueText(cursorSnapshot(58, 85)), "$12.3");
   assert.equal(snapshotValueText(claudeSnapshot(63, null)), "80%");
   assert.equal(snapshotValueText(makeSnapshot("cursor", [])), "?");
+});
+
+test("codex tray value mirrors the Claude remaining-percent window", () => {
+  const snapshot = makeSnapshot(
+    "codex",
+    [{ key: "session", remaining: 63, percent: 63, resetsAt: new Date(NOW + 60 * 60 * 1000).toISOString() }],
+    { remaining: 63, percent: 63 }
+  );
+  assert.equal(codexTrayValueText(snapshot, NOW), "63%");
+  assert.equal(codexCountdownTargetAt(snapshot), null);
+});
+
+test("codex weekly tray value uses the weekly window and day countdown when spent", () => {
+  const resetsAt = new Date(NOW + 2 * 24 * 60 * 60 * 1000).toISOString();
+  const snapshot = makeSnapshot("codex", [{ key: "weekly", remaining: 0, percent: 0, resetsAt }], {
+    remaining: 0,
+    percent: 0
+  });
+  assert.equal(codexWeeklyTrayValueText(snapshot, NOW), "2d");
 });

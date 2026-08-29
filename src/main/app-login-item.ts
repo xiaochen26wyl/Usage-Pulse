@@ -4,11 +4,14 @@ import { app } from "electron";
 // item on both macOS and Windows, so this needs no platform branching — unlike
 // ide-launch-helper.ts, which installs a separate named watcher.
 export const applyAppLoginItem = (enabled: boolean): void => {
-  if (!enabled) {
-    app.setLoginItemSettings({ openAtLogin: false });
+  // Electron cannot register the Vite development process as a login item.
+  // Treat it as a no-op so startup auth checks are not buried under a native
+  // Operation not permitted warning.
+  if (!app.isPackaged) {
     return;
   }
-  if (!app.isPackaged) {
+  if (!enabled) {
+    app.setLoginItemSettings({ openAtLogin: false });
     return;
   }
   app.setLoginItemSettings({ openAtLogin: true });

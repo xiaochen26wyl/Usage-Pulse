@@ -1,4 +1,4 @@
-export type ServiceType = "cursor" | "claude";
+export type ServiceType = "cursor" | "claude" | "codex";
 
 export type Language = "zh" | "en" | "ja" | "ko";
 
@@ -48,21 +48,22 @@ export interface QuotaSnapshot {
   // Which credential source the failing request used. A source label only —
   // never token material — so it is safe to hand across IPC.
   credentialSource?: CredentialSource;
+  // Codex credits row (balance / unlimited). Not a quota window; shown as meta.
+  creditsText?: string | null;
   fetchedAt: string;
 }
 
-export type ErrorCode = "claudeLoginExpired";
+export type ErrorCode = "claudeLoginExpired" | "codexLoginExpired";
 
-// Which of readClaudeCredential's ranked sources actually supplied the token a
-// request used. Without this, a 401 tells us a credential is dead but not
-// *which* one — and the self-heal that drops a stale fallback token would fire
-// on 401s belonging to a completely different source (see
-// claude-fallback-decision.ts). "cursorStateDb" is Cursor's only source.
-export type CredentialSource = "env" | "manual" | "keychain" | "file" | "cursorStateDb";
+// Which ranked source supplied the token a request used. Claude monitoring now
+// treats the macOS Keychain item as authoritative; Cursor's only source is its
+// local state database; Codex is the CLI auth file or OS keyring.
+export type CredentialSource = "keychain" | "cursorStateDb" | "codexAuthFile" | "codexKeyring";
 
 export interface CombinedSnapshot {
   cursor: QuotaSnapshot;
   claude: QuotaSnapshot;
+  codex: QuotaSnapshot;
   fetchedAt: string;
 }
 
@@ -87,6 +88,7 @@ export interface CredentialStatus {
 export interface AuthStatus {
   cursor: CredentialStatus;
   claude: CredentialStatus;
+  codex: CredentialStatus;
 }
 
 export interface AppSettings {
@@ -94,6 +96,7 @@ export interface AppSettings {
   // settings block are hidden, and its credential is never probed.
   enableCursorMonitoring: boolean;
   enableClaudeMonitoring: boolean;
+  enableCodexMonitoring: boolean;
   // Cursor's low-quota warning is split by model tier: "advanced models" is the
   // other_models/apiPercentUsed window (pay-as-you-go premium models), "cursor
   // models" is the cursor_models/autoPercentUsed window (Cursor's own Grok/Composer).
@@ -114,6 +117,14 @@ export interface AppSettings {
   // regardless of how much of the 5 hours has actually elapsed. This toggle
   // alerts on that lockout state itself, distinct from the consumption warning.
   enableClaudeCooldownAlert: boolean;
+  // Codex mirrors Claude Code's three-way split: 5-hour session, weekly, and
+  // the lockout that starts when the session window hits 0%. Extra API windows
+  // (per-model, code review) are displayed but not independently alerted.
+  codexSessionLowThresholdPercent: number;
+  enableCodexSessionLowAlert: boolean;
+  codexWeeklyLowThresholdPercent: number;
+  enableCodexWeeklyLowAlert: boolean;
+  enableCodexCooldownAlert: boolean;
   // When on, a tiny login helper starts Usage-Pulse only after Cursor or
   // Claude Code is running. The menu-bar app itself is not a login item.
   launchWithIde: boolean;
@@ -130,6 +141,8 @@ export interface AppSettings {
   enableClaudeWeeklyResetAlarm: boolean;
   enableClaudeBillingAlarm: boolean;
   claudeBillingCadence: ClaudeBillingCadence;
+  enableCodexResetAlarm: boolean;
+  enableCodexWeeklyResetAlarm: boolean;
   language: Language;
   // Menu-bar numeric text: follow OS appearance, or force white / near-black.
   trayValueColorMode: TrayValueColorMode;
@@ -139,20 +152,12 @@ export interface AppSettings {
   // Stored encrypted and never handed back to a renderer in cleartext — see
   // LINE_TOKEN_MASK.
   lineChannelAccessToken: string;
-  // The token the "re-detect" flow captures from running `claude setup-token`
-  // in a terminal, kept as a fallback for when the Keychain write it also
-  // performs cannot be confirmed. Stored encrypted and never handed back to a
-  // renderer in cleartext — see CLAUDE_MANUAL_TOKEN_MASK.
-  claudeManualOAuthToken: string;
-  // When claudeManualOAuthToken was issued plus its known validity (`claude
-  // setup-token` tokens are documented as valid for 1 year, and carry no
-  // expiry claim of their own — see computeSetupTokenExpiryIso). Lets the
-  // re-detect flow decide the credential is still good without ever calling
-  // the usage API just to find out.
-  claudeManualOAuthTokenExpiresAt: string | null;
   // Poll Claude Code only when its CLI has actually been active since the last
   // successful fetch. Idle ticks skip the request but keep the normal interval.
   claudeUseCliActivityPolling: boolean;
+  // Same idea as Claude: skip the Codex usage API while the CLI session dir
+  // has been idle since the last successful fetch.
+  codexUseCliActivityPolling: boolean;
   // Drink-water reminder: interval from launch (or last response) and the cup
   // size recorded when the user confirms they drank.
   enableWaterReminder: boolean;
@@ -168,7 +173,7 @@ export type WaterCupSizeMl = (typeof WATER_CUP_SIZES_ML)[number];
 export type SessionDeltaKind = "consumed" | "reset" | "unknown";
 
 export interface SessionMetricDelta {
-  key: "billing" | "cursorModels" | "advancedModels" | "claudeSession" | "claudeWeekly";
+  key: "billing" | "cursorModels" | "advancedModels" | "claudeSession" | "claudeWeekly" | "codexSession" | "codexWeekly";
   kind: SessionDeltaKind;
   // Consumed amount when kind is "consumed"; otherwise null.
   used: number | null;
@@ -181,6 +186,8 @@ export interface SessionUsageDeltas {
   advancedModels: SessionMetricDelta;
   claudeSession: SessionMetricDelta;
   claudeWeekly: SessionMetricDelta;
+  codexSession: SessionMetricDelta;
+  codexWeekly: SessionMetricDelta;
 }
 
 // Per-launch session: duration, water, and quota consumed since this process started.
@@ -192,10 +199,6 @@ export interface SessionStats {
   nextWaterAt: string | null;
   usage: SessionUsageDeltas;
 }
-
-// What a renderer sees in place of a stored manual token. The renderer only
-// ever needs to know whether one is set, so the value itself never crosses IPC.
-export const CLAUDE_MANUAL_TOKEN_MASK = "__stored__";
 
 // Same contract for the LINE channel access token. It is a live credential —
 // anyone holding it can broadcast to the user's official account — so the
@@ -230,6 +233,7 @@ export interface ScrapeResult {
   // the Claude error path today, where it decides whether a stored fallback
   // token is the one the API just rejected.
   credentialSource?: CredentialSource;
+  creditsText?: string | null;
 }
 
 export interface NotifyPayload {
@@ -238,7 +242,13 @@ export interface NotifyPayload {
 }
 
 
-export type AlarmSource = "cursor-billing" | "claude-session" | "claude-weekly" | "claude-billing";
+export type AlarmSource =
+  | "cursor-billing"
+  | "claude-session"
+  | "claude-weekly"
+  | "claude-billing"
+  | "codex-session"
+  | "codex-weekly";
 
 export interface AlarmTarget {
   id: AlarmSource;
@@ -281,12 +291,16 @@ export type LowQuotaAlertSource =
   | "claude-session-low"
   | "claude-weekly-low"
   | "claude-cooldown"
+  | "codex-session-low"
+  | "codex-weekly-low"
+  | "codex-cooldown"
   // Quota fully spent on that window. Cursor has one per model window; Claude
-  // Code only counts the weekly window (its 5-hour window going to zero is the
-  // cooldown alert above, which recovers on its own).
+  // Code and Codex only count the weekly window (the 5-hour window going to
+  // zero is the cooldown alert above, which recovers on its own).
   | "cursor-advanced-models-exhausted"
   | "cursor-models-exhausted"
-  | "claude-weekly-exhausted";
+  | "claude-weekly-exhausted"
+  | "codex-weekly-exhausted";
 
 export interface AlarmPopupPayload {
   id: AlarmSource | LowQuotaAlertSource | "test" | "water";
@@ -311,20 +325,18 @@ export interface AlarmStatusReport {
 export interface ManualTokenResult {
   ok: boolean;
   message: string;
-  // True only when persistClaudeToken's Keychain write threw. The token is
-  // still usable (settings-store fallback), but the user should know the
-  // Keychain copy did not actually get written, since that fallback is
-  // silent and easy to lose track of (e.g. a settings reset would drop it).
-  keychainWriteFailed?: boolean;
-  // True only when the automatic `claude setup-token` capture itself failed
-  // (no claude binary, timed out, no terminal, nothing in the output) — not
-  // for a login that is merely already in progress elsewhere. Tells the
-  // renderer to offer the manual "copy the command, paste the token back"
-  // fallback instead of just showing an error and dead-ending.
+  // True when `claude setup-token` has been opened and the renderer should
+  // show the manual "copy the printed token, paste it back" field.
   needsManualFallback?: boolean;
-  // True only when this result already confirms real quota data is sitting
-  // in main, ready to view. The renderer never applies it automatically —
-  // it shows an explicit "Update UI" confirmation button instead, so the
-  // user always sees which credential state actually reached the screen.
-  readyToApply?: boolean;
+  // True when Keychain already has a credential and the last scrape was not a
+  // 401 — the renderer should run a quota refresh instead of waiting on login.
+  alreadyHaveCredential?: boolean;
+}
+
+// Outcome of an explicit "Update Values" click. Quota is already applied in
+// main; `message` is localized. A 401 is still ok:true — the snapshot carries
+// claudeLoginExpired so the renderer can flip the button back to login.
+export interface ManualQuotaResult {
+  ok: boolean;
+  message: string;
 }

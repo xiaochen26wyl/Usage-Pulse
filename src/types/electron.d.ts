@@ -5,6 +5,7 @@ import type {
   AuthStatus,
   CombinedSnapshot,
   CredentialStatus,
+  ManualQuotaResult,
   ManualTokenResult,
   SessionStats,
   ServiceType,
@@ -18,11 +19,11 @@ interface UsagePulseApi {
   checkAuth: (service: ServiceType) => Promise<CredentialStatus>;
   runSetupToken: () => Promise<ManualTokenResult>;
   submitManualToken: (token: string) => Promise<ManualTokenResult>;
+  runManualCheck: (service: ServiceType) => Promise<ManualQuotaResult>;
   sendClaudeLoginInput: (data: string) => void;
   resizeClaudeLoginPty: (cols: number, rows: number) => void;
   onClaudeLoginData: (handler: (chunk: string) => void) => () => void;
   onClaudeLoginExit: (handler: (exitCode: number) => void) => () => void;
-  onManualTokenCaptured: (handler: (token: string) => void) => () => void;
   onSetupTokenSpawnError: (handler: (message: string) => void) => () => void;
   getLatestSnapshot: () => Promise<CombinedSnapshot | null>;
   sendLineTest: () => Promise<boolean>;

@@ -98,13 +98,42 @@ const fetchUsagePayload = async (
     });
     return response.data as Record<string, unknown>;
   } catch (error) {
+    // #region agent log
+    {
+      const axiosErr = axios.isAxiosError(error);
+      const rawData = axiosErr ? error.response?.data : undefined;
+      const dataPreview = (typeof rawData === "string"
+        ? rawData
+        : rawData && typeof rawData === "object"
+          ? JSON.stringify(rawData)
+          : "")
+        .slice(0, 300)
+        .replace(/sk-ant-[A-Za-z0-9_-]+/g, "sk-ant-[redacted]");
+      fetch("http://127.0.0.1:7281/ingest/bbb5ca65-8181-454e-a9ef-2fe1fab4b231", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "5b3081" },
+        body: JSON.stringify({
+          sessionId: "5b3081",
+          hypothesisId: "H1",
+          location: "claude-code.ts:fetchUsagePayload",
+          message: "usage API request failed",
+          data: {
+            isAxios: axiosErr,
+            status: axiosErr ? error.response?.status ?? null : null,
+            code: axiosErr ? error.code ?? null : null,
+            dataPreview,
+            tokenLen: token.length,
+            tokenPrefixOk: token.startsWith("sk-ant-oat01-"),
+            source
+          },
+          timestamp: Date.now()
+        })
+      }).catch(() => {});
+    }
+    // #endregion
     if (axios.isAxiosError(error)) {
       if (error.response?.status === 401) {
-        // An env-supplied credential outranks every other source, so telling the
-        // user to re-authorize would send them to fix something that stays
-        // shadowed. Name the env var instead.
-        const key = source === "env" ? "error.claudeLoginExpiredEnvVar" : "error.claudeLoginExpired";
-        throw new ClaudeLoginExpiredError(t(lang, key), source);
+        throw new ClaudeLoginExpiredError(t(lang, "error.claudeLoginExpired"), source);
       }
       if (error.response?.status === 429) {
         throw new Error(t(lang, "error.claudeRateLimited"));
@@ -120,7 +149,7 @@ const fetchUsagePayload = async (
  */
 export const collectClaudeCodeQuotaFromToken = async (
   token: string,
-  source: CredentialSource = "manual"
+  source: CredentialSource = "keychain"
 ): Promise<ScrapeResult> => {
   const lang = settingsStore.get().language;
   const payload = await fetchUsagePayload(token, lang, source);
@@ -187,8 +216,8 @@ export const validateClaudeOAuthToken = async (token: string): Promise<ScrapeRes
 };
 
 export const collectClaudeCodeQuota = async (): Promise<ScrapeResult> => {
-  // Read the whole credential, not just the token: a 401 below has to be
-  // attributable to the source that supplied it (see claude-fallback-decision).
+  // Read the whole credential, not just the token, so a 401 below can still
+  // tell the renderer which stored credential needs replacing.
   const { token, source } = await readClaudeCredential();
   return collectClaudeCodeQuotaFromToken(token, source);
 };

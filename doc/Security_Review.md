@@ -208,11 +208,12 @@ pnpm typecheck && pnpm check:readonly && pnpm test:unit && pnpm build && pnpm sm
 
 `setup-token-capture.txt` 與系統 Terminal + `tee` 路徑已刪。登入改為 `node-pty` 跑 `claude setup-token`，可見輸出在 in-app xterm（`claude-login.html`）。
 
+目前流程已再簡化：Usage-Pulse 不再解析或自動傳送印出的 `sk-ant-oat01-…` token；使用者需手動從指令視窗複製到主視窗輸入框，再按「儲存憑證」寫入 Keychain。
+
 仍屬「過程中可見」的殘留：
 
 - in-app xterm 捲動緩衝會顯示印出的 `sk-ant-oat01-…`
 - raw PTY 輸出經 `claude-login:data` 進登入視窗 renderer
-- tray 的 `credential:manual-token-captured` 推送 **cleartext** token；Settings（`App.tsx`）目前尚未訂閱
 
 ### 新增表面（本次未做完整重測）
 

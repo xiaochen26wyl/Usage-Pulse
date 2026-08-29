@@ -9,9 +9,10 @@ import {
 } from "../src/main/ipc-validation";
 import { isSupportLink, THREADS_URL } from "../src/shared/support-links";
 
-test("asServiceType accepts only the two real services", () => {
+test("asServiceType accepts only the three real services", () => {
   assert.equal(asServiceType("cursor"), "cursor");
   assert.equal(asServiceType("claude"), "claude");
+  assert.equal(asServiceType("codex"), "codex");
 });
 
 test("asServiceType rejects values that would become a store write path", () => {
@@ -30,6 +31,11 @@ test("asServiceType rejects values that would become a store write path", () => 
 test("asSettingsPatch keeps known keys with the declared type", () => {
   const patch = asSettingsPatch({ language: "en", enableWaterReminder: false, notifyCooldownMinutes: 30 });
   assert.deepEqual(patch, { language: "en", enableWaterReminder: false, notifyCooldownMinutes: 30 });
+});
+
+test("asSettingsPatch keeps Codex settings keys", () => {
+  const patch = asSettingsPatch({ enableCodexMonitoring: false, enableCodexResetAlarm: false });
+  assert.deepEqual(patch, { enableCodexMonitoring: false, enableCodexResetAlarm: false });
 });
 
 test("asSettingsPatch drops unknown keys and mistyped values", () => {
@@ -61,6 +67,19 @@ test("asClipboardText allows the CLI commands the UI copies, but no control char
 test("asClaudeManualToken accepts a well-formed pasted token, trimmed", () => {
   const token = `sk-ant-oat01-${"a".repeat(95)}`;
   assert.equal(asClaudeManualToken(`  ${token}  \n`), token);
+});
+
+test("asClaudeManualToken extracts a wrapped setup-token from CLI text", () => {
+  const head = `sk-ant-oat01-${"a".repeat(66)}`;
+  const tail = `${"B".repeat(30)}_tail`;
+  const token = `${head}${tail}`;
+  assert.equal(asClaudeManualToken(`token:${head}\n ${tail}`), token);
+  assert.equal(asClaudeManualToken(`Your OAuth token:\n${head}&#x20;\n${tail}\nStore this token securely.`), token);
+});
+
+test("asClaudeManualToken tolerates Markdown-escaped underscores in pasted text", () => {
+  const token = `sk-ant-oat01-${"a".repeat(50)}_${"B".repeat(44)}`;
+  assert.equal(asClaudeManualToken(token.replace("_", "\\_")), token);
 });
 
 test("asClaudeManualToken rejects the wrong prefix, short values, and control characters", () => {

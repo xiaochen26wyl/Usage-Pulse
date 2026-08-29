@@ -9,8 +9,6 @@ const WINDOW_WIDTH = 720;
 const WINDOW_HEIGHT = 440;
 
 export interface ClaudeLoginWindowOptions {
-  onAuthUrl: (url: string) => void;
-  onTokenCaptured: (token: string) => void;
   // The claude binary couldn't be found, or the PTY itself failed to spawn —
   // there is no terminal for the user to watch at all. Distinct from the PTY
   // process later exiting normally (e.g. the user finished or cancelled the
@@ -41,8 +39,6 @@ const startSession = (options: ClaudeLoginWindowOptions): void => {
         window.webContents.send("claude-login:data", chunk);
       }
     },
-    onAuthUrl: options.onAuthUrl,
-    onTokenCaptured: options.onTokenCaptured,
     onExit: (exitCode) => {
       if (window && !window.isDestroyed()) {
         window.webContents.send("claude-login:exit", exitCode);

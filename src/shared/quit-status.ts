@@ -1,10 +1,10 @@
 import type { AppSettings, CombinedSnapshot, ServiceType } from "./types";
 import { buildQuitStatusFlex, type LineFlexMessage } from "./line-templates";
-import { claudeTrayValueText, claudeWeeklyTrayValueText, cursorTrayValueText, findClaudeWeeklyWindow } from "./tray-display";
+import { claudeTrayValueText, claudeWeeklyTrayValueText, codexTrayValueText, codexWeeklyTrayValueText, cursorTrayValueText, findClaudeWeeklyWindow, findCodexWeeklyWindow } from "./tray-display";
 import { t } from "./i18n";
 
 export interface QuitStatusOptions {
-  settings: Pick<AppSettings, "enableCursorMonitoring" | "enableClaudeMonitoring" | "language">;
+  settings: Pick<AppSettings, "enableCursorMonitoring" | "enableClaudeMonitoring" | "enableCodexMonitoring" | "language">;
   snapshot: CombinedSnapshot | null;
   // Passed in rather than imported: SERVICE_LABELS lives in the main process
   // (see line-templates.ts's own note on why shared/ never reaches into it).
@@ -77,6 +77,38 @@ export const buildQuitStatusMessages = (options: QuitStatusOptions): LineFlexMes
           serviceLabel: serviceLabels.claude,
           windowLabel: weekly.label || t(lang, "window.label.weekly"),
           valueText: claudeWeeklyTrayValueText(snapshot.claude, nowMs),
+          resetAt: weekly.resetsAt,
+          lang,
+          now
+        })
+      );
+    }
+  }
+
+  if (settings.enableCodexMonitoring) {
+    const session = snapshot.codex.windows.find((window) => window.key === "session") ?? null;
+    if (session && session.remaining !== null) {
+      messages.push(
+        buildQuitStatusFlex({
+          service: "codex",
+          serviceLabel: serviceLabels.codex,
+          windowLabel: session.label || t(lang, "window.label.session"),
+          valueText: codexTrayValueText(snapshot.codex, nowMs),
+          resetAt: session.resetsAt,
+          lang,
+          now
+        })
+      );
+    }
+
+    const weekly = findCodexWeeklyWindow(snapshot.codex);
+    if (weekly && weekly.remaining !== null) {
+      messages.push(
+        buildQuitStatusFlex({
+          service: "codex",
+          serviceLabel: serviceLabels.codex,
+          windowLabel: weekly.label || t(lang, "window.label.weekly"),
+          valueText: codexWeeklyTrayValueText(snapshot.codex, nowMs),
           resetAt: weekly.resetsAt,
           lang,
           now

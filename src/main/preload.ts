@@ -6,6 +6,7 @@ import type {
   AuthStatus,
   CombinedSnapshot,
   CredentialStatus,
+  ManualQuotaResult,
   ManualTokenResult,
   SessionStats,
   ServiceType,
@@ -21,6 +22,8 @@ const api = {
   runSetupToken: () => ipcRenderer.invoke("credential:run-setup-token") as Promise<ManualTokenResult>,
   submitManualToken: (token: string) =>
     ipcRenderer.invoke("credential:submit-manual-token", token) as Promise<ManualTokenResult>,
+  runManualCheck: (service: ServiceType) =>
+    ipcRenderer.invoke("monitor:run-manual", service) as Promise<ManualQuotaResult>,
   sendClaudeLoginInput: (data: string) => ipcRenderer.send("claude-login:input", data),
   resizeClaudeLoginPty: (cols: number, rows: number) => ipcRenderer.send("claude-login:resize", { cols, rows }),
   onClaudeLoginData: (handler: (chunk: string) => void) => {
@@ -35,13 +38,6 @@ const api = {
     ipcRenderer.on("claude-login:exit", listener);
     return () => {
       ipcRenderer.removeListener("claude-login:exit", listener);
-    };
-  },
-  onManualTokenCaptured: (handler: (token: string) => void) => {
-    const listener = (_event: Electron.IpcRendererEvent, token: string) => handler(token);
-    ipcRenderer.on("credential:manual-token-captured", listener);
-    return () => {
-      ipcRenderer.removeListener("credential:manual-token-captured", listener);
     };
   },
   onSetupTokenSpawnError: (handler: (message: string) => void) => {

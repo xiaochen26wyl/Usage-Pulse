@@ -165,3 +165,19 @@ export const claudeWeeklyTrayValueText = (snapshot: QuotaSnapshot, nowMs: number
   }
   return snapshotValueText(snapshot);
 };
+
+export const findCodexWeeklyWindow = (snapshot: QuotaSnapshot): QuotaSnapshot["windows"][number] | null =>
+  findWindow(snapshot, "weekly");
+
+export const codexTrayValueText = claudeTrayValueText;
+export const codexCountdownTargetAt = claudeCountdownTargetAt;
+export const codexWeeklyTrayValueText = (snapshot: QuotaSnapshot, nowMs: number): string => {
+  const weekly = findCodexWeeklyWindow(snapshot);
+  if (weekly && weekly.remaining !== null) {
+    if (Math.round(weekly.remaining) <= 0) {
+      return formatCountdownWithDays(weekly.resetsAt, nowMs) ?? "0%";
+    }
+    return `${Math.round(weekly.remaining)}%`;
+  }
+  return snapshotValueText(snapshot);
+};

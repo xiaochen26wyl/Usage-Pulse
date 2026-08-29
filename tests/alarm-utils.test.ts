@@ -25,6 +25,10 @@ const settings = (patch: Partial<AppSettings> = {}): AppSettings =>
     claudeWeeklyLowThresholdPercent: 20,
     enableClaudeWeeklyLowAlert: true,
     enableClaudeCooldownAlert: true,
+    enableCodexMonitoring: true,
+    enableCodexResetAlarm: true,
+    enableCodexWeeklyResetAlarm: true,
+    enableCodexCooldownAlert: true,
     launchWithIde: false,
     notifyCooldownMinutes: 15,
     enableCursorResetAlarm: true,
@@ -55,9 +59,14 @@ const quota = (patch: Partial<QuotaSnapshot> = {}): QuotaSnapshot =>
     ...patch
   }) as QuotaSnapshot;
 
-const snapshot = (cursor: Partial<QuotaSnapshot>, claude: Partial<QuotaSnapshot>): CombinedSnapshot => ({
+const snapshot = (
+  cursor: Partial<QuotaSnapshot>,
+  claude: Partial<QuotaSnapshot>,
+  codex: Partial<QuotaSnapshot> = {}
+): CombinedSnapshot => ({
   cursor: quota({ service: "cursor", ...cursor }),
   claude: quota({ service: "claude", ...claude }),
+  codex: quota({ service: "codex", ...codex }),
   fetchedAt: at(0)
 });
 
@@ -93,6 +102,28 @@ test("collectAlarmTargets gathers every enabled reset window", () => {
   assert.deepEqual(
     targets.map((target) => target.id),
     ["cursor-billing", "claude-session", "claude-weekly"]
+  );
+});
+
+test("collectAlarmTargets gathers Codex session and weekly independently", () => {
+  const targets = collectAlarmTargets(
+    snapshot(
+      { resetsAt: null },
+      { resetsAt: null },
+      { resetsAt: at(600_000), resetLabel: "Session", weeklyResetAt: at(7_200_000), weeklyResetLabel: "Weekly" }
+    ),
+    settings({
+      enableCursorResetAlarm: false,
+      enableClaudeResetAlarm: false,
+      enableClaudeWeeklyResetAlarm: false,
+      enableClaudeBillingAlarm: false
+    }),
+    "zh"
+  );
+
+  assert.deepEqual(
+    targets.map((target) => target.id),
+    ["codex-session", "codex-weekly"]
   );
 });
 

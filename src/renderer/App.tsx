@@ -66,6 +66,7 @@ const SESSION_WINDOW_MS = 5 * 60 * 60 * 1000;
 const defaultSettings: AppSettings = {
   enableCursorMonitoring: true,
   enableClaudeMonitoring: true,
+  enableCodexMonitoring: true,
   cursorAdvancedModelsLowThresholdPercent: 20,
   enableCursorAdvancedModelsLowAlert: true,
   cursorModelsLowThresholdPercent: 20,
@@ -75,6 +76,11 @@ const defaultSettings: AppSettings = {
   claudeWeeklyLowThresholdPercent: 20,
   enableClaudeWeeklyLowAlert: true,
   enableClaudeCooldownAlert: true,
+  codexSessionLowThresholdPercent: 20,
+  enableCodexSessionLowAlert: true,
+  codexWeeklyLowThresholdPercent: 20,
+  enableCodexWeeklyLowAlert: true,
+  enableCodexCooldownAlert: true,
   launchWithIde: false,
   launchAtStartup: false,
   notifyCooldownMinutes: 15,
@@ -83,14 +89,15 @@ const defaultSettings: AppSettings = {
   enableClaudeWeeklyResetAlarm: true,
   enableClaudeBillingAlarm: true,
   claudeBillingCadence: "monthly",
+  enableCodexResetAlarm: true,
+  enableCodexWeeklyResetAlarm: true,
   language: "zh",
   trayValueColorMode: "system",
   enableAlarmPopup: true,
   enableLineNotification: true,
   lineChannelAccessToken: "",
-  claudeManualOAuthToken: "",
-  claudeManualOAuthTokenExpiresAt: null,
   claudeUseCliActivityPolling: true,
+  codexUseCliActivityPolling: true,
   enableWaterReminder: true,
   waterReminderMinutes: 50,
   waterCupSizeMl: 500,
@@ -107,6 +114,7 @@ const emptyCredential = (service: ServiceType): CredentialStatus => ({
 const defaultAuth: AuthStatus = {
   cursor: emptyCredential("cursor"),
   claude: emptyCredential("claude"),
+  codex: emptyCredential("codex"),
 };
 
 const credentialStateKeys: Record<
@@ -142,14 +150,13 @@ const credentialTagClass = (state: CredentialState): string => {
 const serviceNames: Record<ServiceType, string> = {
   cursor: "Cursor",
   claude: "Claude Code",
+  codex: "Codex",
 };
 
-const authHintKeys: Record<
-  ServiceType,
-  "auth.hint.cursor" | "auth.hint.claude"
-> = {
+const authHintKeys: Record<ServiceType, "auth.hint.cursor" | "auth.hint.claude" | "auth.hint.codex"> = {
   cursor: "auth.hint.cursor",
   claude: "auth.hint.claude",
+  codex: "auth.hint.codex",
 };
 
 const formatValue = (
@@ -183,13 +190,17 @@ type LowQuotaThresholdKey =
   | "cursorAdvancedModelsLowThresholdPercent"
   | "cursorModelsLowThresholdPercent"
   | "claudeSessionLowThresholdPercent"
-  | "claudeWeeklyLowThresholdPercent";
+  | "claudeWeeklyLowThresholdPercent"
+  | "codexSessionLowThresholdPercent"
+  | "codexWeeklyLowThresholdPercent";
 
 type LowQuotaToggleKey =
   | "enableCursorAdvancedModelsLowAlert"
   | "enableCursorModelsLowAlert"
   | "enableClaudeSessionLowAlert"
-  | "enableClaudeWeeklyLowAlert";
+  | "enableClaudeWeeklyLowAlert"
+  | "enableCodexSessionLowAlert"
+  | "enableCodexWeeklyLowAlert";
 
 const roundToStep = (
   value: unknown,
@@ -210,21 +221,16 @@ export const App = () => {
   const [savingSettings, setSavingSettings] = useState(false);
   const [checkingAuth, setCheckingAuth] = useState<
     Record<ServiceType, boolean>
-  >({ cursor: false, claude: false });
+  >({ cursor: false, claude: false, codex: false });
   const [authMessage, setAuthMessage] = useState<Record<ServiceType, string>>({
     cursor: "",
     claude: "",
+    codex: "",
   });
-  // Shown once "Get Credentials" opens a fresh claude-login window — lets the
-  // user paste (or receive an auto-filled) token back here instead of dead-
-  // ending on an error message.
+  // Shown while Claude's Keychain credential is missing, and also after
+  // "Get Credentials" opens a fresh claude-login window. The browser code
+  // belongs in that window's PTY; only the final setup-token is pasted here.
   const [claudeNeedsManualFallback, setClaudeNeedsManualFallback] = useState(false);
-  // True whenever main has already confirmed real quota data is sitting
-  // there ready to view (a single re-detect check, or a manual submit, both
-  // came back with real usage windows) — the header button becomes an
-  // explicit "Update UI" confirmation instead of the numbers changing on
-  // their own underneath the user.
-  const [claudeReadyToApply, setClaudeReadyToApply] = useState(false);
   const [manualTokenInput, setManualTokenInput] = useState("");
   const [manualTokenSubmitting, setManualTokenSubmitting] = useState(false);
   const [manualTokenCopied, setManualTokenCopied] = useState(false);
@@ -310,13 +316,6 @@ export const App = () => {
       setSessionStats(next);
     });
 
-    // The claude-login PTY auto-detected the printed token — fill it in
-    // (in the clear, not masked) so the user can confirm/adjust it before
-    // submitting rather than it applying itself silently.
-    const unsubscribeTokenCaptured = window.usagePulse.onManualTokenCaptured((token) => {
-      setManualTokenInput(token);
-    });
-
     const unsubscribeSpawnError = window.usagePulse.onSetupTokenSpawnError((message) => {
       setAuthMessage((prev) => ({ ...prev, claude: message }));
     });
@@ -325,7 +324,6 @@ export const App = () => {
       unsubscribeSnapshot();
       unsubscribeAuth();
       unsubscribeSession();
-      unsubscribeTokenCaptured();
       unsubscribeSpawnError();
     };
   }, []);
@@ -422,17 +420,59 @@ export const App = () => {
   // Scoped to one service: the Cursor card re-reads only Cursor's credential and
   // the Claude Code card only Claude's, so retrying one never disturbs the other.
   //
-  // Claude is fire-and-forget rather than awaited end-to-end: the manual
-  // paste box (below) needs to appear the instant the user clicks, racing
-  // alongside the automatic capture instead of waiting for it to finish or
-  // fail first. `checkingAuth.claude` still stays true for the whole run —
-  // the header button remains a disabled status pill throughout — it's only
-  // this function's own `await` that no longer blocks the render.
-  // Scoped to one service: the Cursor card re-reads only Cursor's credential and
-  // the Claude Code card only Claude's, so retrying one never disturbs the other.
-  // For claude this is now always fast (a local Keychain+expiry check, at most
-  // one API validation call, or just opening the claude-login window) — no more
-  // fire-and-forget needed, a plain await covers every outcome.
+  // Claude's two buttons are separate paths: "Get Credentials" only opens
+  // login; "Update Values" only hits the usage API. Valid numbers land on
+  // screen immediately — there is no extra confirmation click.
+  const pullClaudeOntoScreen = async (message: string) => {
+    const [nextAuth, latestSnapshot, nextSettings] = await Promise.all([
+      window.usagePulse.checkAuth("claude"),
+      window.usagePulse.getLatestSnapshot(),
+      window.usagePulse.getSettings(),
+    ]);
+    setAuthStatus((prev) => ({ ...prev, claude: nextAuth }));
+    setSnapshot(latestSnapshot);
+    setSettings(nextSettings);
+    setAuthMessage((prev) => ({ ...prev, claude: message }));
+  };
+
+  const refreshClaudeQuota = async () => {
+    setCheckingAuth((prev) => ({ ...prev, claude: true }));
+    try {
+      const result = await window.usagePulse.runManualCheck("claude");
+      await pullClaudeOntoScreen(result.message);
+    } catch (error) {
+      setAuthMessage((prev) => ({
+        ...prev,
+        claude: error instanceof Error ? error.message : t(lang, "app.authRefreshFailed"),
+      }));
+    } finally {
+      setCheckingAuth((prev) => ({ ...prev, claude: false }));
+    }
+  };
+
+  const refreshCodexQuota = async () => {
+    setCheckingAuth((prev) => ({ ...prev, codex: true }));
+    try {
+      const result = await window.usagePulse.runManualCheck("codex");
+      const [nextAuth, latestSnapshot, nextSettings] = await Promise.all([
+        window.usagePulse.checkAuth("codex"),
+        window.usagePulse.getLatestSnapshot(),
+        window.usagePulse.getSettings(),
+      ]);
+      setAuthStatus((prev) => ({ ...prev, codex: nextAuth }));
+      setSnapshot(latestSnapshot);
+      setSettings(nextSettings);
+      setAuthMessage((prev) => ({ ...prev, codex: result.message }));
+    } catch (error) {
+      setAuthMessage((prev) => ({
+        ...prev,
+        codex: error instanceof Error ? error.message : t(lang, "app.authRefreshFailed"),
+      }));
+    } finally {
+      setCheckingAuth((prev) => ({ ...prev, codex: false }));
+    }
+  };
+
   const refreshAuthStatus = async (service: ServiceType) => {
     setCheckingAuth((prev) => ({ ...prev, [service]: true }));
 
@@ -440,15 +480,15 @@ export const App = () => {
       setAuthMessage((prev) => ({ ...prev, claude: t(lang, "setupToken.waiting") }));
       try {
         const result = await window.usagePulse.runSetupToken();
-        setAuthMessage((prev) => ({ ...prev, claude: result.message }));
-        if (result.readyToApply) {
-          // Already confirmed real quota data is ready — don't apply it
-          // automatically, let the user press "Update UI" to pull it in.
+        if (result.alreadyHaveCredential) {
+          const quota = await window.usagePulse.runManualCheck("claude");
           setClaudeNeedsManualFallback(false);
-          setClaudeReadyToApply(true);
-        } else if (result.needsManualFallback) {
+          await pullClaudeOntoScreen(quota.message);
+          return;
+        }
+        setAuthMessage((prev) => ({ ...prev, claude: result.message }));
+        if (result.needsManualFallback) {
           setManualTokenInput("");
-          setClaudeReadyToApply(false);
           setClaudeNeedsManualFallback(true);
         }
       } catch (error) {
@@ -479,31 +519,6 @@ export const App = () => {
       }));
     } finally {
       setCheckingAuth((prev) => ({ ...prev, [service]: false }));
-    }
-  };
-
-  // The "Update UI" confirmation: main already told us real quota data is
-  // ready (a single re-detect check or a manual submit both came back with
-  // real usage windows) — this is the one explicit click that actually pulls
-  // it onto the screen. If it turns out there's nothing to show after all,
-  // that's step 5 of the flow: fall back to the "Get Credentials" state
-  // rather than sitting in a state that looks confirmed but shows nothing.
-  const applyClaudeUpdate = async () => {
-    setCheckingAuth((prev) => ({ ...prev, claude: true }));
-    try {
-      const [next, latestSnapshot] = await Promise.all([
-        window.usagePulse.checkAuth("claude"),
-        window.usagePulse.getLatestSnapshot(),
-      ]);
-      setAuthStatus((prev) => ({ ...prev, claude: next }));
-      setSnapshot(latestSnapshot);
-      setClaudeReadyToApply(false);
-      const hasValues = (latestSnapshot?.claude.windows.length ?? 0) > 0;
-      if (!hasValues) {
-        setAuthMessage((prev) => ({ ...prev, claude: t(lang, "app.authRefreshFailed") }));
-      }
-    } finally {
-      setCheckingAuth((prev) => ({ ...prev, claude: false }));
     }
   };
 
@@ -548,10 +563,7 @@ export const App = () => {
       if (result.ok) {
         setManualTokenInput("");
         setClaudeNeedsManualFallback(false);
-        // Don't apply automatically — same "Update UI" confirmation step as
-        // the re-detect path, so a hand-pasted token gets no less scrutiny
-        // before its numbers land on screen.
-        setClaudeReadyToApply(Boolean(result.readyToApply));
+        await pullClaudeOntoScreen(result.message);
       }
     } catch (error) {
       setAuthMessage((prev) => ({
@@ -715,17 +727,8 @@ export const App = () => {
     }
   };
 
-  // settings:get hands back a placeholder for the fallback token, never the
-  // token itself, so all the UI can know is whether one is stored. There is
-  // deliberately no manual "clear" action here: a fallback token this stale
-  // is dropped automatically by the main process the moment a real quota
-  // fetch proves it dead (see monitor-engine's applyScrapeResult), so a
-  // button that races the same decision would only invite clearing a token
-  // that's actually still fine.
-  const hasFallbackToken = Boolean(settings.claudeManualOAuthToken);
-
-  // Same placeholder contract as hasFallbackToken above: settings:get never
-  // hands back the real LINE token, only whether one is stored.
+  // settings:get never hands back the real LINE token, only whether one is
+  // stored.
   const hasLineToken = Boolean(settings.lineChannelAccessToken);
 
   const quitApp = async () => {
@@ -747,10 +750,15 @@ export const App = () => {
   // Bar colour identifies the service, never the quota level — Cursor is always
   // green and Claude Code always blue. Low quota is signalled by the status tag
   // in the card header instead.
-  const barClass = (service: ServiceType): string =>
-    service === "cursor"
-      ? "progress-fill progress-fill-cursor"
-      : "progress-fill";
+  const barClass = (service: ServiceType): string => {
+    if (service === "cursor") {
+      return "progress-fill progress-fill-cursor";
+    }
+    if (service === "codex") {
+      return "progress-fill progress-fill-codex";
+    }
+    return "progress-fill";
+  };
 
   // Lives inside each quota card rather than in a section of its own: a card
   // showing "no data" is almost always explained by the credential right above
@@ -767,16 +775,22 @@ export const App = () => {
     // network hiccups, ...) keeps the quiet "refresh" presentation.
     const needsFreshLogin =
       service === "claude" &&
-      (credential.state === "missing" || errorCode === "claudeLoginExpired");
+      (errorCode === "claudeLoginExpired" ||
+        credential.state === "missing" ||
+        credential.state === "expired" ||
+        credential.state === "error");
 
-    // Cursor: its expiresAt is a real JWT expiry, so `state` alone reliably
-    // says whether the credential is actually broken. The button's only job
-    // is fixing a broken credential, so it stays hidden entirely otherwise.
     const cursorCredentialBroken =
       service === "cursor" &&
       (credential.state === "expired" || credential.state === "missing" || credential.state === "error");
-    const showButton = service === "claude" || cursorCredentialBroken;
-    const needsAttention = needsFreshLogin || cursorCredentialBroken;
+    const codexCredentialBroken =
+      service === "codex" &&
+      (errorCode === "codexLoginExpired" ||
+        credential.state === "expired" ||
+        credential.state === "missing" ||
+        credential.state === "error");
+    const showButton = service === "claude" || service === "codex" || cursorCredentialBroken;
+    const needsAttention = needsFreshLogin || cursorCredentialBroken || (service === "codex" && codexCredentialBroken);
 
     return (
       <div className="credential-row">
@@ -786,22 +800,18 @@ export const App = () => {
           >
             {t(lang, credentialStateKeys[credential.state])}
           </span>
-          {service === "claude" && claudeReadyToApply ? (
-            <button
-              type="button"
-              className="primary-btn"
-              style={{ width: "auto" }}
-              onClick={applyClaudeUpdate}
-              disabled={checkingAuth.claude}
-            >
-              {checkingAuth.claude ? t(lang, "button.detecting") : t(lang, "button.updateUi")}
-            </button>
-          ) : showButton ? (
+          {showButton ? (
             <button
               type="button"
               className={needsAttention ? "warning-btn" : "ghost-btn"}
               style={{ width: "auto" }}
-              onClick={() => refreshAuthStatus(service)}
+              onClick={() =>
+                service === "claude" && !needsFreshLogin
+                  ? refreshClaudeQuota()
+                  : service === "codex" && !codexCredentialBroken
+                    ? refreshCodexQuota()
+                    : refreshAuthStatus(service)
+              }
               disabled={checkingAuth[service]}
               title={
                 needsAttention
@@ -850,28 +860,17 @@ export const App = () => {
             {message}
           </p>
         ) : null}
-        {service === "claude" ? renderFallbackCredentialRow() : null}
-        {service === "claude" && claudeNeedsManualFallback ? renderManualTokenFallback() : null}
+        {service === "claude" && (claudeNeedsManualFallback || credential.state === "missing")
+          ? renderManualTokenFallback()
+          : null}
       </div>
     );
   };
 
-  // Claude Code only. Read-only: notes whether the token the re-detect flow
-  // captured is still the one in use. No manual clear action — the main
-  // process drops it on its own once a real quota fetch confirms it's dead.
-  const renderFallbackCredentialRow = () =>
-    hasFallbackToken ? (
-      <div className="quota-header" style={{ marginTop: "8px", gap: "8px" }}>
-        <span className="meta-text" style={{ margin: 0 }}>
-          {t(lang, "credential.usingFallbackToken")}
-        </span>
-      </div>
-    ) : null;
-
-  // Claude Code only, shown once "Get Credentials" opens a fresh claude-login
-  // window. Not masked: the claude-login PTY may have already auto-filled a
-  // captured token here, and the user needs to actually see it to confirm
-  // it's right before submitting, not stare at asterisks.
+  // Claude Code only. This remains visible while the Keychain credential is
+  // missing, so an existing setup-token can be pasted directly without
+  // repeating browser authorization. The browser's one-time code is entered
+  // in the PTY; this field accepts only the final setup-token.
   const renderManualTokenFallback = () => (
     <div className="callout-warning" style={{ marginTop: "8px" }}>
       <p style={{ margin: 0 }}>{t(lang, "manualToken.prompt")}</p>
@@ -992,7 +991,7 @@ export const App = () => {
   // A real ticking countdown to the 5-hour session reset — distinct from the
   // usage bar above it, this one fills as time elapses through the fixed
   // 5-hour window rather than as quota is consumed.
-  const renderSessionCountdownBar = (resetsAt: string) => {
+  const renderSessionCountdownBar = (resetsAt: string, service: ServiceType) => {
     const msRemaining = Date.parse(resetsAt) - now;
     const elapsedPercent = Number.isNaN(msRemaining)
       ? 0
@@ -1002,7 +1001,7 @@ export const App = () => {
         );
 
     return (
-      <div className="window-bar" key="claude-session-countdown">
+      <div className="window-bar" key={`${service}-session-countdown`}>
         <div className="quota-header" style={{ marginBottom: "6px" }}>
           <span className="window-bar-label">
             {t(lang, "window.label.claudeCountdown")}
@@ -1013,7 +1012,7 @@ export const App = () => {
         </div>
         <div className="progress-track">
           <div
-            className={barClass("claude")}
+            className={barClass(service)}
             style={{ width: `${elapsedPercent}%` }}
           />
         </div>
@@ -1048,8 +1047,12 @@ export const App = () => {
   // it takes effect immediately rather than waiting on the "save settings"
   // button — same immediacy as changeLanguage above.
   const setMonitoringEnabled = async (service: ServiceType, enabled: boolean) => {
-    const key: "enableCursorMonitoring" | "enableClaudeMonitoring" =
-      service === "cursor" ? "enableCursorMonitoring" : "enableClaudeMonitoring";
+    const key =
+      service === "cursor"
+        ? "enableCursorMonitoring"
+        : service === "claude"
+          ? "enableClaudeMonitoring"
+          : "enableCodexMonitoring";
     setSettings((prev) => ({ ...prev, [key]: enabled }));
     try {
       const next = await window.usagePulse.saveSettings({ [key]: enabled });
@@ -1108,7 +1111,7 @@ export const App = () => {
 
   const renderToggleOnlyRow = (
     labelKey: TranslationKey,
-    toggleKey: "enableClaudeCooldownAlert",
+    toggleKey: "enableClaudeCooldownAlert" | "enableCodexCooldownAlert",
   ) => (
     <label
       className="field switch-row"
@@ -1164,7 +1167,7 @@ export const App = () => {
           <h2>{t(lang, "section.realtimeQuota")}</h2>
         </div>
         <div className="quota-grid">
-          {(["claude", "cursor"] as ServiceType[]).map((service) => {
+          {(["claude", "codex", "cursor"] as ServiceType[]).map((service) => {
             const item = snapshot?.[service];
 
             if (service === "claude") {
@@ -1220,7 +1223,7 @@ export const App = () => {
                           false,
                         )}
                       {sessionWindow?.resetsAt &&
-                        renderSessionCountdownBar(sessionWindow.resetsAt)}
+                        renderSessionCountdownBar(sessionWindow.resetsAt, service)}
                       {weeklyWindow &&
                         renderWindowBar(weeklyWindow, item!.unit, service)}
                       {claudeBillingAt ? (
@@ -1228,6 +1231,84 @@ export const App = () => {
                           {t(lang, "window.claudeBilling.renewsAt", {
                             resetTime: formatResetText(claudeBillingAt, lang),
                           })}
+                        </p>
+                      ) : null}
+                    </div>
+                  ) : (
+                    <p className="meta-text" style={{ marginTop: "8px" }}>
+                      {item?.message || t(lang, "app.notFetchedYet")}
+                    </p>
+                  )}
+                    </>
+                  )}
+                </div>
+              );
+            }
+
+            if (service === "codex") {
+              const windows = item?.windows ?? [];
+              const sessionWindow =
+                windows.find((window) => window.key === "session") ?? null;
+              const weeklyWindow =
+                windows.find((window) => window.key === "weekly") ?? null;
+              const extraWindows = windows.filter(
+                (window) =>
+                  window.key !== "session" &&
+                  window.key !== "weekly" &&
+                  window.percent !== null,
+              );
+              const hasBars =
+                Boolean(sessionWindow || weeklyWindow || extraWindows.length || item?.creditsText);
+
+              return (
+                <div className="quota-card quota-card-codex" key={service}>
+                  <div className="quota-header">
+                    <label className="field switch-row" style={{ margin: 0 }}>
+                      <span>{t(lang, "monitor.enableCodex")}</span>
+                      <input
+                        type="checkbox"
+                        className="toggle"
+                        checked={settings.enableCodexMonitoring}
+                        onChange={(event) =>
+                          setMonitoringEnabled("codex", event.target.checked)
+                        }
+                      />
+                    </label>
+                  </div>
+                  {!settings.enableCodexMonitoring ? (
+                    <p className="meta-text" style={{ marginTop: "8px" }}>
+                      {t(lang, "monitor.disabledHint")}
+                    </p>
+                  ) : (
+                    <>
+                  <div className="quota-header">
+                    <strong>{serviceNames[service]}</strong>
+                    <span
+                      className={`status-tag status-${item?.status || "unknown"}`}
+                    >
+                      {item?.status || "unknown"}
+                    </span>
+                  </div>
+                  {renderCredentialRow(service, item?.errorCode)}
+                  {hasBars ? (
+                    <div className="window-bars">
+                      {sessionWindow &&
+                        renderWindowBar(
+                          sessionWindow,
+                          item!.unit,
+                          service,
+                          false,
+                        )}
+                      {sessionWindow?.resetsAt &&
+                        renderSessionCountdownBar(sessionWindow.resetsAt, service)}
+                      {weeklyWindow &&
+                        renderWindowBar(weeklyWindow, item!.unit, service)}
+                      {extraWindows.map((window) =>
+                        renderWindowBar(window, item!.unit, service),
+                      )}
+                      {item?.creditsText ? (
+                        <p className="meta-text" style={{ marginTop: "8px" }}>
+                          {item.creditsText}
                         </p>
                       ) : null}
                     </div>
@@ -1616,6 +1697,107 @@ export const App = () => {
               {t(lang, "settings.resetAlarm.nextFire", {
                 countdown: formatCountdown(claudeBillingAt, now, lang),
                 resetTime: formatResetText(claudeBillingAt, lang),
+              })}
+            </p>
+          )}
+        </div>
+        )}
+
+        {settings.enableCodexMonitoring && (
+        <div className="quota-card service-block service-block-codex">
+          <div className="quota-header">
+            <strong>{serviceNames.codex}</strong>
+          </div>
+
+          {renderLowQuotaRow(
+            "alertLabel.codexSession",
+            "codexSessionLowThresholdPercent",
+            "enableCodexSessionLowAlert",
+          )}
+          {renderLowQuotaRow(
+            "alertLabel.codexWeekly",
+            "codexWeeklyLowThresholdPercent",
+            "enableCodexWeeklyLowAlert",
+          )}
+          {renderToggleOnlyRow(
+            "alertLabel.codexCooldown",
+            "enableCodexCooldownAlert",
+          )}
+
+          <label className="field switch-row" style={{ marginTop: "10px" }}>
+            <span>{t(lang, "settings.codexActivityPolling")}</span>
+            <input
+              type="checkbox"
+              className="toggle"
+              checked={settings.codexUseCliActivityPolling}
+              onChange={(event) =>
+                setSettings((prev) => ({
+                  ...prev,
+                  codexUseCliActivityPolling: event.target.checked,
+                }))
+              }
+            />
+          </label>
+
+          <label className="field switch-row" style={{ marginTop: "10px" }}>
+            <span>{t(lang, "alarm.when.codexSession")}</span>
+            <input
+              type="checkbox"
+              className="toggle"
+              checked={settings.enableCodexResetAlarm}
+              onChange={(event) =>
+                setSettings((prev) => ({
+                  ...prev,
+                  enableCodexResetAlarm: event.target.checked,
+                }))
+              }
+            />
+          </label>
+          {settings.enableCodexResetAlarm && snapshot?.codex.resetsAt && (
+            <p
+              className="meta-text"
+              style={{ margin: "2px 0 0", color: "#8b949e", fontSize: "12px" }}
+            >
+              {t(lang, "settings.resetAlarm.nextFire", {
+                countdown: formatCountdown(snapshot.codex.resetsAt, now, lang),
+                resetTime: formatResetText(snapshot.codex.resetsAt, lang),
+              })}
+            </p>
+          )}
+
+          <label className="field switch-row" style={{ marginTop: "10px" }}>
+            <span>{t(lang, "alarm.when.codexWeekly")}</span>
+            <input
+              type="checkbox"
+              className="toggle"
+              checked={settings.enableCodexWeeklyResetAlarm}
+              onChange={(event) =>
+                setSettings((prev) => ({
+                  ...prev,
+                  enableCodexWeeklyResetAlarm: event.target.checked,
+                }))
+              }
+            />
+          </label>
+          {settings.enableCodexWeeklyResetAlarm && snapshot?.codex.weeklyResetAt && (
+            <p
+              className="meta-text"
+              style={{
+                margin: "2px 0 0",
+                color: "#8b949e",
+                fontSize: "12px",
+              }}
+            >
+              {t(lang, "settings.resetAlarm.nextFire", {
+                countdown: formatCountdown(
+                  snapshot.codex.weeklyResetAt,
+                  now,
+                  lang,
+                ),
+                resetTime: formatResetText(
+                  snapshot.codex.weeklyResetAt,
+                  lang,
+                ),
               })}
             </p>
           )}

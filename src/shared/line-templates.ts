@@ -5,11 +5,13 @@ import { localeForLanguage, t } from "./i18n";
 // time. They mirror styles.css on purpose — change one and change the other:
 //   cursor  -> logo black / .progress-fill-cursor (grayscale)
 //   claude  -> terracotta / .progress-fill
+//   codex   -> gold yellow / .progress-fill-codex
 // The bar colour identifies the *service*, never the quota level; the one
 // exception is "quota used up", which is red for either service.
 export const SERVICE_ACCENT: Record<ServiceType, string> = {
   cursor: "#1F2328",
   claude: "#E8945A",
+  codex: "#E8C44A",
 };
 
 // Deliberately darker than --color-danger (#ff7d7d): that one is tuned for the

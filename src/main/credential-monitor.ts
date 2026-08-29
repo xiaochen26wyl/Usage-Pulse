@@ -10,18 +10,19 @@ import {
 } from "@shared/credential-utils";
 import { isDuplicateInCooldown } from "@shared/monitor-utils";
 import { t } from "@shared/i18n";
-import { readClaudeCredential, readCursorCredential, type RawCredential } from "@main/credential-provider";
+import { readClaudeCredential, readCodexCredential, readCursorCredential, type RawCredential } from "@main/credential-provider";
 import { buildPlainAlertFlex } from "@shared/line-templates";
 import { sendLineBroadcast } from "@main/line-notifier";
 import { sendPlainDesktopNotification } from "@main/notifiers";
 import { credentialStore, notificationStore, settingsStore, type CredentialRecord } from "@main/store";
 import { SERVICE_LABELS } from "./config";
 
-const SERVICES: ServiceType[] = ["cursor", "claude"];
+const SERVICES: ServiceType[] = ["cursor", "claude", "codex"];
 
-const enabledKeyMap: Record<ServiceType, "enableCursorMonitoring" | "enableClaudeMonitoring"> = {
+const enabledKeyMap: Record<ServiceType, "enableCursorMonitoring" | "enableClaudeMonitoring" | "enableCodexMonitoring"> = {
   cursor: "enableCursorMonitoring",
-  claude: "enableClaudeMonitoring"
+  claude: "enableClaudeMonitoring",
+  codex: "enableCodexMonitoring"
 };
 
 // The proactive sweep (checkAll/checkIfDue) must never probe a service the
@@ -37,7 +38,8 @@ const nowIso = () => new Date().toISOString();
 
 const readers: Record<ServiceType, () => Promise<RawCredential>> = {
   cursor: readCursorCredential,
-  claude: readClaudeCredential
+  claude: readClaudeCredential,
+  codex: readCodexCredential
 };
 
 const fingerprint = (token: string): string => createHash("sha256").update(token).digest("hex");
@@ -64,7 +66,7 @@ interface Probe {
  */
 export class CredentialMonitor extends EventEmitter {
   private timer: NodeJS.Timeout | null = null;
-  private inFlight: Record<ServiceType, Promise<CredentialStatus> | null> = { cursor: null, claude: null };
+  private inFlight: Record<ServiceType, Promise<CredentialStatus> | null> = { cursor: null, claude: null, codex: null };
   private refreshQuota: ((service: ServiceType) => Promise<unknown>) | null = null;
 
   /**
@@ -93,7 +95,8 @@ export class CredentialMonitor extends EventEmitter {
   getStatus(): AuthStatus {
     return {
       cursor: this.cachedStatus("cursor"),
-      claude: this.cachedStatus("claude")
+      claude: this.cachedStatus("claude"),
+      codex: this.cachedStatus("codex")
     };
   }
 
@@ -120,22 +123,31 @@ export class CredentialMonitor extends EventEmitter {
     }
   }
 
-  async check(service: ServiceType): Promise<CredentialStatus> {
+  async check(service: ServiceType, options: { refreshQuota?: boolean } = {}): Promise<CredentialStatus> {
     const existing = this.inFlight[service];
     if (existing) {
       return existing;
     }
 
-    const run = this.runCheck(service).finally(() => {
+    const run = this.runCheck(service, options).finally(() => {
       this.inFlight[service] = null;
     });
     this.inFlight[service] = run;
     return run;
   }
 
-  private async runCheck(service: ServiceType): Promise<CredentialStatus> {
+  private async runCheck(
+    service: ServiceType,
+    options: { refreshQuota?: boolean }
+  ): Promise<CredentialStatus> {
     const previous = credentialStore.get(service);
     const probe = this.probe(service, previous, await this.read(service));
+
+    // A quota request has already just been made by a deliberate manual flow.
+    // Refresh the credential row without spending another API request.
+    if (options.refreshQuota === false) {
+      return this.commit(service, probe);
+    }
 
     const rotated = Boolean(previous && probe.record && previous.fingerprint !== probe.record.fingerprint);
     const troubled = isCredentialUnusable(probe.status.state);

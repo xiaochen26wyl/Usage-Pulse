@@ -12,7 +12,7 @@ const windowOf = (partial: Partial<QuotaWindow> & Pick<QuotaWindow, "key">): Quo
   ...partial
 });
 
-const snapshotOf = (service: "cursor" | "claude", windows: QuotaWindow[], remaining: number | null = null): QuotaSnapshot => ({
+const snapshotOf = (service: "cursor" | "claude" | "codex", windows: QuotaWindow[], remaining: number | null = null): QuotaSnapshot => ({
   service,
   remaining,
   total: service === "cursor" ? 20 : 100,
@@ -25,9 +25,14 @@ const snapshotOf = (service: "cursor" | "claude", windows: QuotaWindow[], remain
   fetchedAt: "2026-01-01T00:00:00.000Z"
 });
 
-const combined = (cursor: QuotaSnapshot, claude: QuotaSnapshot): CombinedSnapshot => ({
+const combined = (
+  cursor: QuotaSnapshot,
+  claude: QuotaSnapshot,
+  codex: QuotaSnapshot = snapshotOf("codex", [])
+): CombinedSnapshot => ({
   cursor,
   claude,
+  codex,
   fetchedAt: "2026-01-01T00:00:00.000Z"
 });
 
@@ -76,6 +81,8 @@ test("computeSessionUsage reports remaining drop as consumed", () => {
   assert.equal(usage.claudeSession.used, 10);
   assert.equal(usage.claudeWeekly.kind, "consumed");
   assert.equal(usage.claudeWeekly.used, 5);
+  assert.equal(usage.codexSession.kind, "unknown");
+  assert.equal(usage.codexWeekly.kind, "unknown");
 });
 
 test("computeSessionUsage marks a remaining rise as reset", () => {
@@ -109,11 +116,40 @@ test("computeSessionUsage treats a used-percent drop as reset", () => {
   assert.equal(usage.cursorModels.kind, "reset");
 });
 
+test("computeSessionUsage reports Codex remaining drop as consumed", () => {
+  const baseline = combined(
+    snapshotOf("cursor", []),
+    snapshotOf("claude", []),
+    snapshotOf(
+      "codex",
+      [windowOf({ key: "session", remaining: 80, percent: 80 }), windowOf({ key: "weekly", remaining: 90, percent: 90 })],
+      80
+    )
+  );
+  const current = combined(
+    snapshotOf("cursor", []),
+    snapshotOf("claude", []),
+    snapshotOf(
+      "codex",
+      [windowOf({ key: "session", remaining: 70, percent: 70 }), windowOf({ key: "weekly", remaining: 85, percent: 85 })],
+      70
+    )
+  );
+
+  const usage = computeSessionUsage(baseline, current);
+  assert.equal(usage.codexSession.kind, "consumed");
+  assert.equal(usage.codexSession.used, 10);
+  assert.equal(usage.codexWeekly.kind, "consumed");
+  assert.equal(usage.codexWeekly.used, 5);
+});
+
 test("computeSessionUsage is unknown without snapshots", () => {
   const usage = computeSessionUsage(null, null);
   assert.equal(usage.billing.kind, "unknown");
   assert.equal(usage.claudeSession.kind, "unknown");
   assert.equal(usage.claudeWeekly.kind, "unknown");
+  assert.equal(usage.codexSession.kind, "unknown");
+  assert.equal(usage.codexWeekly.kind, "unknown");
 });
 
 test("addWaterCup only accepts the three cup sizes", () => {

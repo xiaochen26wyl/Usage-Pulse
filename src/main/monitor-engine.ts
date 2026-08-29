@@ -24,6 +24,7 @@ import {
   readClaudeCliActivity,
   readClaudeCliQuotaEvents
 } from "@main/collectors/claude-cli-log";
+import { readCodexCliActivity } from "@main/collectors/codex-cli-activity";
 import { credentialStore, notificationStore, settingsStore, snapshotStore } from "@main/store";
 import { SERVICE_LABELS } from "./config";
 
@@ -37,9 +38,11 @@ const CONFIRM_DELAY_MS = 90_000;
 // The floor between two Claude Code usage requests. Every automatic path —
 // the schedule, the credential sweep's self-heal, a rotation — funnels through
 // this, so no combination of triggers can turn into a burst of API traffic.
-// Only a deliberate user action ("manual") and the single-shot confirmation
-// re-read ("confirm") are allowed past it; both are bounded by construction.
+// Deliberate user actions ("manual"), credential verification after a Keychain
+// update ("credential"), and the single-shot confirmation re-read ("confirm")
+// are allowed past it; each is bounded by construction.
 const MIN_CLAUDE_FETCH_GAP_MS = 5 * 60_000;
+const MIN_CODEX_FETCH_GAP_MS = 5 * 60_000;
 
 // A recovered reading must clear its threshold by more than this many points
 // before the low-quota latch is cleared, so rounding/borderline noise right
@@ -88,8 +91,10 @@ const toPercent = (remaining: number | null, total: number | null): number | nul
 const findWindow = (windows: QuotaWindow[], key: string): QuotaWindow | null =>
   windows.find((window) => window.key === key) ?? null;
 
-const findClaudeWeeklyWindow = (windows: QuotaWindow[]): QuotaWindow | null =>
+const findWeeklyWindow = (windows: QuotaWindow[]): QuotaWindow | null =>
   findWindow(windows, "weekly_all") ?? findWindow(windows, "weekly_scoped") ?? findWindow(windows, "weekly");
+
+const findClaudeWeeklyWindow = (windows: QuotaWindow[]): QuotaWindow | null => findWeeklyWindow(windows);
 
 // Claude Code windows store `percent` as remaining%; low means it's at or
 // below the threshold, same semantics as the old top-level check.
@@ -163,6 +168,15 @@ const evaluateClaudeLowFlags = (windows: QuotaWindow[], settings: AppSettings): 
   };
 };
 
+const evaluateCodexLowFlags = (windows: QuotaWindow[], settings: AppSettings): ClaudeLowFlags => {
+  const session = claudeWindowState(findWindow(windows, "session"), settings.codexSessionLowThresholdPercent);
+  return {
+    session,
+    weekly: claudeWindowState(findWindow(windows, "weekly"), settings.codexWeeklyLowThresholdPercent),
+    cooldownActive: session.exhausted
+  };
+};
+
 // Next polling delay for `service`, based on the most recently fetched
 // snapshot: fast tier if any of its windows is at or below the fast-poll
 // threshold, normal tier otherwise (including when there's no snapshot yet).
@@ -174,7 +188,10 @@ const nextPollDelayMs = (service: ServiceType): number => {
       ? cursorWindowState(findWindow(windows, "cursor_models"), FAST_POLL_THRESHOLD_PERCENT).low ||
         cursorWindowState(findWindow(windows, "other_models"), FAST_POLL_THRESHOLD_PERCENT).low
       : claudeWindowState(findWindow(windows, "session"), FAST_POLL_THRESHOLD_PERCENT).low ||
-        claudeWindowState(findClaudeWeeklyWindow(windows), FAST_POLL_THRESHOLD_PERCENT).low;
+        claudeWindowState(
+          service === "codex" ? findWindow(windows, "weekly") : findClaudeWeeklyWindow(windows),
+          FAST_POLL_THRESHOLD_PERCENT
+        ).low;
   return isLow ? FAST_POLL_INTERVAL_MS : NORMAL_POLL_INTERVAL_MS;
 };
 
@@ -199,12 +216,18 @@ const makeQuotaSnapshot = (
     isError,
     errorCode,
     source,
-    credentialSource
+    credentialSource,
+    creditsText
   } = scrapeResult;
   const percent = toPercent(remaining, total);
 
   const cursorFlags = service === "cursor" ? evaluateCursorLowFlags(windows, settings) : null;
-  const claudeFlags = service === "claude" ? evaluateClaudeLowFlags(windows, settings) : null;
+  const claudeFlags =
+    service === "claude"
+      ? evaluateClaudeLowFlags(windows, settings)
+      : service === "codex"
+        ? evaluateCodexLowFlags(windows, settings)
+        : null;
   const anyLow = cursorFlags
     ? cursorFlags.advancedModels.low || cursorFlags.models.low
     : claudeFlags
@@ -233,6 +256,7 @@ const makeQuotaSnapshot = (
       errorCode,
       source,
       credentialSource,
+      creditsText,
       fetchedAt: nowIso()
     },
     cursorFlags,
@@ -273,17 +297,18 @@ const makeReason = (changed: boolean, lowServices: ServiceType[], lang: AppSetti
   return t(lang, "reason.noChange");
 };
 
-const SERVICES: ServiceType[] = ["cursor", "claude"];
+const SERVICES: ServiceType[] = ["cursor", "claude", "codex"];
 
 export class MonitorEngine extends EventEmitter {
-  private timers: Record<ServiceType, NodeJS.Timeout | null> = { cursor: null, claude: null };
-  private isRunning: Record<ServiceType, boolean> = { cursor: false, claude: false };
+  private timers: Record<ServiceType, NodeJS.Timeout | null> = { cursor: null, claude: null, codex: null };
+  private isRunning: Record<ServiceType, boolean> = { cursor: false, claude: false, codex: false };
   // At most one outstanding confirmation per service: a re-arm replaces the
   // pending one rather than stacking a second request behind it.
-  private confirmTimers: Record<ServiceType, NodeJS.Timeout | null> = { cursor: null, claude: null };
+  private confirmTimers: Record<ServiceType, NodeJS.Timeout | null> = { cursor: null, claude: null, codex: null };
   // When a Claude Code usage request was last issued, for the rate floor and
   // for deciding whether the CLI has done anything since.
   private lastClaudeFetchMs = 0;
+  private lastCodexFetchMs = 0;
 
   private shouldNotify(scope: string, key: string, settings: AppSettings): boolean {
     const cooldownMs = settings.notifyCooldownMinutes * 60_000;
@@ -328,15 +353,12 @@ export class MonitorEngine extends EventEmitter {
    * follow-up before it ever got to run, silently dropping every held alert.
    */
   stop(): void {
-    // Both services re-arm a timeout after each tick — Cursor's interval and
-    // Claude's idle-stretching both need to pick their own next delay.
-    if (this.timers.cursor) {
-      clearTimeout(this.timers.cursor);
-      this.timers.cursor = null;
-    }
-    if (this.timers.claude) {
-      clearTimeout(this.timers.claude);
-      this.timers.claude = null;
+    for (const service of SERVICES) {
+      const existing = this.timers[service];
+      if (existing) {
+        clearTimeout(existing);
+        this.timers[service] = null;
+      }
     }
     alarmService.stop();
   }
@@ -354,6 +376,10 @@ export class MonitorEngine extends EventEmitter {
     // Anthropic a question whose answer cannot have changed.
     if (settings.enableClaudeMonitoring) {
       this.scheduleClaudeTick(nextPollDelayMs("claude"));
+    }
+
+    if (settings.enableCodexMonitoring) {
+      this.scheduleCodexTick(nextPollDelayMs("codex"));
     }
 
     // Reapply alarms based on new settings
@@ -438,6 +464,53 @@ export class MonitorEngine extends EventEmitter {
     } finally {
       if (settingsStore.get().enableClaudeMonitoring) {
         this.scheduleClaudeTick(nextPollDelayMs("claude"));
+      }
+    }
+  }
+
+  private scheduleCodexTick(delayMs: number): void {
+    const existing = this.timers.codex;
+    if (existing) {
+      clearTimeout(existing);
+    }
+    this.timers.codex = setTimeout(() => {
+      void this.codexTick();
+    }, delayMs);
+  }
+
+  private async codexHasActivitySinceLastFetch(): Promise<boolean> {
+    if (this.lastCodexFetchMs === 0) {
+      return true;
+    }
+    const rotatedAt = credentialStore.get("codex")?.rotatedAt;
+    if (rotatedAt && Date.parse(rotatedAt) > this.lastCodexFetchMs) {
+      return true;
+    }
+    try {
+      const activity = await readCodexCliActivity();
+      if (!activity.lastActivityAt) {
+        return activity.fileCount === 0;
+      }
+      return Date.parse(activity.lastActivityAt) > this.lastCodexFetchMs;
+    } catch {
+      return true;
+    }
+  }
+
+  private async codexTick(): Promise<void> {
+    const settings = settingsStore.get();
+
+    try {
+      if (settings.codexUseCliActivityPolling && !(await this.codexHasActivitySinceLastFetch())) {
+        // Idle tick: no fetch.
+      } else {
+        await this.checkService("codex", "scheduled");
+      }
+    } catch (error) {
+      this.emit("error", error);
+    } finally {
+      if (settingsStore.get().enableCodexMonitoring) {
+        this.scheduleCodexTick(nextPollDelayMs("codex"));
       }
     }
   }
@@ -709,21 +782,99 @@ export class MonitorEngine extends EventEmitter {
     return notified;
   }
 
+  private handleCodexLowAlerts(
+    flags: ClaudeLowFlags,
+    settings: AppSettings,
+    combined: CombinedSnapshot,
+    lang: AppSettings["language"]
+  ): boolean {
+    let notified = false;
+    const codexSnapshot = combined.codex;
+
+    if (settings.enableCodexSessionLowAlert) {
+      notified =
+        this.fireWindowAlert({
+          service: "codex",
+          state: flags.session,
+          lowId: "codex-session-low",
+          label: t(lang, "alertLabel.codexSession"),
+          threshold: settings.codexSessionLowThresholdPercent,
+          settings,
+          combined,
+          lang,
+          fallbackResetAt: codexSnapshot.resetsAt
+        }) || notified;
+    }
+
+    if (settings.enableCodexWeeklyLowAlert) {
+      notified =
+        this.fireWindowAlert({
+          service: "codex",
+          state: flags.weekly,
+          lowId: "codex-weekly-low",
+          exhaustedId: "codex-weekly-exhausted",
+          label: t(lang, "alertLabel.codexWeekly"),
+          threshold: settings.codexWeeklyLowThresholdPercent,
+          settings,
+          combined,
+          lang,
+          fallbackResetAt: codexSnapshot.weeklyResetAt ?? null
+        }) || notified;
+    }
+
+    if (flags.cooldownActive && codexSnapshot.resetsAt) {
+      if (settings.enableCodexCooldownAlert) {
+        const label = t(lang, "alertLabel.codexCooldown");
+        notified =
+          this.fireLowQuotaAlert({
+            id: "codex-cooldown",
+            service: "codex",
+            kind: "low",
+            dedupeKey: codexSnapshot.resetsAt,
+            remainingPercent: 0,
+            resetAt: codexSnapshot.resetsAt,
+            label,
+            reason: t(lang, "reason.codexCooldownNotify", {
+              resetTime: new Date(codexSnapshot.resetsAt).toLocaleString(localeForLanguage(lang))
+            }),
+            settings,
+            combined,
+            countdownTarget: codexSnapshot.resetsAt
+          }) || notified;
+      }
+    } else {
+      notificationStore.clear("lowquota:codex-cooldown");
+    }
+
+    return notified;
+  }
+
   /**
    * Whether this Claude Code request must be dropped to respect the rate floor.
    *
-   * "manual" is the user asking, and "confirm" is the single-shot follow-up to
-   * a held alert — both are bounded by a human action or by one pending timer,
-   * so neither can accumulate into traffic worth worrying about.
+   * "manual" is the user asking, "credential" verifies a newly observed
+   * Keychain value, and "confirm" is the single-shot follow-up to a held alert.
+   * Each is bounded by a human action, a credential rotation, or one pending
+   * timer, so none can accumulate into traffic worth worrying about.
    */
   private shouldThrottleClaude(trigger: TriggerType): boolean {
-    if (trigger === "manual" || trigger === "confirm") {
+    if (trigger === "manual" || trigger === "credential" || trigger === "confirm") {
       return false;
     }
     if (this.lastClaudeFetchMs === 0) {
       return false;
     }
     return Date.now() - this.lastClaudeFetchMs < MIN_CLAUDE_FETCH_GAP_MS;
+  }
+
+  private shouldThrottleCodex(trigger: TriggerType): boolean {
+    if (trigger === "manual" || trigger === "confirm") {
+      return false;
+    }
+    if (this.lastCodexFetchMs === 0) {
+      return false;
+    }
+    return Date.now() - this.lastCodexFetchMs < MIN_CODEX_FETCH_GAP_MS;
   }
 
   /**
@@ -733,6 +884,7 @@ export class MonitorEngine extends EventEmitter {
    * reading that looks perfectly healthy needs no follow-up request.
    */
   private wouldAlert(
+    service: ServiceType,
     cursorFlags: CursorLowFlags | null,
     claudeFlags: ClaudeLowFlags | null,
     settings: AppSettings
@@ -744,11 +896,18 @@ export class MonitorEngine extends EventEmitter {
         (settings.enableCursorModelsLowAlert && (cursorFlags.models.low || cursorFlags.models.exhausted))
       );
     }
-    if (claudeFlags) {
+    if (service === "claude" && claudeFlags) {
       return (
         (settings.enableClaudeSessionLowAlert && claudeFlags.session.low) ||
         (settings.enableClaudeWeeklyLowAlert && (claudeFlags.weekly.low || claudeFlags.weekly.exhausted)) ||
         (settings.enableClaudeCooldownAlert && claudeFlags.cooldownActive)
+      );
+    }
+    if (service === "codex" && claudeFlags) {
+      return (
+        (settings.enableCodexSessionLowAlert && claudeFlags.session.low) ||
+        (settings.enableCodexWeeklyLowAlert && (claudeFlags.weekly.low || claudeFlags.weekly.exhausted)) ||
+        (settings.enableCodexCooldownAlert && claudeFlags.cooldownActive)
       );
     }
     return false;
@@ -830,7 +989,12 @@ export class MonitorEngine extends EventEmitter {
       // rotation, a self-heal and a scheduled tick landing together still cost
       // one request rather than three.
       if (service === "claude" && previousSnapshot && this.shouldThrottleClaude(trigger)) {
-        console.log(`[Usage-Pulse] claude fetch skipped (${trigger}): minimum gap not elapsed`);
+        // Startup may arrive immediately after credentialMonitor's one repair
+        // request. That request already updated the snapshot, so this is a
+        // normal de-duplication rather than a failed startup refresh.
+        if (trigger !== "startup") {
+          console.log(`[Usage-Pulse] claude fetch skipped (${trigger}): minimum gap not elapsed`);
+        }
         return {
           snapshot: previousSnapshot,
           changed: false,
@@ -840,8 +1004,22 @@ export class MonitorEngine extends EventEmitter {
         };
       }
 
+      if (service === "codex" && previousSnapshot && this.shouldThrottleCodex(trigger)) {
+        console.log(`[Usage-Pulse] codex fetch skipped (${trigger}): minimum gap not elapsed`);
+        return {
+          snapshot: previousSnapshot,
+          changed: false,
+          lowAlert: previousSnapshot.codex.status === "low",
+          notified: false,
+          reason: t(lang, "reason.noChange")
+        };
+      }
+
       if (service === "claude") {
         this.lastClaudeFetchMs = Date.now();
+      }
+      if (service === "codex") {
+        this.lastCodexFetchMs = Date.now();
       }
 
       const scrapeResult = await scrapeQuota(service);
@@ -866,28 +1044,13 @@ export class MonitorEngine extends EventEmitter {
     if (service === "claude") {
       this.lastClaudeFetchMs = Date.now();
     }
+    if (service === "codex") {
+      this.lastCodexFetchMs = Date.now();
+    }
 
     const settings = settingsStore.get();
     const lang = settings.language;
 
-    // A stored fallback token never carries its own expiry (see
-    // credential-provider's toCredential for a setup-token capture), so the
-    // periodic credential sweep can never see it go stale on its own — this
-    // 401 is the only unambiguous proof it's dead.
-    //
-    // Dropping it is only safe once two things are known, and neither can be
-    // checked from here: that this 401 belongs to the stored token rather than
-    // to a source outranking it, and that something different sits underneath
-    // to fall back to. Both need an await (peeking the Keychain), and this
-    // method is synchronous by contract. So report the suspicion and let the
-    // listener in index.ts decide — see claude-fallback-decision.ts.
-    if (
-      service === "claude" &&
-      scrapeResult.errorCode === "claudeLoginExpired" &&
-      settings.claudeManualOAuthToken
-    ) {
-      this.emit("claude-fallback-suspect", scrapeResult.credentialSource);
-    }
     const previous = previousServiceSnapshot ?? snapshotStore.get()?.[service] ?? null;
     const { snapshot: nextServiceSnapshot, cursorFlags, claudeFlags } = makeQuotaSnapshot(
       service,
@@ -901,12 +1064,10 @@ export class MonitorEngine extends EventEmitter {
     // that update; reading fresh here (with no further await before the write)
     // guarantees this write only replaces this service's own key.
     const latestCombined = snapshotStore.get();
-    const otherService: ServiceType = service === "cursor" ? "claude" : "cursor";
-    const otherServiceSnapshot = latestCombined ? latestCombined[otherService] : nextServiceSnapshot;
-
     const combined: CombinedSnapshot = {
-      cursor: service === "cursor" ? nextServiceSnapshot : otherServiceSnapshot,
-      claude: service === "claude" ? nextServiceSnapshot : otherServiceSnapshot,
+      cursor: service === "cursor" ? nextServiceSnapshot : (latestCombined?.cursor ?? unknownSnapshot("cursor")),
+      claude: service === "claude" ? nextServiceSnapshot : (latestCombined?.claude ?? unknownSnapshot("claude")),
+      codex: service === "codex" ? nextServiceSnapshot : (latestCombined?.codex ?? unknownSnapshot("codex")),
       fetchedAt: nowIso()
     };
 
@@ -940,7 +1101,7 @@ export class MonitorEngine extends EventEmitter {
     if (cold) {
       // A trustworthy reading that already looks like an emergency still gets
       // its day in court, just not immediately.
-      if (isTrusted(nextServiceSnapshot) && this.wouldAlert(cursorFlags, claudeFlags, settings)) {
+      if (isTrusted(nextServiceSnapshot) && this.wouldAlert(service, cursorFlags, claudeFlags, settings)) {
         console.log(`[Usage-Pulse] ${service} alert held: cold reading, confirming in 90s`);
         this.scheduleConfirmation(service);
       }
@@ -948,8 +1109,11 @@ export class MonitorEngine extends EventEmitter {
       if (cursorFlags) {
         notified = this.handleCursorLowAlerts(cursorFlags, settings, combined, lang) || notified;
       }
-      if (claudeFlags) {
+      if (claudeFlags && service === "claude") {
         notified = this.handleClaudeLowAlerts(claudeFlags, settings, combined, lang) || notified;
+      }
+      if (claudeFlags && service === "codex") {
+        notified = this.handleCodexLowAlerts(claudeFlags, settings, combined, lang) || notified;
       }
     }
 
@@ -980,30 +1144,33 @@ export class MonitorEngine extends EventEmitter {
 
   async runCheck(trigger: TriggerType): Promise<MonitorResult> {
     const settings = settingsStore.get();
-    const [cursorResult, claudeResult] = await Promise.all([
+    const [cursorResult, claudeResult, codexResult] = await Promise.all([
       settings.enableCursorMonitoring ? this.checkService("cursor", trigger) : Promise.resolve(null),
-      settings.enableClaudeMonitoring ? this.checkService("claude", trigger) : Promise.resolve(null)
+      settings.enableClaudeMonitoring ? this.checkService("claude", trigger) : Promise.resolve(null),
+      settings.enableCodexMonitoring ? this.checkService("codex", trigger) : Promise.resolve(null)
     ]);
 
     const lang = settings.language;
     const noChangeText = t(lang, "reason.noChange");
-    const reasons = [cursorResult?.reason, claudeResult?.reason].filter(
+    const reasons = [cursorResult?.reason, claudeResult?.reason, codexResult?.reason].filter(
       (reason): reason is string => Boolean(reason) && reason !== noChangeText
     );
     const stored = this.getLatestSnapshot();
     const snapshot: CombinedSnapshot = stored ??
       cursorResult?.snapshot ??
-      claudeResult?.snapshot ?? {
+      claudeResult?.snapshot ??
+      codexResult?.snapshot ?? {
         cursor: unknownSnapshot("cursor"),
         claude: unknownSnapshot("claude"),
+        codex: unknownSnapshot("codex"),
         fetchedAt: nowIso()
       };
 
     return {
       snapshot,
-      changed: Boolean(cursorResult?.changed || claudeResult?.changed),
-      lowAlert: Boolean(cursorResult?.lowAlert || claudeResult?.lowAlert),
-      notified: Boolean(cursorResult?.notified || claudeResult?.notified),
+      changed: Boolean(cursorResult?.changed || claudeResult?.changed || codexResult?.changed),
+      lowAlert: Boolean(cursorResult?.lowAlert || claudeResult?.lowAlert || codexResult?.lowAlert),
+      notified: Boolean(cursorResult?.notified || claudeResult?.notified || codexResult?.notified),
       reason: reasons.length > 0 ? reasons.join("；") : noChangeText
     };
   }

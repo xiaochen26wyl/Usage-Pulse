@@ -4,11 +4,14 @@ import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import type { Language } from "@shared/types";
 import { t } from "@shared/i18n";
+import { isClaudeAuthCodePrompt } from "@shared/claude-auth";
 
 export const ClaudeLoginApp = () => {
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const outputBufferRef = useRef("");
   const [lang, setLang] = useState<Language>("zh");
   const [exited, setExited] = useState(false);
+  const [authCodePrompted, setAuthCodePrompted] = useState(false);
 
   useEffect(() => {
     window.usagePulse
@@ -45,6 +48,10 @@ export const ClaudeLoginApp = () => {
 
     const unsubscribeData = window.usagePulse.onClaudeLoginData((chunk) => {
       term.write(chunk);
+      outputBufferRef.current = `${outputBufferRef.current}${chunk}`.slice(-2_000);
+      if (isClaudeAuthCodePrompt(outputBufferRef.current)) {
+        setAuthCodePrompted(true);
+      }
     });
     const unsubscribeExit = window.usagePulse.onClaudeLoginExit(() => {
       setExited(true);
@@ -76,6 +83,11 @@ export const ClaudeLoginApp = () => {
       {exited ? (
         <p style={{ margin: 0, padding: "6px 14px", fontSize: 12, color: "#f0b429", background: "#2a2410" }}>
           {t(lang, "claudeLogin.exited")}
+        </p>
+      ) : null}
+      {authCodePrompted && !exited ? (
+        <p style={{ margin: 0, padding: "8px 14px", fontSize: 12, color: "#9ee7ff", background: "#102631" }}>
+          {t(lang, "claudeLogin.authCodePrompt")}
         </p>
       ) : null}
       <div ref={containerRef} style={{ flex: 1, padding: "8px", minHeight: 0 }} />

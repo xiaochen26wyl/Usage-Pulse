@@ -136,6 +136,12 @@ const removeFile = async (path: string): Promise<void> => {
 };
 
 const clearAppLoginItem = (): void => {
+  // Development runs are not a registered macOS/Windows application and
+  // Electron logs an Operation not permitted warning if asked to manage a
+  // login item for them.
+  if (!app.isPackaged) {
+    return;
+  }
   app.setLoginItemSettings({ openAtLogin: false });
 };
 

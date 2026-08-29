@@ -10,6 +10,7 @@ import type {
   CombinedSnapshot,
   CredentialState,
   Language,
+  QuotaSnapshot,
   ServiceType,
   TrayValueColorMode
 } from "@shared/types";
@@ -24,7 +25,7 @@ const LANGUAGES: ReadonlySet<Language> = new Set(["zh", "en", "ja", "ko"]);
 // Settings fields listed here are encrypted at rest via the OS keychain (see secure-store.ts)
 // whenever they're written to the electron-store JSON file, and decrypted on read. Add future
 // secrets (e.g. additional LINE keys) to this list rather than storing them in plain text.
-const SECRET_SETTINGS_KEYS: Array<keyof AppSettings> = ["lineChannelAccessToken", "claudeManualOAuthToken"];
+const SECRET_SETTINGS_KEYS: Array<keyof AppSettings> = ["lineChannelAccessToken"];
 
 const asStringRecord = (settings: AppSettings) => settings as unknown as Record<string, string>;
 
@@ -88,6 +89,8 @@ const clamp = (value: number, min: number, max: number) => Math.min(max, Math.ma
 
 type StoredSettings = AppSettings & {
   launchAtLogin?: boolean;
+  claudeManualOAuthToken?: string;
+  claudeManualOAuthTokenExpiresAt?: string | null;
   enableClaudeWeeklyResetAlarm?: boolean;
   enableClaudeBillingAlarm?: boolean;
   claudeBillingCadence?: ClaudeBillingCadence;
@@ -103,7 +106,12 @@ const migrateClaudeBillingCadence = (raw: StoredSettings): ClaudeBillingCadence 
 
 const readSettings = (): AppSettings => {
   const raw = store.get("settings") as StoredSettings;
-  const { launchAtLogin: _legacy, ...rest } = raw;
+  const {
+    launchAtLogin: _legacy,
+    claudeManualOAuthToken: _legacyClaudeToken,
+    claudeManualOAuthTokenExpiresAt: _legacyClaudeTokenExpiresAt,
+    ...rest
+  } = raw;
   return decryptSettings({
     ...DEFAULT_SETTINGS,
     ...rest,
@@ -135,6 +143,8 @@ export const settingsStore = {
     merged.cursorModelsLowThresholdPercent = clamp(Number(merged.cursorModelsLowThresholdPercent || 20), 5, 30);
     merged.claudeSessionLowThresholdPercent = clamp(Number(merged.claudeSessionLowThresholdPercent || 20), 5, 30);
     merged.claudeWeeklyLowThresholdPercent = clamp(Number(merged.claudeWeeklyLowThresholdPercent || 20), 5, 30);
+    merged.codexSessionLowThresholdPercent = clamp(Number(merged.codexSessionLowThresholdPercent || 20), 5, 30);
+    merged.codexWeeklyLowThresholdPercent = clamp(Number(merged.codexWeeklyLowThresholdPercent || 20), 5, 30);
     merged.notifyCooldownMinutes = Number.isFinite(Number(merged.notifyCooldownMinutes))
       ? clamp(Number(merged.notifyCooldownMinutes), 1, 240)
       : 15;
@@ -149,8 +159,13 @@ export const settingsStore = {
     merged.enableWaterReminder = Boolean(merged.enableWaterReminder);
     merged.enableCursorMonitoring = Boolean(merged.enableCursorMonitoring);
     merged.enableClaudeMonitoring = Boolean(merged.enableClaudeMonitoring);
+    merged.enableCodexMonitoring = Boolean(merged.enableCodexMonitoring);
     merged.enableClaudeWeeklyResetAlarm = Boolean(merged.enableClaudeWeeklyResetAlarm);
     merged.enableClaudeBillingAlarm = Boolean(merged.enableClaudeBillingAlarm);
+    merged.enableCodexResetAlarm = Boolean(merged.enableCodexResetAlarm);
+    merged.enableCodexWeeklyResetAlarm = Boolean(merged.enableCodexWeeklyResetAlarm);
+    merged.enableCodexCooldownAlert = Boolean(merged.enableCodexCooldownAlert);
+    merged.codexUseCliActivityPolling = Boolean(merged.codexUseCliActivityPolling);
     merged.claudeBillingCadence = merged.claudeBillingCadence === "annual" ? "annual" : "monthly";
     if (merged.launchAtStartup && merged.launchWithIde) {
       if (patch.launchAtStartup === true) {
@@ -164,9 +179,35 @@ export const settingsStore = {
   }
 };
 
+const emptyQuotaSnapshot = (service: ServiceType, fetchedAt: string): QuotaSnapshot => ({
+  service,
+  remaining: null,
+  total: null,
+  percent: null,
+  unit: service === "cursor" ? "usd" : "percent",
+  resetsAt: null,
+  windows: [],
+  status: "unknown",
+  message: "",
+  fetchedAt
+});
+
+const hydrateCombinedSnapshot = (raw: CombinedSnapshot | null): CombinedSnapshot | null => {
+  if (!raw) {
+    return null;
+  }
+  const fetchedAt = raw.fetchedAt || "";
+  return {
+    cursor: raw.cursor ?? emptyQuotaSnapshot("cursor", fetchedAt),
+    claude: raw.claude ?? emptyQuotaSnapshot("claude", fetchedAt),
+    codex: raw.codex ?? emptyQuotaSnapshot("codex", fetchedAt),
+    fetchedAt
+  };
+};
+
 export const snapshotStore = {
   get(): CombinedSnapshot | null {
-    return store.get("lastSnapshot");
+    return hydrateCombinedSnapshot(store.get("lastSnapshot"));
   },
   set(snapshot: CombinedSnapshot): void {
     store.set("lastSnapshot", snapshot);

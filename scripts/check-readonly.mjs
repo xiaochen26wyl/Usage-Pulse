@@ -12,7 +12,12 @@ const sensitiveHints = [
   // The Claude Code CLI session logs. Not a credential, but the same rule
   // applies: Usage-Pulse reads the IDE's own files and never writes to them.
   "claude_config_dir",
-  ".jsonl"
+  ".jsonl",
+  "auth.json",
+  // Directory / env forms only — the bare `.codex` substring also matches
+  // `snapshot.codex` and would pull every third-service file into the scan.
+  "~/.codex",
+  "codex_home"
 ];
 const writeHints = [
   "writefile(",

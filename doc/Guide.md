@@ -36,41 +36,32 @@
 - `monitor-engine.ts` `cursorWindowState` converts Cursor used% to remaining% before the low-quota check, so downstream alerts never have to care which way a collector counts.
 
 #### Claude Code
-- Local source (priority order):
-  - `CLAUDE_CODE_OAUTH_TOKEN`
-  - The token stored from the re-detect / paste flow, encrypted (`claudeManualOAuthToken`)
+- Local source:
   - macOS Keychain `Claude Code-credentials`
-  - `~/.claude/.credentials.json` (or `CLAUDE_CONFIG_DIR/.credentials.json`)
 - Remote source: `https://api.anthropic.com/api/oauth/usage`
 - Corroborating local source: `~/.claude/projects/**/*.jsonl`, read-only, only the
   `quotaLimits` records — see "Restraint on the usage API" below
 - Metrics: remaining percentage for the 5-hour window and weekly quota
 
 #### Re-detecting a Claude Code credential
-Claude's **Re-detect Credentials** button (`credential:run-setup-token`) first peeks
-the `Claude Code-credentials` Keychain item. If that item is present and not past
-its recorded expiry, the encrypted fallback is dropped so it cannot shadow Keychain,
-then a single usage-API check runs. Only if Keychain is missing, expired, or that
-check comes back empty does the app open an **in-app** login window.
+On startup, `credentialMonitor.checkAll()` first checks whether the
+`Claude Code-credentials` Keychain item exists. The startup usage pass then calls
+the usage API once so the interface reflects the stored credential immediately.
+If Keychain is missing, or the usage API returns `claudeLoginExpired`, the Claude
+card shows **Get Credentials**.
 
 That window (`claude-login.html` / `ClaudeLoginApp.tsx`) hosts an xterm.js view of a
-`node-pty` session running `claude setup-token` (`claude-login-pty.ts`). Trusted
-`https://claude.ai` / `anthropic.com` auth URLs are opened with `shell.openExternal`.
-The printed `sk-ant-oat01-` token is parsed from the PTY buffer. Main then pushes
-`credential:manual-token-captured` to the tray window; **Settings does not currently
-subscribe**, so persistence is the paste box that appears as soon as re-detect is
-clicked → `credential:submit-manual-token` → `persistClaudeToken`. That path verifies
-against the usage API (a failed scrape still stores the token), writes the same
-Keychain item, and keeps an encrypted app-store copy as a fallback when the Keychain
-write cannot be confirmed.
-
-The fallback copy is encrypted at rest and never handed back to a renderer —
-`settings:get` returns a placeholder. There is no manual-clear button. A 401
-(`claudeLoginExpired`) does **not** always drop it: `decideClaudeFallbackClear`
-clears only when the rejected request used the `manual` source **and** the token
-underneath (Keychain / file) is a *different* value. Same-token or no next layer
-(Windows / Linux with no Keychain) keeps the fallback. Re-detect that finds a
-usable Keychain entry drops the fallback proactively.
+`node-pty` session running `claude setup-token` (`claude-login-pty.ts`). The
+official CLI opens its own browser page; Usage-Pulse only displays the PTY output
+and does not open the URL a second time.
+Usage-Pulse does not parse or auto-store the printed `sk-ant-oat01-` token. After
+browser authorization, the user pastes the one-time Authentication code into the
+in-app PTY and presses Enter. Once the CLI exchanges it, the user manually copies
+the printed long-lived token from the command window into the Settings paste box,
+then clicks **Save Credential**. That sends `credential:submit-manual-token` to main,
+where `persistClaudeToken` validates the token shape, writes it to the same
+Keychain item via `writeClaudeSetupTokenToKeychain`, and runs one usage-API check.
+The token is not retained in the app settings as a second Claude credential.
 
 The old system-Terminal + `tee` + `setup-token-capture.txt` path is gone. Usage-Pulse
 owns the PTY so the CLI sees a real TTY; the only visible "terminal" is the in-app
@@ -177,7 +168,7 @@ Two failure modes of the old reset alert are fixed here:
 ### Security constraints
 - OAuth tokens are only held briefly in memory except for the setup-token exception below.
 - Writing to `state.vscdb` or `.credentials.json` is forbidden.
-- The one Keychain write is the long-lived token from `claude setup-token`, stored in `Claude Code-credentials` after the user completes official CLI OAuth (via the in-app PTY window, then paste → `persistClaudeToken`).
+- The one Keychain write is the long-lived token from `claude setup-token`, stored in `Claude Code-credentials` after the user completes official CLI OAuth (browser Authentication code → in-app PTY → long-lived token in the main window → `persistClaudeToken`).
 - During login the token is visible in the in-app xterm scrollback; raw PTY output reaches the login renderer over `claude-login:data`. It no longer lands in a system Terminal or a `tee` capture file.
 - On a 401 or missing quota data, return an actionable error message; never perform automatic token refresh.
 
@@ -247,36 +238,29 @@ Two failure modes of the old reset alert are fixed here:
 - `monitor-engine.ts` 的 `cursorWindowState` 會把 Cursor 的 used% 轉成 remaining% 再判斷低額度，下游警告不必管 collector 怎麼計。
 
 #### Claude Code
-- 本機來源（優先序）：
-  - `CLAUDE_CODE_OAUTH_TOKEN`
-  - 「重新偵測／貼上」流程存下的 token，加密存放（`claudeManualOAuthToken`）
+- 本機來源：
   - macOS Keychain `Claude Code-credentials`
-  - `~/.claude/.credentials.json`（或 `CLAUDE_CONFIG_DIR/.credentials.json`）
 - 遠端來源：`https://api.anthropic.com/api/oauth/usage`
 - 佐證用本機來源：`~/.claude/projects/**/*.jsonl`，唯讀，且只取 `quotaLimits`
   紀錄——詳見下方「對 usage API 的節制」
 - 指標：5 小時視窗與每週配額剩餘百分比
 
 #### 重新偵測 Claude Code 憑證
-Claude 的「重新偵測憑證」（`credential:run-setup-token`）會先 peek Keychain 的
-`Claude Code-credentials`。若該項目存在且未過記錄的到期日，會先丢掉加密備援以免蓋住
-Keychain，再打一次 usage API。只有 Keychain 沒有、已過期、或那次檢查空手，才開啟
-**App 內**登入視窗。
+啟動時，`credentialMonitor.checkAll()` 會先檢查 `Claude Code-credentials`
+Keychain 項目是否存在。接著 startup usage pass 會打一次 usage API，讓介面立刻反映
+已存憑證的數值。若 Keychain 沒有憑證，或 usage API 回 `claudeLoginExpired`，Claude
+卡片會顯示「獲取憑證」。
 
 該視窗（`claude-login.html`／`ClaudeLoginApp.tsx`）用 xterm.js 顯示 `node-pty` 跑的
 `claude setup-token`（`claude-login-pty.ts`）。受信任的 `https://claude.ai`／
-`anthropic.com` 登入網址交給 `shell.openExternal`。印出的 `sk-ant-oat01-` token 從
-PTY 緩衝解析。main 接著把 `credential:manual-token-captured` 推到 tray 視窗；
-**Settings 目前沒有訂閱**，所以真正寫入走的是點重新偵測後立刻出現的貼上框 →
-`credential:submit-manual-token` → `persistClaudeToken`。這條路徑會向 usage API 驗證
-（抓取失敗仍會存 token），寫回同一組 Keychain，並在 App 加密 store 留一份備援，供
-Keychain 寫入無法確認時使用。
-
-備援副本存放時加密，且永遠不會回傳給任何 renderer——`settings:get` 只回一個佔位字串。
-沒有手動清除按鈕。401（`claudeLoginExpired`）**不是**一律清掉：`decideClaudeFallbackClear`
-只在「被拒絕的請求用的是 `manual` 來源，且底下 Keychain／檔案是**另一枚** token」時才清。
-同一枚、或沒有下一層（Windows／Linux 沒有 Keychain）則保留。重新偵測若發現 Keychain
-仍可用，會主動丢掉備援。
+`anthropic.com` 登入網址由官方 CLI 自己開啟；Usage-Pulse 只顯示 PTY 輸出，不會再把同一
+個網址開第二次。Usage-Pulse 不再解析或自動保存畫面印出的 `sk-ant-oat01-` token。
+瀏覽器授權後，使用者先把一次性的 Authentication code
+貼回 App 內 PTY 並按 Enter；CLI 交換完成後，再從指令視窗複製長效 token，貼到設定頁的
+輸入框並按「儲存憑證」。這會送 `credential:submit-manual-token` 到 main，由
+`persistClaudeToken` 檢查 token 格式、透過 `writeClaudeSetupTokenToKeychain` 寫入同一組
+Keychain，並打一次 usage API。Authentication code 不會送給 usage API，App 設定內也不再
+另外保存第二份 Claude 憑證。
 
 舊的系統終端機 + `tee` + `setup-token-capture.txt` 路徑已移除。Usage-Pulse 自己擁有
 PTY，CLI 看到的是真 TTY；使用者看得到的「終端」只有 App 內視窗。
@@ -357,7 +341,7 @@ Cursor 是「到期提醒」（本期 `billingCycleEnd`，用量重設與計費�
 ### 安全約束
 - OAuth token 僅在記憶體中短暫使用，setup-token 永久憑證除外（見下）。
 - 禁止寫入 `state.vscdb`、`.credentials.json`。
-- 唯一的 Keychain 寫入：使用者在官方 CLI OAuth 完成後，把 `claude setup-token` 的永久 token 寫進 `Claude Code-credentials`（經 App 內 PTY 視窗，再貼上 → `persistClaudeToken`）。
+- 唯一的 Keychain 寫入：使用者在官方 CLI OAuth 完成後，先把瀏覽器 Authentication code 貼回 App 內 PTY，等 CLI 交換並印出長效 token，再把 `sk-ant-oat01-...` 貼入主畫面寫進 `Claude Code-credentials`（→ `persistClaudeToken`）。
 - 登入過程 token 會出現在 in-app xterm 捲動緩衝；raw PTY 輸出經 `claude-login:data` 進登入視窗 renderer。不再進系統 Terminal，也不再寫 `tee` 截檔。
 - 發生 401 / 配額資料缺失時，回傳可行動的錯誤訊息，不做自動 token refresh。
 

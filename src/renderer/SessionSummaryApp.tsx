@@ -25,7 +25,16 @@ const formatMetric = (delta: SessionMetricDelta, lang: Language): string => {
   return t(lang, "session.usedPercent", { percent: Math.round(delta.used) });
 };
 
-const metricLabel = (key: SessionMetricDelta["key"]): "session.metric.billing" | "session.metric.cursorModels" | "session.metric.advancedModels" | "session.metric.claudeSession" | "session.metric.claudeWeekly" => {
+const metricLabel = (
+  key: SessionMetricDelta["key"],
+):
+  | "session.metric.billing"
+  | "session.metric.cursorModels"
+  | "session.metric.advancedModels"
+  | "session.metric.claudeSession"
+  | "session.metric.claudeWeekly"
+  | "session.metric.codexSession"
+  | "session.metric.codexWeekly" => {
   if (key === "billing") {
     return "session.metric.billing";
   }
@@ -38,7 +47,13 @@ const metricLabel = (key: SessionMetricDelta["key"]): "session.metric.billing" |
   if (key === "claudeSession") {
     return "session.metric.claudeSession";
   }
-  return "session.metric.claudeWeekly";
+  if (key === "claudeWeekly") {
+    return "session.metric.claudeWeekly";
+  }
+  if (key === "codexSession") {
+    return "session.metric.codexSession";
+  }
+  return "session.metric.codexWeekly";
 };
 
 export const SessionSummaryApp = () => {
@@ -97,6 +112,16 @@ export const SessionSummaryApp = () => {
         </p>
         <p>
           {t(lang, metricLabel(stats.usage.claudeWeekly.key))} · {formatMetric(stats.usage.claudeWeekly, lang)}
+        </p>
+      </section>
+
+      <section className="session-summary-block session-summary-block-codex">
+        <h2>{t(lang, "session.codex")}</h2>
+        <p>
+          {t(lang, metricLabel(stats.usage.codexSession.key))} · {formatMetric(stats.usage.codexSession, lang)}
+        </p>
+        <p>
+          {t(lang, metricLabel(stats.usage.codexWeekly.key))} · {formatMetric(stats.usage.codexWeekly, lang)}
         </p>
       </section>
 

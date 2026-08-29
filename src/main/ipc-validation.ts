@@ -14,7 +14,7 @@ import { MIN_TOKEN_LENGTH, SETUP_TOKEN_PREFIX } from "@main/claude-setup-token";
  * unrecognised value becomes null and the handler declines to act.
  */
 
-const SERVICE_TYPES: ReadonlySet<string> = new Set<ServiceType>(["cursor", "claude"]);
+const SERVICE_TYPES: ReadonlySet<string> = new Set<ServiceType>(["cursor", "claude", "codex"]);
 
 export const asServiceType = (value: unknown): ServiceType | null =>
   typeof value === "string" && SERVICE_TYPES.has(value) ? (value as ServiceType) : null;
@@ -34,6 +34,8 @@ const MAX_TOKEN_LENGTH = 4096;
 // Only ever the two short CLI commands the UI offers to copy.
 const MAX_CLIPBOARD_LENGTH = 256;
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/;
+const TOKEN_CHARACTER = /[A-Za-z0-9_-]/;
+const HTML_SPACE_ENTITY = /&(?:#x20|#32|nbsp);/gi;
 
 export const asClipboardText = (value: unknown): string | null => {
   if (typeof value !== "string" || value.length > MAX_CLIPBOARD_LENGTH) {
@@ -43,24 +45,43 @@ export const asClipboardText = (value: unknown): string | null => {
   return CONTROL_CHARACTERS.test(value) ? null : value;
 };
 
-// A token the user hand-pastes into the manual fallback field, after running
-// `claude setup-token` themselves. Same shape check the captured-output
-// parser uses (SETUP_TOKEN_PREFIX/MIN_TOKEN_LENGTH), so an obviously-wrong
-// paste (empty, truncated, the wrong kind of key) is rejected before it ever
-// reaches the API or the Keychain, rather than surfacing as a confusing
-// downstream failure.
+// A setup-token the user hand-pastes after running `claude setup-token`.
+// Obvious mistakes (empty, truncated, the wrong kind of key) are rejected
+// before they ever reach the API or Keychain.
 export const asClaudeManualToken = (value: unknown): string | null => {
   if (typeof value !== "string") {
     return null;
   }
-  const trimmed = value.trim();
-  if (trimmed.length < MIN_TOKEN_LENGTH || trimmed.length > MAX_TOKEN_LENGTH) {
+  const text = value.replace(HTML_SPACE_ENTITY, " ").trim();
+  if (text.length < MIN_TOKEN_LENGTH || text.length > MAX_TOKEN_LENGTH) {
     return null;
   }
-  if (!trimmed.startsWith(SETUP_TOKEN_PREFIX)) {
+  const start = text.indexOf(SETUP_TOKEN_PREFIX);
+  if (start < 0) {
     return null;
   }
-  return CONTROL_CHARACTERS.test(trimmed) ? null : trimmed;
+
+  let token = "";
+  for (let index = start; index < text.length; index += 1) {
+    const character = text[index];
+    if (/\s/.test(character)) {
+      if (token.length >= MIN_TOKEN_LENGTH) {
+        break;
+      }
+      continue;
+    }
+    if (character === "\\" && text[index + 1] === "_") {
+      token += "_";
+      index += 1;
+      continue;
+    }
+    if (!TOKEN_CHARACTER.test(character)) {
+      break;
+    }
+    token += character;
+  }
+
+  return token.length >= MIN_TOKEN_LENGTH && token.length <= MAX_TOKEN_LENGTH ? token : null;
 };
 
 // A terminal resize the claude-login window reports on its own container

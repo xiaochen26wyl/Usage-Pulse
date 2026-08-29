@@ -16,7 +16,13 @@ const CLAUDE_CODE_NAMES: Record<"darwin" | "win32", readonly string[]> = {
   win32: ["claude.exe", "claude"]
 };
 
+const CODEX_NAMES: Record<"darwin" | "win32", readonly string[]> = {
+  darwin: ["codex"],
+  win32: ["codex.exe", "codex"]
+};
+
 const CLAUDE_CODE_COMMAND_NEEDLES = ["claude-code", "@anthropic-ai/claude-code"] as const;
+const CODEX_COMMAND_NEEDLES = ["@openai/codex", "openai-codex"] as const;
 
 const processPlatform = (platform: NodeJS.Platform): "darwin" | "win32" | null => {
   if (platform === "win32") {
@@ -57,6 +63,19 @@ export const commandLineLooksLikeClaudeCode = (commandLine: string): boolean => 
   return CLAUDE_CODE_COMMAND_NEEDLES.some((needle) => lower.includes(needle));
 };
 
+export const isCodexProcessName = (name: string, platform: NodeJS.Platform): boolean => {
+  const key = processPlatform(platform);
+  if (!key) {
+    return name === "codex";
+  }
+  return nameMatches(name, CODEX_NAMES[key], key === "win32");
+};
+
+export const commandLineLooksLikeCodex = (commandLine: string): boolean => {
+  const lower = commandLine.toLowerCase();
+  return CODEX_COMMAND_NEEDLES.some((needle) => lower.includes(needle)) || /(^|[\\/\s])codex(\.exe)?(\s|$)/i.test(commandLine);
+};
+
 export const processLooksLikeIde = (input: {
   name: string;
   commandLine?: string;
@@ -68,7 +87,13 @@ export const processLooksLikeIde = (input: {
   if (isClaudeCodeProcessName(input.name, input.platform)) {
     return true;
   }
-  return Boolean(input.commandLine && commandLineLooksLikeClaudeCode(input.commandLine));
+  if (isCodexProcessName(input.name, input.platform)) {
+    return true;
+  }
+  return Boolean(
+    input.commandLine &&
+      (commandLineLooksLikeClaudeCode(input.commandLine) || commandLineLooksLikeCodex(input.commandLine))
+  );
 };
 
 // Older stores only had launchAtLogin. A value already written for

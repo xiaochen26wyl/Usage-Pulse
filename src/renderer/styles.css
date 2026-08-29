@@ -13,6 +13,7 @@
   --color-water-strong: #0ea5e9;
   --color-claude: #e8945a;
   --color-cursor: #c084fc;
+  --color-codex: #e8c44a;
   --color-text: #f5f6f8;
   --color-text-muted: #9aa4b5;
   --color-border: #2a3442;
@@ -157,6 +158,18 @@ h2 {
   color: var(--color-cursor);
 }
 
+.quota-card-codex,
+.service-block-codex,
+.session-summary-block-codex {
+  border-left: 3px solid var(--color-codex);
+}
+
+.quota-card-codex strong,
+.service-block-codex strong,
+.session-summary-block-codex h2 {
+  color: var(--color-codex);
+}
+
 .session-summary-block-water {
   border-left: 3px solid var(--color-water);
 }
@@ -212,6 +225,10 @@ h2 {
 
 .progress-fill-cursor {
   background: linear-gradient(90deg, #e9d5ff, var(--color-cursor));
+}
+
+.progress-fill-codex {
+  background: linear-gradient(90deg, #ffe9a3, var(--color-codex));
 }
 
 .meta-text {

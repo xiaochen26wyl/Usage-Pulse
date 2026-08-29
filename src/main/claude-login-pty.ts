@@ -1,11 +1,6 @@
 import * as pty from "node-pty";
 import type { IPty } from "node-pty";
-import {
-  extractAuthUrlFromOutput,
-  extractSetupTokenFromOutput,
-  resolveClaudeBinary,
-  SetupTokenError
-} from "@main/claude-setup-token";
+import { resolveClaudeBinary, SetupTokenError } from "@main/claude-setup-token";
 
 export interface ClaudeLoginPtySession {
   write: (data: string) => void;
@@ -15,22 +10,13 @@ export interface ClaudeLoginPtySession {
 
 export interface ClaudeLoginPtyOptions {
   onData: (chunk: string) => void;
-  onAuthUrl: (url: string) => void;
-  onTokenCaptured: (token: string) => void;
   onExit: (exitCode: number) => void;
 }
 
-const BUFFER_CAP = 32_000;
-const BUFFER_KEEP = 16_000;
-
 /**
- * Runs `claude setup-token` inside a real pseudo-terminal that this process
- * owns, so its output reaches us the moment it's written — unlike piping
- * through a shell `tee` into a visible Terminal.app window, where the CLI's
- * own stdout buffering (it detects a non-TTY once piped) made capture
- * unreliable. Usage-Pulse is now the only thing that ever sees this output;
- * the visible "terminal" the user watches is the claude-login BrowserWindow,
- * fed this same data over IPC.
+ * Runs `claude setup-token` inside a real pseudo-terminal so the user can
+ * complete the official login without leaving the app. The official CLI opens
+ * its own browser page; the printed setup-token stays a manual copy/paste step.
  */
 export const startClaudeLoginPty = async (options: ClaudeLoginPtyOptions): Promise<ClaudeLoginPtySession> => {
   const claudePath = await resolveClaudeBinary();
@@ -48,32 +34,8 @@ export const startClaudeLoginPty = async (options: ClaudeLoginPtyOptions): Promi
     throw new SetupTokenError("launchFailed");
   }
 
-  let buffer = "";
-  let urlSeen = false;
-  let tokenSeen = false;
-
   ptyProcess.onData((chunk) => {
     options.onData(chunk);
-    buffer += chunk;
-    if (buffer.length > BUFFER_CAP) {
-      buffer = buffer.slice(-BUFFER_KEEP);
-    }
-
-    if (!urlSeen) {
-      const url = extractAuthUrlFromOutput(buffer);
-      if (url) {
-        urlSeen = true;
-        options.onAuthUrl(url);
-      }
-    }
-
-    if (!tokenSeen) {
-      const token = extractSetupTokenFromOutput(buffer);
-      if (token) {
-        tokenSeen = true;
-        options.onTokenCaptured(token);
-      }
-    }
   });
 
   ptyProcess.onExit(({ exitCode }) => {

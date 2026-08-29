@@ -1,7 +1,7 @@
 import type { CombinedSnapshot, ServiceType } from "./types";
 
 export const getLowQuotaServices = (snapshot: CombinedSnapshot): ServiceType[] =>
-  (["cursor", "claude"] as ServiceType[]).filter((service) => snapshot[service].status === "low");
+  (["cursor", "claude", "codex"] as ServiceType[]).filter((service) => snapshot[service].status === "low");
 
 export const isDuplicateInCooldown = (
   last: { key: string; at: string },

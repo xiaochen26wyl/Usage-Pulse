@@ -3,8 +3,10 @@ import assert from "node:assert/strict";
 import {
   IDLE_POLLS_BEFORE_PROMPT,
   commandLineLooksLikeClaudeCode,
+  commandLineLooksLikeCodex,
   initialIdeQuitPromptState,
   isClaudeCodeProcessName,
+  isCodexProcessName,
   isCursorProcessName,
   migrateLaunchWithIde,
   processLooksLikeIde,
@@ -43,6 +45,19 @@ test("processLooksLikeIde combines name and command-line rules", () => {
   assert.equal(processLooksLikeIde({ name: "node", commandLine: "npx claude-code", platform: "darwin" }), true);
   assert.equal(processLooksLikeIde({ name: "Claude", platform: "darwin" }), false);
   assert.equal(processLooksLikeIde({ name: "node", commandLine: "vite", platform: "darwin" }), false);
+});
+
+test("isCodexProcessName matches the CLI binary", () => {
+  assert.equal(isCodexProcessName("codex", "darwin"), true);
+  assert.equal(isCodexProcessName("Codex", "darwin"), false);
+  assert.equal(isCodexProcessName("codex.exe", "win32"), true);
+  assert.equal(isCodexProcessName("codex", "win32"), true);
+});
+
+test("commandLineLooksLikeCodex finds the npm package", () => {
+  assert.equal(commandLineLooksLikeCodex("node /usr/lib/node_modules/@openai/codex/bin.js"), true);
+  assert.equal(commandLineLooksLikeCodex("npx openai-codex"), true);
+  assert.equal(commandLineLooksLikeCodex("Usage-Pulse"), false);
 });
 
 test("migrateLaunchWithIde prefers the new field and falls back to launchAtLogin", () => {

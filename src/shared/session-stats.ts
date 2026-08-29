@@ -54,6 +54,8 @@ export const computeSessionUsage = (
   const curCursor = current?.cursor;
   const baseClaude = baseline?.claude;
   const curClaude = current?.claude;
+  const baseCodex = baseline?.codex;
+  const curCodex = current?.codex;
 
   const baseBilling = findWindow(baseCursor?.windows, "billing_cycle");
   const curBilling = findWindow(curCursor?.windows, "billing_cycle");
@@ -64,6 +66,10 @@ export const computeSessionUsage = (
   const curWeekly = findWeeklyWindow(curClaude?.windows);
   const sessionBase = findWindow(baseClaude?.windows, "session");
   const sessionCur = findWindow(curClaude?.windows, "session");
+  const baseCodexWeekly = findWeeklyWindow(baseCodex?.windows);
+  const curCodexWeekly = findWeeklyWindow(curCodex?.windows);
+  const codexSessionBase = findWindow(baseCodex?.windows, "session");
+  const codexSessionCur = findWindow(curCodex?.windows, "session");
 
   return {
     billing: remainingDrop(
@@ -95,6 +101,20 @@ export const computeSessionUsage = (
       "percent",
       baseWeekly?.remaining ?? null,
       curWeekly?.remaining ?? null,
+      RESET_EPS_PERCENT
+    ),
+    codexSession: remainingDrop(
+      "codexSession",
+      "percent",
+      codexSessionBase?.remaining ?? baseCodex?.remaining ?? null,
+      codexSessionCur?.remaining ?? curCodex?.remaining ?? null,
+      RESET_EPS_PERCENT
+    ),
+    codexWeekly: remainingDrop(
+      "codexWeekly",
+      "percent",
+      baseCodexWeekly?.remaining ?? null,
+      curCodexWeekly?.remaining ?? null,
       RESET_EPS_PERCENT
     )
   };

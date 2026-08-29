@@ -35,6 +35,19 @@ const baseSnapshot = (): CombinedSnapshot => ({
     message: "",
     fetchedAt: new Date().toISOString()
   },
+  codex: {
+    service: "codex",
+    remaining: 80,
+    total: 100,
+    percent: 80,
+    unit: "percent",
+    resetsAt: null,
+    weeklyResetAt: null,
+    windows: [],
+    status: "ok",
+    message: "",
+    fetchedAt: new Date().toISOString()
+  },
   fetchedAt: new Date().toISOString()
 });
 
@@ -43,6 +56,12 @@ test("getLowQuotaServices returns both low services", () => {
   snapshot.cursor.status = "low";
   snapshot.claude.status = "low";
   assert.deepEqual(getLowQuotaServices(snapshot), ["cursor", "claude"]);
+});
+
+test("getLowQuotaServices includes Codex when it is low", () => {
+  const snapshot = baseSnapshot();
+  snapshot.codex.status = "low";
+  assert.deepEqual(getLowQuotaServices(snapshot), ["codex"]);
 });
 
 test("isDuplicateInCooldown checks key and cooldown window", () => {

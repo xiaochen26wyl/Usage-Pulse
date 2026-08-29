@@ -1,6 +1,7 @@
 import { BrowserWindow, nativeImage, type NativeImage } from "electron";
 import {
   TRAY_CLAUDE_LABEL_COLOR,
+  TRAY_CODEX_LABEL_COLOR,
   TRAY_CURSOR_LABEL_COLOR,
 } from "@shared/tray-value-color";
 
@@ -29,7 +30,7 @@ const RENDERER_HTML = `<!DOCTYPE html>
 <html><body style="margin:0">
 <canvas id="c" width="${MAX_CANVAS_WIDTH}" height="${CANVAS_HEIGHT}"></canvas>
 <script>
-window.renderTray = (line1, line2, valueColor) => {
+window.renderTray = (line1, line2, valueColor, labelColors) => {
   const canvas = document.getElementById("c");
   const ctx = canvas.getContext("2d");
   const paddingX = ${PADDING_X};
@@ -39,7 +40,9 @@ window.renderTray = (line1, line2, valueColor) => {
   const line1YRatio = ${LINE1_Y_RATIO};
   const line2YRatio = ${LINE2_Y_RATIO};
   const maxCanvasWidth = ${MAX_CANVAS_WIDTH};
-  const line1Colors = [${JSON.stringify(TRAY_CURSOR_LABEL_COLOR)}, ${JSON.stringify(TRAY_CLAUDE_LABEL_COLOR)}];
+  const line1Colors = Array.isArray(labelColors) && labelColors.length
+    ? labelColors
+    : [${JSON.stringify(TRAY_CURSOR_LABEL_COLOR)}, ${JSON.stringify(TRAY_CLAUDE_LABEL_COLOR)}, ${JSON.stringify(TRAY_CODEX_LABEL_COLOR)}];
   const fontStack = "-apple-system, BlinkMacSystemFont, sans-serif";
 
   const tokensOf = (line) => String(line || "").trim().split(/\\s+/).filter(Boolean);
@@ -137,10 +140,11 @@ export const renderTrayImage = async (
   line1: string,
   line2: string,
   valueColor: string,
+  labelColors: string[] = [TRAY_CURSOR_LABEL_COLOR, TRAY_CLAUDE_LABEL_COLOR, TRAY_CODEX_LABEL_COLOR],
 ): Promise<NativeImage> => {
   const win = await ensureRendererWindow();
   const dataUrl = (await win.webContents.executeJavaScript(
-    `window.renderTray(${JSON.stringify(line1)}, ${JSON.stringify(line2)}, ${JSON.stringify(valueColor)})`,
+    `window.renderTray(${JSON.stringify(line1)}, ${JSON.stringify(line2)}, ${JSON.stringify(valueColor)}, ${JSON.stringify(labelColors)})`,
   )) as string;
   const base64 = dataUrl.split(",")[1] ?? "";
   return nativeImage.createFromBuffer(Buffer.from(base64, "base64"), {

@@ -23,9 +23,10 @@ const serviceSnapshot = (
   fetchedAt: new Date().toISOString()
 });
 
-const combined = (claude: QuotaSnapshot): CombinedSnapshot => ({
+const combined = (claude: QuotaSnapshot, codex?: QuotaSnapshot): CombinedSnapshot => ({
   cursor: serviceSnapshot("cursor", "ok", null, true),
   claude,
+  codex: codex ?? serviceSnapshot("codex", "unknown", null, false),
   fetchedAt: new Date().toISOString()
 });
 
@@ -66,6 +67,18 @@ test("the service toggle still wins over the fallback", () => {
     { "claude-session": "2026-09-01T00:00:00.000Z" }
   );
   assert.equal(targets.some((target) => target.service === "claude"), false);
+});
+
+test("a Codex outage falls back to the last trustworthy reset time", () => {
+  const outage = combined(
+    serviceSnapshot("claude", "ok", null, false),
+    serviceSnapshot("codex", "error", null, false)
+  );
+  const targets = collectAlarmTargets(outage, settings, "zh", {
+    "codex-session": "2026-09-02T00:00:00.000Z"
+  });
+  const session = targets.find((target) => target.id === "codex-session");
+  assert.equal(session?.fireAt, "2026-09-02T00:00:00.000Z");
 });
 
 test("mayFire refuses a fireAt that was never observed pending", () => {

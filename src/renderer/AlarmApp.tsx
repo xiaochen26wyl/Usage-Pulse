@@ -5,7 +5,8 @@ import { t, type TranslationKey } from "@shared/i18n";
 
 const serviceNames: Record<ServiceType, string> = {
   cursor: "Cursor",
-  claude: "Claude Code"
+  claude: "Claude Code",
+  codex: "Codex"
 };
 
 const CHIME_INTERVAL_MS = 2500;
@@ -60,7 +61,7 @@ const alarmTitleKey = (id: AlarmPopupPayload["id"]): TranslationKey => {
   if (id === "claude-billing") {
     return "alarm.popup.title.claudePeriod";
   }
-  if (id === "claude-cooldown") {
+  if (id === "claude-cooldown" || id === "codex-cooldown") {
     return "alarm.popup.title.cooldown";
   }
   if (id.endsWith("-exhausted")) {

@@ -27,13 +27,17 @@ type ResetToggleKey =
   | "enableCursorResetAlarm"
   | "enableClaudeResetAlarm"
   | "enableClaudeWeeklyResetAlarm"
-  | "enableClaudeBillingAlarm";
+  | "enableClaudeBillingAlarm"
+  | "enableCodexResetAlarm"
+  | "enableCodexWeeklyResetAlarm";
 
 const resetToggleMap: Record<AlarmSource, ResetToggleKey> = {
   "cursor-billing": "enableCursorResetAlarm",
   "claude-session": "enableClaudeResetAlarm",
   "claude-weekly": "enableClaudeWeeklyResetAlarm",
-  "claude-billing": "enableClaudeBillingAlarm"
+  "claude-billing": "enableClaudeBillingAlarm",
+  "codex-session": "enableCodexResetAlarm",
+  "codex-weekly": "enableCodexWeeklyResetAlarm"
 };
 
 export const clampTimeoutMs = (ms: number): number => {
@@ -129,6 +133,18 @@ export const collectAlarmTargets = (
         nowMs
       ),
       label: snapshot.claude.billingResetLabel || t(lang, "fallback.claudeBilling")
+    },
+    {
+      id: "codex-session",
+      service: "codex",
+      resetAt: snapshot.codex.resetsAt,
+      label: snapshot.codex.resetLabel || t(lang, "window.label.session")
+    },
+    {
+      id: "codex-weekly",
+      service: "codex",
+      resetAt: snapshot.codex.weeklyResetAt,
+      label: snapshot.codex.weeklyResetLabel || t(lang, "window.label.weekly")
     }
   ];
 

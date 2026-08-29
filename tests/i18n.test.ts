@@ -56,7 +56,7 @@ test("the Keychain re-detect keys resolve to a non-empty, distinct string in eve
     "button.refreshQuota",
     "button.refreshQuota.tooltip",
     "button.redetect.tooltip",
-    "button.updateUi"
+    "setupToken.quotaUpdated"
   ] as const;
   for (const key of keys) {
     const values = langs.map((lang) => t(lang, key));
@@ -68,7 +68,7 @@ test("the Keychain re-detect keys resolve to a non-empty, distinct string in eve
   }
 });
 
-test("the manual token fallback keys resolve to a non-empty, distinct string in every language", () => {
+test("the manual token setup keys resolve to a non-empty, distinct string in every language", () => {
   const keys = [
     "manualToken.prompt",
     "manualToken.copyCommand",

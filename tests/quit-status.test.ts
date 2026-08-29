@@ -49,22 +49,28 @@ const workingClaudeSnapshot = (): QuotaSnapshot =>
     { remaining: 63, percent: 63 }
   );
 
-const combinedOf = (cursor: QuotaSnapshot, claude: QuotaSnapshot): CombinedSnapshot => ({
+const combinedOf = (
+  cursor: QuotaSnapshot,
+  claude: QuotaSnapshot,
+  codex: QuotaSnapshot = quotaSnapshot("codex", [])
+): CombinedSnapshot => ({
   cursor,
   claude,
+  codex,
   fetchedAt: NOW.toISOString()
 });
 
 const settingsOf = (
-  patch: Partial<Pick<AppSettings, "enableCursorMonitoring" | "enableClaudeMonitoring" | "language">> = {}
+  patch: Partial<Pick<AppSettings, "enableCursorMonitoring" | "enableClaudeMonitoring" | "enableCodexMonitoring" | "language">> = {}
 ) => ({
   enableCursorMonitoring: true,
   enableClaudeMonitoring: true,
+  enableCodexMonitoring: false,
   language: "zh" as const,
   ...patch
 });
 
-const serviceLabels = { cursor: "Cursor", claude: "Claude Code" };
+const serviceLabels = { cursor: "Cursor", claude: "Claude Code", codex: "Codex" };
 
 test("returns [] when there is no cached snapshot yet", () => {
   const messages = buildQuitStatusMessages({ settings: settingsOf(), snapshot: null, serviceLabels, now: NOW });
@@ -152,4 +158,27 @@ test("exhausted-but-not-red: a session at 0% still uses the service's own accent
   assert.equal(messages.length, 1);
   assert.equal(accentOf(messages[0]!), SERVICE_ACCENT.claude);
   assert.notEqual(accentOf(messages[0]!), EXHAUSTED_RED);
+});
+
+test("happy path includes Codex 5-hour and weekly when monitoring is on", () => {
+  const workingCodex = quotaSnapshot(
+    "codex",
+    [
+      { key: "session", label: "5 小時視窗", remaining: 55, percent: 55 },
+      { key: "weekly", label: "每週配額", remaining: 40, percent: 40 }
+    ],
+    { remaining: 55, percent: 55 }
+  );
+  const messages = buildQuitStatusMessages({
+    settings: settingsOf({ enableCursorMonitoring: false, enableClaudeMonitoring: false, enableCodexMonitoring: true }),
+    snapshot: combinedOf(workingCursorSnapshot(), workingClaudeSnapshot(), workingCodex),
+    serviceLabels,
+    now: NOW
+  });
+  assert.equal(messages.length, 2);
+  for (const message of messages) {
+    assert.equal(accentOf(message), SERVICE_ACCENT.codex);
+  }
+  assert.match(messages[0]?.altText ?? "", /5 小時視窗/);
+  assert.match(messages[1]?.altText ?? "", /每週配額/);
 });
