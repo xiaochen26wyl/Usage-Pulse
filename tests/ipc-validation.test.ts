@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  asAlarmHeight,
   asClaudeManualToken,
   asClipboardText,
   asServiceType,
@@ -96,6 +97,15 @@ test("asWaterCupSize normalises to a supported cup and ignores junk", () => {
   assert.equal(asWaterCupSize("500"), 500);
   assert.equal(asWaterCupSize(undefined), null);
   assert.equal(asWaterCupSize("not-a-number"), null);
+});
+
+test("asAlarmHeight accepts a finite pixel height inside the popup range", () => {
+  assert.equal(asAlarmHeight(176), 176);
+  assert.equal(asAlarmHeight(198.4), 198);
+  assert.equal(asAlarmHeight(79), null);
+  assert.equal(asAlarmHeight(481), null);
+  assert.equal(asAlarmHeight(Number.NaN), null);
+  assert.equal(asAlarmHeight("180"), null);
 });
 
 test("isSupportLink admits only the footer links", () => {

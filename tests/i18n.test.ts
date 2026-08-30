@@ -17,6 +17,13 @@ test("t() interpolates {placeholder} params", () => {
   assert.equal(t("zh", "settings.lowThreshold", { percent: 20 }), "低額度預警閾值：20%");
   assert.equal(t("ja", "settings.lowThreshold", { percent: 20 }), "低クォータ警告しきい値：20%");
   assert.equal(t("ko", "settings.lowThreshold", { percent: 20 }), "낮은 할당량 경고 임계값: 20%");
+  assert.equal(t("zh", "alarm.popup.title.cooldown", { service: "Codex" }), "Codex 5小時冷卻");
+  assert.equal(t("zh", "alarm.popup.title.sessionLow", { service: "Codex" }), "Codex 5小時即將用完");
+  assert.equal(t("zh", "alarm.popup.title.sessionReset", { service: "Claude Code" }), "Claude Code 5小時已重置");
+  assert.equal(t("zh", "alarm.popup.nextAvailable", { time: "14:22" }), "下次可用 14:22");
+  assert.equal(t("zh", "alarm.popup.nowAvailable"), "現在可用");
+  assert.equal(t("zh", "alarm.autoDismiss", { seconds: 30 }), "彈窗 30 秒後自動關閉");
+  assert.equal(t("zh", "water.popup.drink"), "我喝了。");
 });
 
 test("t() leaves unknown placeholders untouched", () => {

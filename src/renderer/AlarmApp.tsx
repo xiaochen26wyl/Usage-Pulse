@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import type { AlarmPopupPayload, ServiceType } from "@shared/types";
-import { ALARM_POPUP_AUTO_DISMISS_MINUTES, formatCountdown } from "@shared/alarm-utils";
+import { ALARM_POPUP_AUTO_DISMISS_SECONDS, formatCountdown } from "@shared/alarm-utils";
 import { t, type TranslationKey } from "@shared/i18n";
 
 const serviceNames: Record<ServiceType, string> = {
@@ -18,6 +18,15 @@ const formatTime = (iso: string): string => {
   }
   return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
 };
+
+const isCooldownPopup = (id: AlarmPopupPayload["id"]): boolean =>
+  id === "test" || id === "claude-cooldown" || id === "codex-cooldown";
+
+const isSessionReset = (id: AlarmPopupPayload["id"]): boolean =>
+  id === "claude-session" || id === "codex-session";
+
+const isWeeklyReset = (id: AlarmPopupPayload["id"]): boolean =>
+  id === "claude-weekly" || id === "codex-weekly";
 
 // A short synthesised two-tone chime. Generating it with the Web Audio API
 // keeps the app free of any bundled audio asset (and of the licensing question
@@ -46,11 +55,6 @@ const playChime = (context: AudioContext): void => {
   }
 };
 
-/**
- * The popup used to announce "Quota reset" whatever it was actually about, so a
- * low-quota or used-up warning claimed a reset that had not happened. The title
- * now follows the alert that opened it.
- */
 const alarmTitleKey = (id: AlarmPopupPayload["id"]): TranslationKey => {
   if (id === "water") {
     return "water.popup.title";
@@ -61,8 +65,35 @@ const alarmTitleKey = (id: AlarmPopupPayload["id"]): TranslationKey => {
   if (id === "claude-billing") {
     return "alarm.popup.title.claudePeriod";
   }
-  if (id === "claude-cooldown" || id === "codex-cooldown") {
+  if (isCooldownPopup(id)) {
     return "alarm.popup.title.cooldown";
+  }
+  if (id === "claude-session-low" || id === "codex-session-low") {
+    return "alarm.popup.title.sessionLow";
+  }
+  if (id === "claude-weekly-low" || id === "codex-weekly-low") {
+    return "alarm.popup.title.weeklyLow";
+  }
+  if (id === "cursor-models-low") {
+    return "alarm.popup.title.cursorModelsLow";
+  }
+  if (id === "cursor-advanced-models-low") {
+    return "alarm.popup.title.cursorAdvancedLow";
+  }
+  if (id === "claude-weekly-exhausted" || id === "codex-weekly-exhausted") {
+    return "alarm.popup.title.weeklyExhausted";
+  }
+  if (id === "cursor-models-exhausted") {
+    return "alarm.popup.title.cursorModelsExhausted";
+  }
+  if (id === "cursor-advanced-models-exhausted") {
+    return "alarm.popup.title.cursorAdvancedExhausted";
+  }
+  if (isSessionReset(id)) {
+    return "alarm.popup.title.sessionReset";
+  }
+  if (isWeeklyReset(id)) {
+    return "alarm.popup.title.weeklyReset";
   }
   if (id.endsWith("-exhausted")) {
     return "alarm.popup.title.exhausted";
@@ -76,6 +107,7 @@ const alarmTitleKey = (id: AlarmPopupPayload["id"]): TranslationKey => {
 export const AlarmApp = () => {
   const [payload, setPayload] = useState<AlarmPopupPayload | null>(null);
   const [now, setNow] = useState<number>(Date.now());
+  const rootRef = useRef<HTMLElement | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
 
   useEffect(() => {
@@ -90,9 +122,16 @@ export const AlarmApp = () => {
     const unsubscribe = window.usagePulse.onAlarmPayload((next) => {
       setPayload(next);
     });
-    window.usagePulse.requestAlarmPayload().catch((error) => {
-      console.error("[Usage-Pulse] failed to request alarm payload", error);
-    });
+    window.usagePulse
+      .requestAlarmPayload()
+      .then((next) => {
+        if (next) {
+          setPayload(next);
+        }
+      })
+      .catch((error) => {
+        console.error("[Usage-Pulse] failed to request alarm payload", error);
+      });
     return () => {
       unsubscribe();
     };
@@ -122,51 +161,95 @@ export const AlarmApp = () => {
     []
   );
 
+  useLayoutEffect(() => {
+    const node = rootRef.current;
+    if (!node || !payload) {
+      return;
+    }
+
+    const reportHeight = (): void => {
+      const height = Math.ceil(node.getBoundingClientRect().height);
+      void window.usagePulse.fitAlarmSize(height);
+    };
+
+    reportHeight();
+    const observer = new ResizeObserver(reportHeight);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [payload]);
+
   if (!payload) {
     return <main className="alarm" />;
   }
 
   const lang = payload.language;
   const isWater = payload.id === "water";
+  const isCooldown = isCooldownPopup(payload.id);
+  const isBilling = payload.id === "cursor-billing" || payload.id === "claude-billing";
+  const isReset = isSessionReset(payload.id) || isWeeklyReset(payload.id);
   const serviceLabel = payload.service ? serviceNames[payload.service] : "Usage-Pulse";
+  const title = t(lang, alarmTitleKey(payload.id), { service: serviceLabel });
+  const countdownText = payload.countdownTarget
+    ? t(lang, "alarm.popup.cooldownCountdown", {
+        countdown: formatCountdown(payload.countdownTarget, now, lang)
+      })
+    : null;
+
+  let card: ReactNode = null;
+  let extraMeta: ReactNode = null;
+
+  if (isWater) {
+    card = (
+      <div className="alarm-countdown-card">
+        <p className="alarm-countdown">{payload.label}</p>
+      </div>
+    );
+  } else if (countdownText && payload.countdownTarget) {
+    card = (
+      <div className="alarm-countdown-card">
+        <p className="alarm-countdown">
+          {t(lang, "alarm.popup.nextAvailable", { time: formatTime(payload.countdownTarget) })}
+        </p>
+      </div>
+    );
+    extraMeta = <p className="alarm-meta">{countdownText}</p>;
+  } else if (isReset) {
+    card = (
+      <div className="alarm-countdown-card">
+        <p className="alarm-countdown">{t(lang, "alarm.popup.nowAvailable")}</p>
+      </div>
+    );
+    extraMeta = <p className="alarm-meta">{t(lang, "alarm.popup.resetAt", { time: formatTime(payload.fireAt) })}</p>;
+  } else if (isBilling) {
+    card = (
+      <div className="alarm-countdown-card">
+        <p className="alarm-countdown">{t(lang, "alarm.popup.endedAt", { time: formatTime(payload.fireAt) })}</p>
+      </div>
+    );
+  } else {
+    extraMeta = <p className="alarm-meta">{t(lang, "alarm.popup.firedAt", { time: formatTime(payload.fireAt) })}</p>;
+  }
 
   return (
-    <main className="alarm">
+    <main ref={rootRef} className="alarm" onPointerDown={() => window.focus()}>
       <div className="alarm-head">
-        <strong className="alarm-title">{t(lang, alarmTitleKey(payload.id))}</strong>
+        <strong className="alarm-title">{title}</strong>
       </div>
 
-      <p className="alarm-subject">{isWater ? payload.label : `${serviceLabel} · ${payload.label}`}</p>
-      {isWater ? null : payload.countdownTarget ? (
-        <p className="alarm-meta">
-          {t(lang, "alarm.popup.cooldownCountdown", { countdown: formatCountdown(payload.countdownTarget, now, lang) })}
-        </p>
-      ) : (
-        <p className="alarm-meta">{t(lang, "alarm.popup.firedAt", { time: formatTime(payload.fireAt) })}</p>
-      )}
-      <p className="alarm-meta">{t(lang, "alarm.autoDismiss", { minutes: ALARM_POPUP_AUTO_DISMISS_MINUTES })}</p>
+      {card}
+      {extraMeta}
+      {isCooldown && payload.resetAlarmEnabled ? (
+        <p className="alarm-meta">{t(lang, "alarm.popup.resetAlarmOn")}</p>
+      ) : null}
+      <p className="alarm-meta">{t(lang, "alarm.autoDismiss", { seconds: ALARM_POPUP_AUTO_DISMISS_SECONDS })}</p>
 
-      <div className="alarm-actions">
-        {isWater ? (
-          <>
-            <button type="button" className="primary-btn" onClick={() => window.usagePulse.drinkWater()}>
-              {t(lang, "water.popup.drink")}
-            </button>
-            <button type="button" className="warning-btn" onClick={() => window.usagePulse.skipWater()}>
-              {t(lang, "water.popup.skip")}
-            </button>
-          </>
-        ) : (
-          <>
-            <button type="button" className="warning-btn" onClick={() => window.usagePulse.snoozeAlarm()}>
-              {t(lang, "alarm.popup.snooze")}
-            </button>
-            <button type="button" className="primary-btn" onClick={() => window.usagePulse.dismissAlarm()}>
-              {t(lang, "alarm.popup.dismiss")}
-            </button>
-          </>
-        )}
-      </div>
+      {isWater ? (
+        <div className="alarm-actions">
+          <button type="button" className="primary-btn" onClick={() => window.usagePulse.drinkWater()}>
+            {t(lang, "water.popup.drink")}
+          </button>
+        </div>
+      ) : null}
     </main>
   );
 };

@@ -53,7 +53,7 @@ export interface QuotaSnapshot {
   fetchedAt: string;
 }
 
-export type ErrorCode = "claudeLoginExpired" | "codexLoginExpired";
+export type ErrorCode = "claudeLoginExpired" | "claudeScopeInsufficient" | "claudeRateLimited" | "codexLoginExpired";
 
 // Which ranked source supplied the token a request used. Claude monitoring now
 // treats the macOS Keychain item as authoritative; Cursor's only source is its
@@ -313,6 +313,9 @@ export interface AlarmPopupPayload {
   // countdown to this ISO time (the session window's resetsAt) instead of a
   // static "fired at" timestamp.
   countdownTarget?: string | null;
+  // True when the matching 5-hour reset alarm (到點提醒) is on, so the
+  // cooldown popup can note that a recovery reminder is already armed.
+  resetAlarmEnabled?: boolean;
 }
 
 export interface AlarmStatusReport {

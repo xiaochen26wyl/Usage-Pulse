@@ -47,6 +47,7 @@ interface UsagePulseApi {
   requestAlarmPayload: () => Promise<AlarmPopupPayload | null>;
   dismissAlarm: () => Promise<void>;
   snoozeAlarm: () => Promise<void>;
+  fitAlarmSize: (height: number) => Promise<void>;
   onAlarmPayload: (handler: (payload: AlarmPopupPayload) => void) => () => void;
   onAuthUpdated: (handler: (status: AuthStatus) => void) => () => void;
   onSnapshotUpdated: (handler: (snapshot: CombinedSnapshot) => void) => () => void;

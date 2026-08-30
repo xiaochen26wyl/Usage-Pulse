@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeTheme, powerMonitor, shell } from "electron";
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeTheme, powerMonitor, screen, shell } from "electron";
 import { menubar } from "menubar";
 import type {
   AlarmStatusReport,
@@ -29,7 +29,7 @@ import {
   snapshotValueText
 } from "@shared/tray-display";
 import { alarmService } from "@main/alarm-service";
-import { destroyAlarmWindow, closeAlarmPopup, getAlarmPayload, snoozeAlarmPopup } from "@main/alarm-window";
+import { destroyAlarmWindow, closeAlarmPopup, fitAlarmWindowSize, getAlarmPayload, snoozeAlarmPopup } from "@main/alarm-window";
 import { closeSessionSummary, destroySessionWindow, showSessionSummary } from "@main/session-window";
 import { sessionTracker } from "@main/session-tracker";
 import { waterReminder } from "@main/water-reminder";
@@ -51,6 +51,7 @@ import { applyAppLoginItem } from "@main/app-login-item";
 import { applyIdeLaunchHelper } from "@main/ide-launch-helper";
 import { IdePresenceMonitor, probeIdeRunning } from "@main/ide-presence";
 import {
+  asAlarmHeight,
   asClaudeManualToken,
   asClipboardText,
   asPtySize,
@@ -131,6 +132,14 @@ const cancelQuit = (): void => {
 // dist/assets instead of node_modules/menubar/assets).
 const trayIconPath = join(app.getAppPath(), "assets/tray/icon.png");
 
+const POPOVER_WIDTH = 460;
+const POPOVER_HEIGHT_RATIO = 0.9;
+const POPOVER_MIN_HEIGHT = 400;
+const POPOVER_HEIGHT_FALLBACK = 700;
+
+const popoverHeightFromWorkArea = (workAreaHeight: number): number =>
+  Math.max(POPOVER_MIN_HEIGHT, Math.round(workAreaHeight * POPOVER_HEIGHT_RATIO));
+
 let trayApp = menubar({
   preloadWindow: true,
   tooltip: "Usage-Pulse",
@@ -139,8 +148,8 @@ let trayApp = menubar({
     ? process.env.ELECTRON_RENDERER_URL
     : `file://${join(app.getAppPath(), "dist/renderer/index.html")}`,
   browserWindow: {
-    width: 460,
-    height: 700,
+    width: POPOVER_WIDTH,
+    height: POPOVER_HEIGHT_FALLBACK,
     show: false,
     autoHideMenuBar: true,
     resizable: true,
@@ -152,6 +161,26 @@ let trayApp = menubar({
     }
   }
 });
+
+const applyPopoverSize = (): void => {
+  const window = trayApp.window;
+  if (!window || window.isDestroyed()) {
+    return;
+  }
+  const tray = trayApp.tray;
+  const display = tray
+    ? screen.getDisplayMatching(tray.getBounds())
+    : screen.getPrimaryDisplay();
+  window.setSize(POPOVER_WIDTH, popoverHeightFromWorkArea(display.workArea.height));
+};
+
+// Resize before menubar positions the popover, otherwise a 700px placement
+// followed by a taller setSize would hang past the Dock / taskbar.
+const originalShowWindow = trayApp.showWindow.bind(trayApp);
+trayApp.showWindow = ((trayPos?: Electron.Rectangle) => {
+  applyPopoverSize();
+  return originalShowWindow(trayPos);
+}) as typeof trayApp.showWindow;
 
 const TRAY_LABELS: Record<ServiceType, string> = {
   cursor: "Cursor",
@@ -439,9 +468,10 @@ const persistClaudeToken = async (token: string, savedMessage: string): Promise<
     if (error instanceof ClaudeLoginExpiredError) {
       return { ok: false, message: error.message || t(lang, "error.claudeLoginExpired") };
     }
-    if (!(error instanceof ClaudeUsageScopeError)) {
-      console.error("[Usage-Pulse] setup-token quota scrape failed, storing token anyway", redact(error));
+    if (error instanceof ClaudeUsageScopeError) {
+      return { ok: false, message: error.message || t(lang, "error.claudeScopeInsufficient") };
     }
+    console.error("[Usage-Pulse] setup-token quota scrape failed, storing token anyway", redact(error));
   }
 
   try {
@@ -551,10 +581,21 @@ const setupIpcHandlers = (): void => {
     };
 
     const fromKeychain = await peekClaudeKeychainCredential();
-    const lastScrapeWasExpired = monitor.getLatestSnapshot()?.claude.errorCode === "claudeLoginExpired";
+    const lastErrorCode = monitor.getLatestSnapshot()?.claude.errorCode;
+    // setup-token only mints user:inference and can never satisfy the usage API.
+    // Opening that flow on a scope error would loop the user back into the same
+    // failure; tell them to use interactive Claude Code login instead.
+    if (lastErrorCode === "claudeScopeInsufficient") {
+      return {
+        ok: false,
+        message: t(lang, "error.claudeScopeInsufficient"),
+        needsManualFallback: true
+      };
+    }
+    const lastScrapeNeedsReauth = lastErrorCode === "claudeLoginExpired";
     const action = decideSetupTokenAction({
       hasKeychainCredential: Boolean(fromKeychain),
-      lastScrapeWasExpired
+      lastScrapeNeedsReauth
     });
     if (action === "refreshQuota") {
       return { ok: true, message: t(lang, "setupToken.keychainFound"), alreadyHaveCredential: true };
@@ -594,6 +635,12 @@ const setupIpcHandlers = (): void => {
       const snapshot = checkResult.snapshot[service];
       if (snapshot.errorCode === "claudeLoginExpired") {
         return { ok: true, message: snapshot.message || t(lang, "error.claudeLoginExpired") };
+      }
+      if (snapshot.errorCode === "claudeScopeInsufficient") {
+        return { ok: true, message: snapshot.message || t(lang, "error.claudeScopeInsufficient") };
+      }
+      if (snapshot.errorCode === "claudeRateLimited") {
+        return { ok: true, message: snapshot.message || t(lang, "error.claudeRateLimited") };
       }
       if (snapshot.status === "error") {
         return { ok: true, message: snapshot.message || t(lang, "app.authRefreshFailed") };
@@ -689,6 +736,13 @@ const setupIpcHandlers = (): void => {
   ipcMain.handle("alarm:snooze", () => {
     snoozeAlarmPopup();
   });
+  ipcMain.handle("alarm:fit-size", (_event, heightRaw: unknown) => {
+    const height = asAlarmHeight(heightRaw);
+    if (height === null) {
+      return;
+    }
+    fitAlarmWindowSize(height);
+  });
 };
 
 app.whenReady().then(async () => {
@@ -759,6 +813,9 @@ app.whenReady().then(async () => {
   });
 
   trayApp.on("ready", async () => {
+    applyPopoverSize();
+    screen.on("display-metrics-changed", applyPopoverSize);
+
     trayApp.tray?.on("right-click", () => {
       trayApp.tray?.popUpContextMenu(buildTrayMenu());
     });

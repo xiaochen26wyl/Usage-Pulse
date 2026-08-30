@@ -302,25 +302,17 @@ const readExistingKeychainAccount = async (service: string): Promise<string | nu
   }
 };
 
-export const peekClaudeKeychainCredential = async (): Promise<RawCredential | null> => {
-  if (process.platform !== "darwin") {
-    return null;
-  }
-
-  // An explicitly saved setup-token is the app's intentional override. Read
-  // it first and only then inspect the Claude CLI's own item, which remains
-  // read-only throughout this module.
-  const usagePulseCredential = await readKeychainCredentialForService(
-    USAGE_PULSE_KEYCHAIN_SERVICE,
-    USAGE_PULSE_KEYCHAIN_ACCOUNT
-  );
-  if (usagePulseCredential) {
-    return usagePulseCredential;
-  }
-
-  const directClaudeCliCredential = await readKeychainCredentialForService(CLAUDE_CLI_KEYCHAIN_SERVICE);
-  if (directClaudeCliCredential) {
-    return directClaudeCliCredential;
+/**
+ * Claude CLI interactive login (`Claude Code-credentials`) carries
+ * `user:profile`, which the usage API requires. `claude setup-token` only
+ * mints `user:inference` and can never call `/api/oauth/usage` — preferring
+ * a saved setup-token therefore permanently breaks quota monitoring.
+ * See anthropics/claude-code#22450 / #11985.
+ */
+const readClaudeCliKeychainCredential = async (): Promise<RawCredential | null> => {
+  const direct = await readKeychainCredentialForService(CLAUDE_CLI_KEYCHAIN_SERVICE);
+  if (direct) {
+    return direct;
   }
 
   const existingAccount = await readExistingKeychainAccount(CLAUDE_CLI_KEYCHAIN_SERVICE);
@@ -331,6 +323,26 @@ export const peekClaudeKeychainCredential = async (): Promise<RawCredential | nu
     }
   }
   return null;
+};
+
+export const peekClaudeKeychainCredential = async (): Promise<RawCredential | null> => {
+  if (process.platform !== "darwin") {
+    return null;
+  }
+
+  // Prefer the CLI's interactive-login item (full OAuth scopes). Fall back to
+  // a Usage-Pulse-saved setup-token only when the CLI item is missing — and
+  // that fallback still cannot satisfy the usage API (inference-only scope).
+  const claudeCliCredential = await readClaudeCliKeychainCredential();
+  if (claudeCliCredential) {
+    return claudeCliCredential;
+  }
+
+  const setupToken = await readKeychainCredentialForService(
+    USAGE_PULSE_KEYCHAIN_SERVICE,
+    USAGE_PULSE_KEYCHAIN_ACCOUNT
+  );
+  return setupToken;
 };
 
 export const KEYCHAIN_WRITE_TIMEOUT_MS = 8_000;

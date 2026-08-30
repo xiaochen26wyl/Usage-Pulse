@@ -25,7 +25,7 @@ import {
 } from "@shared/types";
 import { LINE_TOKEN_MASK } from "@shared/types";
 import {
-  ALARM_POPUP_AUTO_DISMISS_MINUTES,
+  ALARM_POPUP_AUTO_DISMISS_SECONDS,
   formatCountdown,
 } from "@shared/alarm-utils";
 import { resolveClaudeBillingAt } from "@shared/claude-billing";
@@ -145,6 +145,33 @@ const credentialTagClass = (state: CredentialState): string => {
     return "status-unknown";
   }
   return "status-error";
+};
+
+const SCRAPE_FAILURE_CODES: ErrorCode[] = [
+  "claudeLoginExpired",
+  "claudeScopeInsufficient",
+  "claudeRateLimited",
+  "codexLoginExpired",
+];
+
+const resolveCredentialTag = (
+  service: ServiceType,
+  credential: CredentialStatus,
+  errorCode?: ErrorCode,
+): { labelKey: string; tagClass: string } => {
+  if (service === "claude" && errorCode === "claudeScopeInsufficient") {
+    return { labelKey: "auth.state.scopeInsufficient", tagClass: "status-error" };
+  }
+  if (service === "claude" && errorCode === "claudeLoginExpired") {
+    return { labelKey: "auth.state.expired", tagClass: "status-error" };
+  }
+  if (service === "codex" && errorCode === "codexLoginExpired") {
+    return { labelKey: "auth.state.expired", tagClass: "status-error" };
+  }
+  return {
+    labelKey: credentialStateKeys[credential.state],
+    tagClass: credentialTagClass(credential.state),
+  };
 };
 
 const serviceNames: Record<ServiceType, string> = {
@@ -766,16 +793,17 @@ export const App = () => {
   const renderCredentialRow = (service: ServiceType, errorCode?: ErrorCode) => {
     const credential = authStatus[service];
     const message = authMessage[service];
+    const credentialTag = resolveCredentialTag(service, credential, errorCode);
 
     // Claude: the button always stays — it's also the "manually refresh
     // usage now" entry point, still useful when the credential is healthy.
     // Only relabel/restyle it toward "needs a fresh login" when the
     // credential is either confirmed missing, or the last usage fetch came
-    // back with a real 401 (claudeLoginExpired). Everything else (429,
-    // network hiccups, ...) keeps the quiet "refresh" presentation.
+    // back with a definitive auth failure (401 / missing OAuth scope).
     const needsFreshLogin =
       service === "claude" &&
       (errorCode === "claudeLoginExpired" ||
+        errorCode === "claudeScopeInsufficient" ||
         credential.state === "missing" ||
         credential.state === "expired" ||
         credential.state === "error");
@@ -789,42 +817,54 @@ export const App = () => {
         credential.state === "expired" ||
         credential.state === "missing" ||
         credential.state === "error");
-    const showButton = service === "claude" || service === "codex" || cursorCredentialBroken;
     const needsAttention = needsFreshLogin || cursorCredentialBroken || (service === "codex" && codexCredentialBroken);
+    // Claude / Codex keep refresh and re-auth as separate actions so a scope or
+    // login failure never hides "Update Values" behind a single swapped button.
+    const showRefreshQuota = service === "claude" || service === "codex";
+    const showRedetect =
+      service === "claude" ||
+      service === "codex" ||
+      cursorCredentialBroken;
 
     return (
       <div className="credential-row">
         <div className="quota-header">
-          <span
-            className={`status-tag ${credentialTagClass(credential.state)}`}
-          >
-            {t(lang, credentialStateKeys[credential.state])}
+          <span className={`status-tag ${credentialTag.tagClass}`}>
+            {t(lang, credentialTag.labelKey as typeof credentialStateKeys[CredentialState])}
           </span>
-          {showButton ? (
-            <button
-              type="button"
-              className={needsAttention ? "warning-btn" : "ghost-btn"}
-              style={{ width: "auto" }}
-              onClick={() =>
-                service === "claude" && !needsFreshLogin
-                  ? refreshClaudeQuota()
-                  : service === "codex" && !codexCredentialBroken
-                    ? refreshCodexQuota()
-                    : refreshAuthStatus(service)
-              }
-              disabled={checkingAuth[service]}
-              title={
-                needsAttention
-                  ? t(lang, "button.redetect.tooltip")
-                  : t(lang, "button.refreshQuota.tooltip")
-              }
-            >
-              {checkingAuth[service]
-                ? t(lang, "button.detecting")
-                : needsAttention
-                  ? t(lang, "button.redetect")
-                  : t(lang, "button.refreshQuota")}
-            </button>
+          {showRefreshQuota || showRedetect ? (
+            <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", justifyContent: "flex-end" }}>
+              {showRefreshQuota ? (
+                <button
+                  type="button"
+                  className="ghost-btn"
+                  style={{ width: "auto" }}
+                  onClick={() =>
+                    service === "codex" ? refreshCodexQuota() : refreshClaudeQuota()
+                  }
+                  disabled={checkingAuth[service]}
+                  title={t(lang, "button.refreshQuota.tooltip")}
+                >
+                  {checkingAuth[service]
+                    ? t(lang, "button.detecting")
+                    : t(lang, "button.refreshQuota")}
+                </button>
+              ) : null}
+              {showRedetect ? (
+                <button
+                  type="button"
+                  className={needsAttention ? "warning-btn" : "ghost-btn"}
+                  style={{ width: "auto" }}
+                  onClick={() => refreshAuthStatus(service)}
+                  disabled={checkingAuth[service]}
+                  title={t(lang, "button.redetect.tooltip")}
+                >
+                  {checkingAuth[service]
+                    ? t(lang, "button.detecting")
+                    : t(lang, "button.redetect")}
+                </button>
+              ) : null}
+            </div>
           ) : null}
         </div>
         <p className="meta-text" style={{ margin: "6px 0 0" }}>
@@ -850,17 +890,25 @@ export const App = () => {
             {t(lang, authHintKeys[service])}
           </p>
         ) : null}
+        {service === "claude" && errorCode === "claudeScopeInsufficient" ? (
+          <p className="meta-text" style={{ margin: "2px 0 0" }}>
+            {t(lang, "auth.hint.claudeScope")}
+          </p>
+        ) : null}
         {credential.message ? (
           <p className="meta-text" style={{ margin: "2px 0 0" }}>
             {credential.message}
           </p>
         ) : null}
-        {message ? (
+        {message && !(errorCode && SCRAPE_FAILURE_CODES.includes(errorCode)) ? (
           <p className="meta-text" style={{ margin: "2px 0 0" }}>
             {message}
           </p>
         ) : null}
-        {service === "claude" && (claudeNeedsManualFallback || credential.state === "missing")
+        {service === "claude" &&
+        (claudeNeedsManualFallback ||
+          credential.state === "missing" ||
+          errorCode === "claudeScopeInsufficient")
           ? renderManualTokenFallback()
           : null}
       </div>
@@ -1840,7 +1888,7 @@ export const App = () => {
           {settings.enableAlarmPopup ? (
             <p className="meta-text" style={{ margin: "0 0 8px" }}>
               {t(lang, "alarm.autoDismiss", {
-                minutes: ALARM_POPUP_AUTO_DISMISS_MINUTES,
+                seconds: ALARM_POPUP_AUTO_DISMISS_SECONDS,
               })}
             </p>
           ) : null}

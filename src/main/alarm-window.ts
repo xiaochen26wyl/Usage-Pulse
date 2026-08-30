@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { app, BrowserWindow, screen } from "electron";
 import type { AlarmPopupPayload } from "@shared/types";
-import { ALARM_POPUP_AUTO_DISMISS_MINUTES } from "@shared/alarm-utils";
+import { ALARM_POPUP_AUTO_DISMISS_SECONDS } from "@shared/alarm-utils";
 
 const isDev = Boolean(process.env.ELECTRON_RENDERER_URL);
 
@@ -52,7 +52,20 @@ const clearAutoDismiss = (): void => {
 
 const armAutoDismiss = (): void => {
   clearAutoDismiss();
-  autoDismissTimer = setTimeout(() => closeAlarmPopup(), ALARM_POPUP_AUTO_DISMISS_MINUTES * 60_000);
+  autoDismissTimer = setTimeout(() => closeAlarmPopup(), ALARM_POPUP_AUTO_DISMISS_SECONDS * 1000);
+};
+
+const raisePopup = (window: BrowserWindow): void => {
+  // `floating` stays above ordinary windows but can still become key and
+  // deliver clicks. `screen-saver` intercepts the mouse without handing it to
+  // Chromium, so "知道了" looks clickable and never fires.
+  window.setAlwaysOnTop(true, "floating");
+  window.setVisibleOnAllWorkspaces(true, {
+    visibleOnFullScreen: true,
+    // A menubar app is a UIElementApplication. Flipping it to a regular app
+    // (Electron's default here) leaves this window eating clicks forever.
+    skipTransformProcessType: true
+  });
 };
 
 const createPopup = (): BrowserWindow => {
@@ -70,6 +83,11 @@ const createPopup = (): BrowserWindow => {
     show: false,
     skipTaskbar: false,
     fullscreenable: false,
+    // Inactive-window first click must reach the dismiss button, not just
+    // try (and fail) to activate a menubar accessory app.
+    acceptFirstMouse: true,
+    // macOS NSPanel can take mouse input without a full app activation.
+    ...(process.platform === "darwin" ? { type: "panel" as const } : {}),
     webPreferences: {
       preload: join(__dirname, "../preload/index.js"),
       contextIsolation: true,
@@ -81,8 +99,7 @@ const createPopup = (): BrowserWindow => {
     }
   });
 
-  window.setAlwaysOnTop(true, "screen-saver");
-  window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  raisePopup(window);
 
   window.on("closed", () => {
     popup = null;
@@ -109,9 +126,9 @@ const displayPopup = (payload: AlarmPopupPayload): void => {
     popup.setPosition(x, y);
   }
 
-  popup.setAlwaysOnTop(true, "screen-saver");
-  // showInactive, not show: the window must be impossible to miss without
-  // stealing the keystroke the user is in the middle of typing elsewhere.
+  raisePopup(popup);
+  // showInactive, not show: appear without stealing the keystroke the user is
+  // in the middle of typing. Water's "我喝了。" still needs the first click.
   popup.showInactive();
   armAutoDismiss();
 };
@@ -132,14 +149,24 @@ export const showAlarmPopup = (payload: AlarmPopupPayload): void => {
 
 export const getAlarmPayload = (): AlarmPopupPayload | null => currentPayload;
 
+const destroyPopupWindow = (): void => {
+  if (!popup || popup.isDestroyed()) {
+    popup = null;
+    return;
+  }
+  const window = popup;
+  popup = null;
+  window.hide();
+  if (!window.isDestroyed()) {
+    window.destroy();
+  }
+};
+
 export const closeAlarmPopup = (): void => {
   const closed = currentPayload;
   clearAutoDismiss();
   currentPayload = null;
-  if (popup && !popup.isDestroyed()) {
-    popup.close();
-  }
-  popup = null;
+  destroyPopupWindow();
 
   if (closed) {
     for (const listener of closeListeners) {
@@ -167,6 +194,15 @@ export const snoozeAlarmPopup = (): void => {
     snoozeTimer = null;
     showAlarmPopup(payload);
   }, SNOOZE_MS);
+};
+
+export const fitAlarmWindowSize = (height: number): void => {
+  if (!popup || popup.isDestroyed()) {
+    return;
+  }
+  popup.setContentSize(WINDOW_WIDTH, height);
+  const { x, y } = topRightPosition();
+  popup.setPosition(x, y);
 };
 
 export const destroyAlarmWindow = (): void => {

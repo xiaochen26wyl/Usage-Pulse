@@ -146,11 +146,13 @@ export class AlarmService {
     const settings = settingsStore.get();
     showAlarmPopup({
       id: "test",
-      service: null,
-      label: t(settings.language, "alarm.testLabel"),
+      service: "codex",
+      label: t(settings.language, "alertLabel.codexCooldown"),
       fireAt: nowIso(),
       soundEnabled: false,
-      language: settings.language
+      language: settings.language,
+      countdownTarget: new Date(Date.now() + 11 * 60_000).toISOString(),
+      resetAlarmEnabled: settings.enableCodexResetAlarm
     });
   }
 
@@ -193,7 +195,8 @@ export class AlarmService {
             ? "alarm.popup.title.cursorPeriod"
             : target.id === "claude-billing"
               ? "alarm.popup.title.claudePeriod"
-              : "alarm.popup.title"
+              : "alarm.popup.title",
+          { service: SERVICE_LABELS[target.service] }
         ),
         body: reason,
         lang

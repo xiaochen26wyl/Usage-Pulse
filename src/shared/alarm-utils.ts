@@ -19,7 +19,7 @@ export const MAX_TIMEOUT_MS = 2 ** 31 - 1;
 export const DUE_GRACE_MS = 60_000;
 
 // The alarm popup always closes itself after this long — not user-configurable.
-export const ALARM_POPUP_AUTO_DISMISS_MINUTES = 1;
+export const ALARM_POPUP_AUTO_DISMISS_SECONDS = 30;
 
 export type FireClass = "pending" | "due" | "expired";
 

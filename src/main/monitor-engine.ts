@@ -568,7 +568,13 @@ export class MonitorEngine extends EventEmitter {
         fireAt: nowIso(),
         soundEnabled: false,
         language: settings.language,
-        countdownTarget: countdownTarget ?? null
+        countdownTarget: countdownTarget ?? null,
+        resetAlarmEnabled:
+          id === "claude-cooldown"
+            ? settings.enableClaudeResetAlarm
+            : id === "codex-cooldown"
+              ? settings.enableCodexResetAlarm
+              : undefined
       });
     }
 
@@ -658,7 +664,8 @@ export class MonitorEngine extends EventEmitter {
       combined,
       remainingPercent: state.remainingPercent,
       thresholdPercent: threshold,
-      resetAt
+      resetAt,
+      countdownTarget: resetAt
     });
   }
 

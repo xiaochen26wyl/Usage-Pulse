@@ -87,11 +87,36 @@ export class ClaudeLoginExpiredError extends Error {
 }
 
 export class ClaudeUsageScopeError extends Error {
-  constructor(message: string) {
+  constructor(
+    message: string,
+    readonly source: CredentialSource
+  ) {
     super(message);
     this.name = "ClaudeUsageScopeError";
   }
 }
+
+export class ClaudeRateLimitedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ClaudeRateLimitedError";
+  }
+}
+
+const isOAuthScopeInsufficient = (data: unknown): boolean => {
+  if (!data || typeof data !== "object") {
+    return false;
+  }
+  const error = (data as Record<string, unknown>).error;
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+  const details = (error as Record<string, unknown>).details;
+  if (!details || typeof details !== "object") {
+    return false;
+  }
+  return (details as Record<string, unknown>).error_code === "oauth_scope_insufficient";
+};
 
 const fetchUsagePayload = async (
   token: string,
@@ -105,49 +130,18 @@ const fetchUsagePayload = async (
     });
     return response.data as Record<string, unknown>;
   } catch (error) {
-    // #region agent log
-    {
-      const axiosErr = axios.isAxiosError(error);
-      const rawData = axiosErr ? error.response?.data : undefined;
-      const dataPreview = (typeof rawData === "string"
-        ? rawData
-        : rawData && typeof rawData === "object"
-          ? JSON.stringify(rawData)
-          : "")
-        .slice(0, 300)
-        .replace(/sk-ant-[A-Za-z0-9_-]+/g, "sk-ant-[redacted]");
-      fetch("http://127.0.0.1:7281/ingest/bbb5ca65-8181-454e-a9ef-2fe1fab4b231", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "e7da19" },
-        body: JSON.stringify({
-          sessionId: "e7da19",
-          runId: "pre-fix",
-          hypothesisId: "H1-H5",
-          location: "claude-code.ts:fetchUsagePayload",
-          message: "usage API request failed",
-          data: {
-            isAxios: axiosErr,
-            status: axiosErr ? (error.response?.status ?? null) : null,
-            code: axiosErr ? (error.code ?? null) : null,
-            dataPreview,
-            tokenLen: token.length,
-            tokenPrefixOk: token.startsWith("sk-ant-oat01-"),
-            source
-          },
-          timestamp: Date.now()
-        })
-      }).catch(() => {});
-    }
-    // #endregion
     if (axios.isAxiosError(error)) {
       if (error.response?.status === 401) {
         throw new ClaudeLoginExpiredError(t(lang, "error.claudeLoginExpired"), source);
       }
       if (error.response?.status === 429) {
-        throw new Error(t(lang, "error.claudeRateLimited"));
+        throw new ClaudeRateLimitedError(t(lang, "error.claudeRateLimited"));
       }
       if (error.response?.status === 403) {
-        throw new ClaudeUsageScopeError(t(lang, "error.claudeApiFailed"));
+        const scopeMessage = isOAuthScopeInsufficient(error.response.data)
+          ? t(lang, "error.claudeScopeInsufficient")
+          : t(lang, "error.claudeApiFailed");
+        throw new ClaudeUsageScopeError(scopeMessage, source);
       }
     }
     throw new Error(t(lang, "error.claudeApiFailed"));
@@ -230,20 +224,5 @@ export const collectClaudeCodeQuota = async (): Promise<ScrapeResult> => {
   // Read the whole credential, not just the token, so a 401 below can still
   // tell the renderer which stored credential needs replacing.
   const { token, source } = await readClaudeCredential();
-  // #region agent log
-  fetch("http://127.0.0.1:7281/ingest/bbb5ca65-8181-454e-a9ef-2fe1fab4b231", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "e7da19" },
-    body: JSON.stringify({
-      sessionId: "e7da19",
-      runId: "pre-fix",
-      hypothesisId: "H4",
-      location: "claude-code.ts:collectClaudeCodeQuota",
-      message: "credential read before usage API",
-      data: { source, tokenLen: token.length, tokenPrefixOk: token.startsWith("sk-ant-oat01-") },
-      timestamp: Date.now()
-    })
-  }).catch(() => {});
-  // #endregion
   return collectClaudeCodeQuotaFromToken(token, source);
 };

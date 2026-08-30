@@ -89,6 +89,22 @@ export const asClaudeManualToken = (value: unknown): string | null => {
 // allocate an absurd screen buffer.
 const MAX_PTY_DIMENSION = 500;
 
+// Alarm popup height reported by the renderer after layout. Bounded so a
+// misbehaving renderer cannot ask for an absurd BrowserWindow size.
+const MIN_ALARM_HEIGHT = 80;
+const MAX_ALARM_HEIGHT = 480;
+
+export const asAlarmHeight = (value: unknown): number | null => {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return null;
+  }
+  const rounded = Math.round(value);
+  if (rounded < MIN_ALARM_HEIGHT || rounded > MAX_ALARM_HEIGHT) {
+    return null;
+  }
+  return rounded;
+};
+
 export const asPtySize = (value: unknown): { cols: number; rows: number } | null => {
   if (!value || typeof value !== "object") {
     return null;

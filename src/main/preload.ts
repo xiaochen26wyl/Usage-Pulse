@@ -77,6 +77,7 @@ const api = {
   requestAlarmPayload: () => ipcRenderer.invoke("alarm:request-payload") as Promise<AlarmPopupPayload | null>,
   dismissAlarm: () => ipcRenderer.invoke("alarm:dismiss") as Promise<void>,
   snoozeAlarm: () => ipcRenderer.invoke("alarm:snooze") as Promise<void>,
+  fitAlarmSize: (height: number) => ipcRenderer.invoke("alarm:fit-size", height) as Promise<void>,
   onAlarmPayload: (handler: (payload: AlarmPopupPayload) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, payload: AlarmPopupPayload) => handler(payload);
     ipcRenderer.on("alarm:payload", listener);

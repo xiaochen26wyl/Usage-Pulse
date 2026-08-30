@@ -31,16 +31,39 @@ const centeredPosition = (): { x: number; y: number } => {
 
 let window: BrowserWindow | null = null;
 let session: ClaudeLoginPtySession | null = null;
+let pendingOptions: ClaudeLoginWindowOptions | null = null;
+let rendererReady = false;
+// Chunks that arrived before the renderer finished wiring its listeners.
+let earlyOutput: string[] = [];
+
+const flushEarlyOutput = (): void => {
+  if (!window || window.isDestroyed() || earlyOutput.length === 0) {
+    return;
+  }
+  for (const chunk of earlyOutput) {
+    window.webContents.send("claude-login:data", chunk);
+  }
+  earlyOutput = [];
+};
 
 const startSession = (options: ClaudeLoginWindowOptions): void => {
+  if (session) {
+    session.kill();
+    session = null;
+  }
+  earlyOutput = [];
+
   startClaudeLoginPty({
     onData: (chunk) => {
-      if (window && !window.isDestroyed()) {
+      if (window && !window.isDestroyed() && rendererReady) {
         window.webContents.send("claude-login:data", chunk);
+      } else {
+        earlyOutput.push(chunk);
       }
     },
     onExit: (exitCode) => {
       if (window && !window.isDestroyed()) {
+        flushEarlyOutput();
         window.webContents.send("claude-login:exit", exitCode);
       }
       session = null;
@@ -48,6 +71,9 @@ const startSession = (options: ClaudeLoginWindowOptions): void => {
   })
     .then((started) => {
       session = started;
+      if (rendererReady) {
+        flushEarlyOutput();
+      }
     })
     .catch((error) => {
       options.onSpawnError(error instanceof SetupTokenError ? error : new SetupTokenError("launchFailed"));
@@ -57,7 +83,7 @@ const startSession = (options: ClaudeLoginWindowOptions): void => {
     });
 };
 
-const createWindow = (options: ClaudeLoginWindowOptions): BrowserWindow => {
+const createWindow = (): BrowserWindow => {
   const { x, y } = centeredPosition();
 
   const created = new BrowserWindow({
@@ -79,12 +105,10 @@ const createWindow = (options: ClaudeLoginWindowOptions): BrowserWindow => {
 
   created.on("closed", () => {
     window = null;
+    rendererReady = false;
+    earlyOutput = [];
     session?.kill();
     session = null;
-  });
-
-  created.webContents.on("did-finish-load", () => {
-    startSession(options);
   });
 
   void created.loadURL(claudeLoginUrl());
@@ -92,21 +116,41 @@ const createWindow = (options: ClaudeLoginWindowOptions): BrowserWindow => {
 };
 
 /**
- * Opens the node-pty-backed login window, or just focuses it if a login is
- * already in progress — never runs two `claude setup-token` PTYs at once.
+ * Opens the node-pty-backed login window. Always (re)starts `claude setup-token`
+ * so a previous dead/blank session cannot leave the user staring at silence.
+ * PTY output is buffered until the renderer signals ready, avoiding the race
+ * where early CLI output is sent before xterm has subscribed.
  */
 export const openClaudeLoginWindow = (options: ClaudeLoginWindowOptions): void => {
+  pendingOptions = options;
+
   if (window && !window.isDestroyed()) {
+    rendererReady = false;
     window.show();
     window.focus();
+    // Reload so the terminal clears and React re-subscribes, then wait for ready.
+    void window.loadURL(claudeLoginUrl());
     return;
   }
 
-  window = createWindow(options);
+  rendererReady = false;
+  window = createWindow();
   window.once("ready-to-show", () => {
     window?.show();
     window?.focus();
   });
+};
+
+/**
+ * Called once the login window's xterm listeners are wired. Flushes any early
+ * PTY output and starts (or restarts) the session if needed.
+ */
+export const notifyClaudeLoginRendererReady = (): void => {
+  rendererReady = true;
+  flushEarlyOutput();
+  if (!session && pendingOptions) {
+    startSession(pendingOptions);
+  }
 };
 
 export const writeClaudeLoginPtyInput = (data: string): void => {
@@ -120,6 +164,9 @@ export const resizeClaudeLoginPty = (cols: number, rows: number): void => {
 export const destroyClaudeLoginWindow = (): void => {
   session?.kill();
   session = null;
+  rendererReady = false;
+  earlyOutput = [];
+  pendingOptions = null;
   if (window && !window.isDestroyed()) {
     window.close();
   }

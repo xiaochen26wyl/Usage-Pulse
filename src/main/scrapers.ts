@@ -1,7 +1,12 @@
 import type { CredentialSource, ErrorCode, ScrapeResult, ServiceType } from "@shared/types";
 import { t } from "@shared/i18n";
 import { SERVICE_LABELS } from "@main/config";
-import { ClaudeLoginExpiredError, collectClaudeCodeQuota } from "@main/collectors/claude-code";
+import {
+  ClaudeLoginExpiredError,
+  ClaudeRateLimitedError,
+  ClaudeUsageScopeError,
+  collectClaudeCodeQuota
+} from "@main/collectors/claude-code";
 import { CodexLoginExpiredError, collectCodexQuota } from "@main/collectors/codex";
 import { collectCursorQuota } from "@main/collectors/cursor";
 import { settingsStore } from "@main/store";
@@ -10,17 +15,26 @@ const detectErrorCode = (error: unknown): ErrorCode | undefined => {
   if (error instanceof ClaudeLoginExpiredError) {
     return "claudeLoginExpired";
   }
+  if (error instanceof ClaudeUsageScopeError) {
+    return "claudeScopeInsufficient";
+  }
+  if (error instanceof ClaudeRateLimitedError) {
+    return "claudeRateLimited";
+  }
   if (error instanceof CodexLoginExpiredError) {
     return "codexLoginExpired";
   }
   return undefined;
 };
 
-// Only a confirmed 401 carries a source worth acting on; every other failure
-// leaves it undefined so nothing downstream treats a network blip as proof of
-// which credential was in play.
+// Only a confirmed auth/scope failure carries a source worth acting on; every
+// other failure leaves it undefined so nothing downstream treats a network blip
+// as proof of which credential was in play.
 const detectCredentialSource = (error: unknown): CredentialSource | undefined => {
   if (error instanceof ClaudeLoginExpiredError) {
+    return error.source;
+  }
+  if (error instanceof ClaudeUsageScopeError) {
     return error.source;
   }
   if (error instanceof CodexLoginExpiredError) {
