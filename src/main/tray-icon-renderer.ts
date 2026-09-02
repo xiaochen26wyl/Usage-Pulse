@@ -15,9 +15,9 @@ import {
 // either loses legibility or leaves an oversized gap before the text.
 const CANVAS_HEIGHT = 40;
 const SCALE_FACTOR = 2;
-const MAX_CANVAS_WIDTH = 190;
+const MAX_CANVAS_WIDTH = 210;
 const PADDING_X = 2;
-const TOKEN_GAP = 30;
+const TOKEN_GAP = 14;
 const LINE1_SIZE = 15;
 const LINE2_SIZE = 22;
 const LINE1_Y_RATIO = 0.28;

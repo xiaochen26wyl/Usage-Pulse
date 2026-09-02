@@ -2,7 +2,6 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   asAlarmHeight,
-  asClaudeManualToken,
   asClipboardText,
   asServiceType,
   asSettingsPatch,
@@ -57,39 +56,11 @@ test("asSettingsPatch refuses non-objects", () => {
   assert.deepEqual(asSettingsPatch([["language", "en"]]), {});
 });
 
-test("asClipboardText allows the CLI commands the UI copies, but no control characters", () => {
-  assert.equal(asClipboardText("claude"), "claude");
-  assert.equal(asClipboardText("claude setup-token"), "claude setup-token");
+test("asClipboardText allows the CLI command the UI copies, but no control characters", () => {
+  assert.equal(asClipboardText("claude auth login"), "claude auth login");
   assert.equal(asClipboardText("claude\nrm -rf ~"), null);
   assert.equal(asClipboardText("x".repeat(257)), null);
   assert.equal(asClipboardText(42), null);
-});
-
-test("asClaudeManualToken accepts a well-formed pasted token, trimmed", () => {
-  const token = `sk-ant-oat01-${"a".repeat(95)}`;
-  assert.equal(asClaudeManualToken(`  ${token}  \n`), token);
-});
-
-test("asClaudeManualToken extracts a wrapped setup-token from CLI text", () => {
-  const head = `sk-ant-oat01-${"a".repeat(66)}`;
-  const tail = `${"B".repeat(30)}_tail`;
-  const token = `${head}${tail}`;
-  assert.equal(asClaudeManualToken(`token:${head}\n ${tail}`), token);
-  assert.equal(asClaudeManualToken(`Your OAuth token:\n${head}&#x20;\n${tail}\nStore this token securely.`), token);
-});
-
-test("asClaudeManualToken tolerates Markdown-escaped underscores in pasted text", () => {
-  const token = `sk-ant-oat01-${"a".repeat(50)}_${"B".repeat(44)}`;
-  assert.equal(asClaudeManualToken(token.replace("_", "\\_")), token);
-});
-
-test("asClaudeManualToken rejects the wrong prefix, short values, and control characters", () => {
-  assert.equal(asClaudeManualToken(`sk-ant-api01-${"a".repeat(95)}`), null);
-  assert.equal(asClaudeManualToken("sk-ant-oat01-tooshort"), null);
-  assert.equal(asClaudeManualToken(`sk-ant-oat01-${"a".repeat(40)}\nrm -rf ~`), null);
-  assert.equal(asClaudeManualToken(""), null);
-  assert.equal(asClaudeManualToken(undefined), null);
-  assert.equal(asClaudeManualToken(42), null);
 });
 
 test("asWaterCupSize normalises to a supported cup and ignores junk", () => {

@@ -42,7 +42,6 @@ const CONFIRM_DELAY_MS = 90_000;
 // update ("credential"), and the single-shot confirmation re-read ("confirm")
 // are allowed past it; each is bounded by construction.
 const MIN_CLAUDE_FETCH_GAP_MS = 5 * 60_000;
-const MIN_CODEX_FETCH_GAP_MS = 5 * 60_000;
 
 // A recovered reading must clear its threshold by more than this many points
 // before the low-quota latch is cleared, so rounding/borderline noise right
@@ -52,9 +51,14 @@ const RECOVERY_HYSTERESIS_PERCENT = 5;
 // Polling cadence: 15 minutes normally, tightened to 10 minutes once any of a
 // service's windows is running low, so a user who's about to run dry gets
 // checked on more often without paying that cost while quota is healthy.
+// (Cursor and Claude only — Codex uses its own fixed cadence below.)
 const FAST_POLL_THRESHOLD_PERCENT = 20;
 const FAST_POLL_INTERVAL_MS = 10 * 60_000;
 const NORMAL_POLL_INTERVAL_MS = 15 * 60_000;
+
+// Codex gets a single fixed cadence instead of the fast/normal split above,
+// and no separate minimum-gap floor: the fixed interval is the floor.
+const CODEX_POLL_INTERVAL_MS = 5 * 60_000;
 
 // How far back to look in the CLI's own logs when corroborating a lockout.
 // Wider than the 5-hour window so a rejection recorded at its start is still
@@ -181,6 +185,9 @@ const evaluateCodexLowFlags = (windows: QuotaWindow[], settings: AppSettings): C
 // snapshot: fast tier if any of its windows is at or below the fast-poll
 // threshold, normal tier otherwise (including when there's no snapshot yet).
 const nextPollDelayMs = (service: ServiceType): number => {
+  if (service === "codex") {
+    return CODEX_POLL_INTERVAL_MS;
+  }
   const snapshot = snapshotStore.get()?.[service] ?? null;
   const windows = snapshot?.windows ?? [];
   const isLow =
@@ -188,10 +195,7 @@ const nextPollDelayMs = (service: ServiceType): number => {
       ? cursorWindowState(findWindow(windows, "cursor_models"), FAST_POLL_THRESHOLD_PERCENT).low ||
         cursorWindowState(findWindow(windows, "other_models"), FAST_POLL_THRESHOLD_PERCENT).low
       : claudeWindowState(findWindow(windows, "session"), FAST_POLL_THRESHOLD_PERCENT).low ||
-        claudeWindowState(
-          service === "codex" ? findWindow(windows, "weekly") : findClaudeWeeklyWindow(windows),
-          FAST_POLL_THRESHOLD_PERCENT
-        ).low;
+        claudeWindowState(findClaudeWeeklyWindow(windows), FAST_POLL_THRESHOLD_PERCENT).low;
   return isLow ? FAST_POLL_INTERVAL_MS : NORMAL_POLL_INTERVAL_MS;
 };
 
@@ -874,16 +878,6 @@ export class MonitorEngine extends EventEmitter {
     return Date.now() - this.lastClaudeFetchMs < MIN_CLAUDE_FETCH_GAP_MS;
   }
 
-  private shouldThrottleCodex(trigger: TriggerType): boolean {
-    if (trigger === "manual" || trigger === "confirm") {
-      return false;
-    }
-    if (this.lastCodexFetchMs === 0) {
-      return false;
-    }
-    return Date.now() - this.lastCodexFetchMs < MIN_CODEX_FETCH_GAP_MS;
-  }
-
   /**
    * Would this reading have raised any alert, had we been willing to trust it?
    *
@@ -1011,17 +1005,6 @@ export class MonitorEngine extends EventEmitter {
         };
       }
 
-      if (service === "codex" && previousSnapshot && this.shouldThrottleCodex(trigger)) {
-        console.log(`[Usage-Pulse] codex fetch skipped (${trigger}): minimum gap not elapsed`);
-        return {
-          snapshot: previousSnapshot,
-          changed: false,
-          lowAlert: previousSnapshot.codex.status === "low",
-          notified: false,
-          reason: t(lang, "reason.noChange")
-        };
-      }
-
       if (service === "claude") {
         this.lastClaudeFetchMs = Date.now();
       }
@@ -1037,11 +1020,9 @@ export class MonitorEngine extends EventEmitter {
   }
 
   /**
-   * Publishes an already-fetched scrape as the current snapshot.
-   *
-   * Used after setup-token / paste-token validation so the usage that proved
-   * the credential is the usage the UI shows — a second request would race
-   * the first and often 429-overwrite it.
+   * Publishes an already-fetched scrape as the current snapshot, so a caller
+   * that already spent one API request never needs a second just to display
+   * the result — a second request would race the first and often 429-overwrite it.
    */
   applyScrapeResult(
     service: ServiceType,

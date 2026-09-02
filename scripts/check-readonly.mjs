@@ -40,14 +40,15 @@ const writeHints = [
   "set-generic-password"
 ];
 
-// The single deliberate exception, recorded rather than hidden: writing a
-// `claude setup-token` into a Usage-Pulse-owned Keychain item so the next
-// re-detect can find it. Anything NOT listed here that trips a write hint is
-// a genuine violation.
+// The single deliberate exception, recorded rather than hidden: a one-time,
+// best-effort deletion of the Usage-Pulse-owned Keychain item the retired
+// `claude setup-token` flow used to write (never the official CLI's own
+// item). Anything NOT listed here that trips a write hint is a genuine
+// violation.
 //
 // Each entry names the file and the exact write it is allowed to perform. Adding
 // to this list is a deliberate act that shows up in review.
-const allowedWrites = new Map([["src/main/credential-provider.ts", ["add-generic-password"]]]);
+const allowedWrites = new Map([["src/main/credential-provider.ts", ["delete-generic-password"]]]);
 
 const listFiles = async (dir) => {
   const entries = await readdir(dir, { withFileTypes: true });

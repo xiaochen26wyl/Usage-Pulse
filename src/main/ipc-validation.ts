@@ -1,7 +1,6 @@
 import type { AppSettings, ServiceType, WaterCupSizeMl } from "@shared/types";
 import { normalizeWaterCupSize } from "@shared/water";
 import { DEFAULT_SETTINGS } from "@main/config";
-import { MIN_TOKEN_LENGTH, SETUP_TOKEN_PREFIX } from "@main/claude-setup-token";
 
 /**
  * Everything arriving over IPC is renderer input, and renderer input is not
@@ -31,11 +30,9 @@ export const asWaterCupSize = (value: unknown): WaterCupSizeMl | null => {
 // cannot push an unbounded string through validation and into the settings file.
 const MAX_TOKEN_LENGTH = 4096;
 
-// Only ever the two short CLI commands the UI offers to copy.
+// Only ever the short CLI command the UI offers to copy.
 const MAX_CLIPBOARD_LENGTH = 256;
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/;
-const TOKEN_CHARACTER = /[A-Za-z0-9_-]/;
-const HTML_SPACE_ENTITY = /&(?:#x20|#32|nbsp);/gi;
 
 export const asClipboardText = (value: unknown): string | null => {
   if (typeof value !== "string" || value.length > MAX_CLIPBOARD_LENGTH) {
@@ -44,50 +41,6 @@ export const asClipboardText = (value: unknown): string | null => {
   // No control characters: whatever lands on the clipboard is pasted into a shell.
   return CONTROL_CHARACTERS.test(value) ? null : value;
 };
-
-// A setup-token the user hand-pastes after running `claude setup-token`.
-// Obvious mistakes (empty, truncated, the wrong kind of key) are rejected
-// before they ever reach the API or Keychain.
-export const asClaudeManualToken = (value: unknown): string | null => {
-  if (typeof value !== "string") {
-    return null;
-  }
-  const text = value.replace(HTML_SPACE_ENTITY, " ").trim();
-  if (text.length < MIN_TOKEN_LENGTH || text.length > MAX_TOKEN_LENGTH) {
-    return null;
-  }
-  const start = text.indexOf(SETUP_TOKEN_PREFIX);
-  if (start < 0) {
-    return null;
-  }
-
-  let token = "";
-  for (let index = start; index < text.length; index += 1) {
-    const character = text[index];
-    if (/\s/.test(character)) {
-      if (token.length >= MIN_TOKEN_LENGTH) {
-        break;
-      }
-      continue;
-    }
-    if (character === "\\" && text[index + 1] === "_") {
-      token += "_";
-      index += 1;
-      continue;
-    }
-    if (!TOKEN_CHARACTER.test(character)) {
-      break;
-    }
-    token += character;
-  }
-
-  return token.length >= MIN_TOKEN_LENGTH && token.length <= MAX_TOKEN_LENGTH ? token : null;
-};
-
-// A terminal resize the claude-login window reports on its own container
-// size — bounded so a compromised/misbehaving renderer can't ask the PTY to
-// allocate an absurd screen buffer.
-const MAX_PTY_DIMENSION = 500;
 
 // Alarm popup height reported by the renderer after layout. Bounded so a
 // misbehaving renderer cannot ask for an absurd BrowserWindow size.
@@ -103,23 +56,6 @@ export const asAlarmHeight = (value: unknown): number | null => {
     return null;
   }
   return rounded;
-};
-
-export const asPtySize = (value: unknown): { cols: number; rows: number } | null => {
-  if (!value || typeof value !== "object") {
-    return null;
-  }
-  const { cols, rows } = value as { cols?: unknown; rows?: unknown };
-  if (typeof cols !== "number" || typeof rows !== "number") {
-    return null;
-  }
-  if (!Number.isInteger(cols) || !Number.isInteger(rows)) {
-    return null;
-  }
-  if (cols < 1 || cols > MAX_PTY_DIMENSION || rows < 1 || rows > MAX_PTY_DIMENSION) {
-    return null;
-  }
-  return { cols, rows };
 };
 
 /**

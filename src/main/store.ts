@@ -22,7 +22,7 @@ import { decryptSecret, encryptSecret } from "@main/secure-store";
 const TRAY_VALUE_COLOR_MODES: ReadonlySet<TrayValueColorMode> = new Set(["system", "white", "black"]);
 const LANGUAGES: ReadonlySet<Language> = new Set(["zh", "en", "ja", "ko"]);
 
-// Settings fields listed here are encrypted at rest via the OS keychain (see secure-store.ts)
+// Settings fields listed here are encrypted at rest via OS-native secret storage (see secure-store.ts)
 // whenever they're written to the electron-store JSON file, and decrypted on read. Add future
 // secrets (e.g. additional LINE keys) to this list rather than storing them in plain text.
 const SECRET_SETTINGS_KEYS: Array<keyof AppSettings> = ["lineChannelAccessToken"];

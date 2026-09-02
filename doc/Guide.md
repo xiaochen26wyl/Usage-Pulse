@@ -36,38 +36,38 @@
 - `monitor-engine.ts` `cursorWindowState` converts Cursor used% to remaining% before the low-quota check, so downstream alerts never have to care which way a collector counts.
 
 #### Claude Code
-- Local source:
-  - Usage-Pulse's own macOS Keychain `Usage-Pulse-Claude-setup-token` / `Usage-Pulse` (preferred)
-  - Official Claude CLI macOS Keychain `Claude Code-credentials` (read-only fallback)
+- Local source: the official Claude CLI's macOS Keychain item, `Claude Code-credentials`
+  (read-only — written only by `claude auth login`, never by Usage-Pulse)
 - Remote source: `https://api.anthropic.com/api/oauth/usage`
 - Corroborating local source: `~/.claude/projects/**/*.jsonl`, read-only, only the
   `quotaLimits` records — see "Restraint on the usage API" below
 - Metrics: remaining percentage for the 5-hour window and weekly quota
 
 #### Re-detecting a Claude Code credential
-On startup, `credentialMonitor.checkAll()` first checks Usage-Pulse's own
-`Usage-Pulse-Claude-setup-token` / `Usage-Pulse` item, then the official read-only
-`Claude Code-credentials` item. The startup usage pass then calls
-the usage API once so the interface reflects the stored credential immediately.
-If Keychain is missing, or the usage API returns `claudeLoginExpired`, the Claude
+On startup, `credentialMonitor.checkAll()` reads the official, read-only
+`Claude Code-credentials` Keychain item. The startup usage pass then calls the
+usage API once so the interface reflects the stored credential immediately. If
+Keychain is missing, or the usage API returns `claudeLoginExpired`, the Claude
 card shows **Get Credentials**.
 
-That window (`claude-login.html` / `ClaudeLoginApp.tsx`) hosts an xterm.js view of a
-`node-pty` session running `claude setup-token` (`claude-login-pty.ts`). The
-official CLI opens its own browser page; Usage-Pulse only displays the PTY output
-and does not open the URL a second time.
-Usage-Pulse does not parse or auto-store the printed `sk-ant-oat01-` token. After
-browser authorization, the user pastes the one-time Authentication code into the
-in-app PTY and presses Enter. Once the CLI exchanges it, the user manually copies
-the printed long-lived token from the command window into the Settings paste box,
-then clicks **Save Credential**. That sends `credential:submit-manual-token` to main,
-where `persistClaudeToken` validates the token shape, writes it to the same
-Keychain item via `writeClaudeSetupTokenToKeychain`, and runs one usage-API check.
-The token is not retained in the app settings as a second Claude credential.
+Usage-Pulse deliberately does not spawn the `claude` CLI or implement any OAuth
+flow of its own. `claude setup-token`'s authorize request only ever asks for the
+`user:inference` scope — a hard limitation of the official CLI, confirmed in
+`anthropics/claude-code#22450` / `#11985` and unrelated to how the token is
+obtained — so any workflow built around it can never satisfy the usage API's
+`user:profile` requirement. Only `claude auth login` (the CLI's normal
+interactive login) requests `user:profile`. Clicking **Get Credentials**
+therefore just opens `https://claude.ai/login` for the user, and Settings shows
+a "copy `claude auth login`" button plus instructions to run it in a terminal.
+The user completes that login entirely outside Usage-Pulse — the official CLI
+opens its own browser page and writes `Claude Code-credentials` itself — then
+clicks **Update Values** to re-read Keychain and fetch usage. If Keychain
+already holds a credential when **Get Credentials** is clicked, the app skips
+straight to a quota refresh instead of reopening the login page.
 
-The old system-Terminal + `tee` + `setup-token-capture.txt` path is gone. Usage-Pulse
-owns the PTY so the CLI sees a real TTY; the only visible "terminal" is the in-app
-window.
+A leftover `Usage-Pulse-Claude-setup-token` Keychain item from the retired
+setup-token flow (pre-System-1) is removed once on startup, since it could only
+ever hold a `user:inference`-only token.
 
 ### Restraint on the usage API
 
@@ -90,6 +90,36 @@ Usage-Pulse deliberately keeps its request volume to Anthropic low.
   opinion, the CLI's own `quotaLimits` records are consulted before any request
   is made; a rejection recorded for the same window settles it for free. This
   is built-in, not a setting.
+- **Why this hasn't been shortened.** `https://api.anthropic.com/api/oauth/usage`
+  — the exact endpoint Usage-Pulse calls — is the subject of two open issues on
+  `anthropics/claude-code`
+  ([#31021](https://github.com/anthropics/claude-code/issues/31021),
+  [#31637](https://github.com/anthropics/claude-code/issues/31637)): it returns
+  429s aggressively, community reports say even 30–60 second polling triggers
+  it, and once tripped it can keep returning 429 for hours even after backing
+  off to 5-minute retries. The community's rough safe floor is ~180 seconds,
+  and only with the `User-Agent: claude-code/` header set — which
+  [claude-code.ts:18](../src/main/collectors/claude-code.ts) already sends.
+  Anthropic closed both issues "not planned" with no official guidance. Given
+  that, the current 15/10-minute schedule plus the 5-minute
+  `MIN_CLAUDE_FETCH_GAP_MS` floor is already more conservative than the
+  community-observed minimum, so it is being kept as-is rather than tightened.
+- **Cursor is not held to the same floor.** `api2.cursor.sh`'s
+  `DashboardService/GetCurrentPeriodUsage` is an internal, undocumented RPC the
+  Cursor IDE itself uses — unrelated to Cursor's public Team/Admin API docs at
+  cursor.com/docs/api — so there is no official rate-limit number to check it
+  against. Cursor keeps the same 15/10-minute schedule as Claude but has no
+  minimum-gap floor and no CLI-activity gating; that remains an unforced,
+  conservative default rather than a documented requirement.
+
+### Codex polling
+
+Codex does not share Claude/Cursor's fast/normal schedule. It polls on a
+single fixed cadence — every 5 minutes (`CODEX_POLL_INTERVAL_MS`) — with no
+separate minimum-gap floor, since the fixed interval already is the floor.
+`codexUseCliActivityPolling` (on by default) still applies on top of that: if
+neither the Codex CLI's session logs nor its credential have changed since the
+last fetch, that tick is skipped and no request is made.
 
 ### Completed features
 - Electron + React + TypeScript project skeleton (Electron `^43.4.1`)
@@ -142,8 +172,10 @@ frameless, always-on-top window (`alarm.html`) positioned in the
 monitor-arrangement change never leaves it off-screen). Quota / reset / low-quota popups are
 **silent** (`soundEnabled: false`); the water reminder uses a synthesised chime. It is shown with
 `showInactive()` so it never steals the keystroke you are in the middle of typing, and closes
-itself after `ALARM_POPUP_AUTO_DISMISS_MINUTES` (1 minute; not a setting). Quota popups can be
+itself after `ALARM_POPUP_AUTO_DISMISS_SECONDS` (30 seconds; not a setting). Quota popups can be
 snoozed for 5 minutes (`SNOOZE_MS`).
+OS-native desktop notifications are also closed by `sendPlainDesktopNotification` after the
+same 30-second window.
 
 How to be notified is two peer switches: the app popup (`enableAlarmPopup`) and LINE
 (`enableLineNotification`; a token must still be pasted below before anything is sent). Each
@@ -168,10 +200,10 @@ Two failure modes of the old reset alert are fixed here:
 
 
 ### Security constraints
-- OAuth tokens are only held briefly in memory except for the setup-token exception below.
+- OAuth tokens are only held briefly in memory.
 - Writing to `state.vscdb` or `.credentials.json` is forbidden.
-- The one Keychain write is the long-lived token from `claude setup-token`, stored in Usage-Pulse's own `Usage-Pulse-Claude-setup-token` / `Usage-Pulse` item after the user completes official CLI OAuth (browser Authentication code → in-app PTY → long-lived token in the main window → `persistClaudeToken`). The official `Claude Code-credentials` item remains read-only.
-- During login the token is visible in the in-app xterm scrollback; raw PTY output reaches the login renderer over `claude-login:data`. It no longer lands in a system Terminal or a `tee` capture file.
+- Claude Code credentials are entirely read-only: Usage-Pulse never spawns the `claude` CLI, never implements OAuth itself, and never writes to the official `Claude Code-credentials` Keychain item. The only Keychain write it ever performs is a one-time, best-effort deletion of the retired `Usage-Pulse-Claude-setup-token` item left over from the old setup-token flow.
+- **Get Credentials** only opens `https://claude.ai/login` via `shell.openExternal`; the user completes `claude auth login` entirely in their own terminal, outside the app.
 - On a 401 or missing quota data, return an actionable error message; never perform automatic token refresh.
 
 ### Development and packaging
@@ -185,8 +217,6 @@ Two failure modes of the old reset alert are fixed here:
 - `pnpm smoke:build`: smoke test on the build output
 - `pnpm dist:mac`: produce a macOS `.dmg`
 - `pnpm dist:win`: produce a Windows `.exe`
-- `postinstall` also runs `scripts/fix-node-pty-permissions.mjs` (sets the executable bit on `node-pty`'s `spawn-helper`; a no-op on Windows)
-- `electron-builder` ships `node-pty` via `asarUnpack` (native helper cannot live inside asar)
 - Git daily workflow (`start-work` / `push-wip` / `finish-work`) → [`doc/Git_Workflow.md`](Git_Workflow.md)
 
 #### Before every release (local)
@@ -240,35 +270,33 @@ Two failure modes of the old reset alert are fixed here:
 - `monitor-engine.ts` 的 `cursorWindowState` 會把 Cursor 的 used% 轉成 remaining% 再判斷低額度，下游警告不必管 collector 怎麼計。
 
 #### Claude Code
-- 本機來源：
-  - Usage-Pulse 自有的 macOS Keychain `Usage-Pulse-Claude-setup-token` / `Usage-Pulse`（優先）
-  - 官方 Claude CLI 的 macOS Keychain `Claude Code-credentials`（只讀 fallback）
+- 本機來源：官方 Claude CLI 的 macOS Keychain `Claude Code-credentials`（唯讀——只由
+  `claude auth login` 寫入，Usage-Pulse 不曾寫入）
 - 遠端來源：`https://api.anthropic.com/api/oauth/usage`
 - 佐證用本機來源：`~/.claude/projects/**/*.jsonl`，唯讀，且只取 `quotaLimits`
   紀錄——詳見下方「對 usage API 的節制」
 - 指標：5 小時視窗與每週配額剩餘百分比
 
 #### 重新偵測 Claude Code 憑證
-啟動時，`credentialMonitor.checkAll()` 會先檢查 Usage-Pulse 自己的
-`Usage-Pulse-Claude-setup-token` / `Usage-Pulse` 項目，再以只讀方式檢查官方的
+啟動時，`credentialMonitor.checkAll()` 會以唯讀方式檢查官方的
 `Claude Code-credentials` 項目。接著 startup usage pass 會打一次 usage API，讓介面立刻反映
 已存憑證的數值。若 Keychain 沒有憑證，或 usage API 回 `claudeLoginExpired`，Claude
 卡片會顯示「獲取憑證」。
 
-該視窗（`claude-login.html`／`ClaudeLoginApp.tsx`）用 xterm.js 顯示 `node-pty` 跑的
-`claude setup-token`（`claude-login-pty.ts`）。受信任的 `https://claude.ai`／
-`anthropic.com` 登入網址由官方 CLI 自己開啟；Usage-Pulse 只顯示 PTY 輸出，不會再把同一
-個網址開第二次。Usage-Pulse 不再解析或自動保存畫面印出的 `sk-ant-oat01-` token。
-瀏覽器授權後，使用者先把一次性的 Authentication code
-貼回 App 內 PTY 並按 Enter；CLI 交換完成後，再從指令視窗複製長效 token，貼到設定頁的
-輸入框並按「儲存憑證」。這會送 `credential:submit-manual-token` 到 main，由
-`persistClaudeToken` 檢查 token 格式、透過 `writeClaudeSetupTokenToKeychain` 寫入 Usage-Pulse
-自己的 Keychain 項目，並打一次 usage API。官方 Claude CLI 的項目不會被修改。
-Authentication code 不會送給 usage API，App 設定內也不再
-另外保存第二份 Claude 憑證。
+Usage-Pulse 刻意不 spawn `claude` CLI，也不自己實作任何 OAuth 流程。`claude
+setup-token` 的授權請求天生只會要求 `user:inference` scope——這是官方 CLI 本身
+的限制（見 `anthropics/claude-code#22450` / `#11985`），跟呼叫方式無關，任何圍繞它
+建的流程都不可能滿足 usage API 需要的 `user:profile`。只有 `claude auth login`
+（CLI 的一般互動登入）會要求 `user:profile`。因此點擊「獲取憑證」只會用
+`shell.openExternal` 打開 `https://claude.ai/login`，Settings 同時顯示複製
+`claude auth login` 指令的按鈕與說明，請使用者在自己的終端機執行。整個登入完全
+在 Usage-Pulse 之外完成——官方 CLI 自己開瀏覽器、自己寫入 `Claude Code-credentials`
+——使用者完成後點「更新數值」重新讀取 Keychain 並抓用量。若點擊「獲取憑證」時
+Keychain 已經有憑證，App 會直接更新用量，不會再打開登入頁。
 
-舊的系統終端機 + `tee` + `setup-token-capture.txt` 路徑已移除。Usage-Pulse 自己擁有
-PTY，CLI 看到的是真 TTY；使用者看得到的「終端」只有 App 內視窗。
+啟動時會一次性靜默刪除舊 setup-token 流程（System 1 之前）留下的
+`Usage-Pulse-Claude-setup-token` Keychain 項目，因為它天生只可能裝著
+`user:inference`-only 的 token。
 
 ### 對 usage API 的節制
 
@@ -285,6 +313,33 @@ Usage-Pulse 刻意把送往 Anthropic 的請求次數壓到最低。
   可以通過。
 - **先查本機再打 API（一律開啟）**：被暫緩的警告需要第二意見時，先看 CLI 自己的
   `quotaLimits` 紀錄；同一個視窗有被拒絕的紀錄就直接成立，一個請求都不用花。這是內建行為，沒有開關。
+- **為什麼沒有把這段縮短**：Usage-Pulse 打的正是
+  `https://api.anthropic.com/api/oauth/usage` 這支端點，而它正是
+  `anthropics/claude-code` repo 上兩個公開 issue 的主角
+  （[#31021](https://github.com/anthropics/claude-code/issues/31021)、
+  [#31637](https://github.com/anthropics/claude-code/issues/31637)）：這支端點會
+  很激進地回 429，社群回報連 30-60 秒的輪詢都會觸發，一旦卡住即使退避到 5 分鐘
+  間隔仍可能持續 429 好幾個小時不會自己恢復；社群測出來「較安全」的下限大約是
+  180 秒，且前提是要帶對 `User-Agent: claude-code/`——
+  [claude-code.ts:18](../src/main/collectors/claude-code.ts) 已經在送這個
+  header。這兩個 issue 都被 Anthropic 標記「not planned」關閉，官方沒有給出正式
+  的輪詢頻率建議。既然如此，目前 15/10 分鐘排程加上 5 分鐘的
+  `MIN_CLAUDE_FETCH_GAP_MS` floor 本來就比社群回報的下限更保守，這次維持原樣，
+  不調快。
+- **Cursor 不套用同一道 floor**：`api2.cursor.sh` 的
+  `DashboardService/GetCurrentPeriodUsage` 是 Cursor IDE 自己用的內部、未公開
+  RPC，跟 cursor.com/docs/api 上給 Team/Admin 用的公開 API 是兩回事，找不到任何
+  針對這支內部端點的官方頻率限制數字可以比對。Cursor 沿用跟 Claude 一樣的
+  15/10 分鐘排程，但沒有最短間隔 floor，也沒有 CLI 活動閘門；這只是一個沒有官方
+  數字背書、自我克制的預設值，這次不變動。
+
+### Codex 輪詢
+
+Codex 不套用 Claude/Cursor 的正常/低額度雙檔排程，而是走單一固定間隔——每 5
+分鐘一次（`CODEX_POLL_INTERVAL_MS`），沒有獨立的最短間隔 floor，因為固定間隔本身
+就是 floor。`codexUseCliActivityPolling`（預設開啟）仍然會疊加在上面：若 Codex
+CLI 的 session 紀錄與憑證自上次抓取以來都沒有動靜，這次 tick 就會跳過，不打
+API。
 
 ### 已完成功能
 - Electron + React + TypeScript 專案骨架（Electron `^43.4.1`）
@@ -326,8 +381,9 @@ Usage-Pulse 完全不碰任何作業系統層級的鬧鐘或排程器——App �
 **右上角**（每次顯示時都會重新計算座標，所以解析度或多螢幕排列變動也不會讓視窗跑到畫面外）。
 配額／重置／低額度彈窗**靜音**（`soundEnabled: false`）；喝水提醒才用合成 chime。用
 `showInactive()` 顯示，所以不會搶走你正在輸入的鍵盤焦點。經過
-`ALARM_POPUP_AUTO_DISMISS_MINUTES`（1 分鐘，不是設定項）後自動關閉。配額彈窗可延後 5 分鐘
+`ALARM_POPUP_AUTO_DISMISS_SECONDS`（30 秒，不是設定項）後自動關閉。配額彈窗可延後 5 分鐘
 （`SNOOZE_MS`）。
+OS 原生桌面通知也會由 `sendPlainDesktopNotification` 在同樣的 30 秒後主動關閉。
 
 「用什麼方式提醒」是兩個平級開關：App 彈窗（`enableAlarmPopup`）與 LINE 通知
 （`enableLineNotification`；仍須在下方區塊貼 Token 才會真的送出）。各服務的開關跟該服務的
@@ -344,10 +400,10 @@ Cursor 是「到期提醒」（本期 `billingCycleEnd`，用量重設與計費�
 
 
 ### 安全約束
-- OAuth token 僅在記憶體中短暫使用，setup-token 永久憑證除外（見下）。
+- OAuth token 僅在記憶體中短暫使用。
 - 禁止寫入 `state.vscdb`、`.credentials.json`。
-- 唯一的 Keychain 寫入：使用者在官方 CLI OAuth 完成後，先把瀏覽器 Authentication code 貼回 App 內 PTY，等 CLI 交換並印出長效 token，再把 `sk-ant-oat01-...` 貼入主畫面寫進 Usage-Pulse 自有的 `Usage-Pulse-Claude-setup-token` / `Usage-Pulse` 項目（→ `persistClaudeToken`）；官方 `Claude Code-credentials` 只讀、不會被修改。
-- 登入過程 token 會出現在 in-app xterm 捲動緩衝；raw PTY 輸出經 `claude-login:data` 進登入視窗 renderer。不再進系統 Terminal，也不再寫 `tee` 截檔。
+- Claude Code 憑證完全唯讀：Usage-Pulse 不 spawn `claude` CLI、不自己實作 OAuth，也不寫入官方的 `Claude Code-credentials` Keychain 項目。唯一會做的 Keychain 寫入，是啟動時一次性、盡力刪除舊 setup-token 流程留下的 `Usage-Pulse-Claude-setup-token` 項目。
+- 「獲取憑證」只會用 `shell.openExternal` 打開 `https://claude.ai/login`；使用者完全在自己的終端機執行 `claude auth login` 完成登入，App 不參與。
 - 發生 401 / 配額資料缺失時，回傳可行動的錯誤訊息，不做自動 token refresh。
 
 ### 開發與打包
@@ -361,8 +417,6 @@ Cursor 是「到期提醒」（本期 `billingCycleEnd`，用量重設與計費�
 - `pnpm smoke:build`：建置產物煙測
 - `pnpm dist:mac`：輸出 macOS `.dmg`
 - `pnpm dist:win`：輸出 Windows `.exe`
-- `postinstall` 另外跑 `scripts/fix-node-pty-permissions.mjs`（補上 `node-pty` `spawn-helper` 的執行位；Windows 為 no-op）
-- `electron-builder` 以 `asarUnpack` 帶出 `node-pty`（原生 helper 不能留在 asar 裡）
 - Git 日常流程（開工／推送／收工）→ [`doc/Git_Workflow.md`](Git_Workflow.md)
 
 #### 發版前必做（本機）

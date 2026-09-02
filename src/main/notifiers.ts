@@ -1,7 +1,32 @@
 import { Notification } from "electron";
 import type { NotifyPayload, QuotaSnapshot } from "@shared/types";
+import { ALARM_POPUP_AUTO_DISMISS_SECONDS } from "@shared/alarm-utils";
 import { t } from "@shared/i18n";
 import { settingsStore } from "@main/store";
+
+const DESKTOP_NOTIFICATION_AUTO_DISMISS_MS = ALARM_POPUP_AUTO_DISMISS_SECONDS * 1000;
+
+// Keep native notifications alive until we explicitly close them. Without a
+// reference, V8 may collect the object before our 30-second dismissal runs.
+const activeNotifications = new Set<Notification>();
+
+const armDesktopNotificationDismissal = (notification: Notification): void => {
+  activeNotifications.add(notification);
+
+  const timer = setTimeout(() => {
+    if (!activeNotifications.has(notification)) {
+      return;
+    }
+    activeNotifications.delete(notification);
+    notification.close();
+  }, DESKTOP_NOTIFICATION_AUTO_DISMISS_MS);
+  timer.unref?.();
+
+  notification.once("close", () => {
+    clearTimeout(timer);
+    activeNotifications.delete(notification);
+  });
+};
 
 const formatValue = (value: number | null, unit: QuotaSnapshot["unit"]): string => {
   if (value === null) {
@@ -34,7 +59,9 @@ export const sendPlainDesktopNotification = (title: string, body: string): void 
     return;
   }
 
-  new Notification({ title, body }).show();
+  const notification = new Notification({ title, body, timeoutType: "default" });
+  notification.show();
+  armDesktopNotificationDismissal(notification);
 };
 
 export const sendDesktopNotification = (payload: NotifyPayload): void => {

@@ -10,7 +10,7 @@
     "url": "https://github.com/xiaochen26wyl/Usage-Pulse.git"
   },
   "scripts": {
-    "postinstall": "node scripts/fix-electron-install.mjs && node scripts/fix-node-pty-permissions.mjs",
+    "postinstall": "node scripts/fix-electron-install.mjs",
     "fix:electron": "node scripts/fix-electron-install.mjs",
     "dev": "electron-vite dev",
     "build": "electron-vite build",
@@ -34,12 +34,9 @@
     "git:end-day": "node scripts/git-workflow.mjs end-day"
   },
   "dependencies": {
-    "@xterm/addon-fit": "^0.11.0",
-    "@xterm/xterm": "^6.0.0",
     "axios": "^1.11.0",
     "electron-store": "^10.0.1",
     "menubar": "^9.5.3",
-    "node-pty": "^1.1.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "sql.js": "^1.14.2"
@@ -69,11 +66,7 @@
       "dist/**",
       "assets/**",
       "node_modules/sql.js/**/*",
-      "node_modules/node-pty/**/*",
       "package.json"
-    ],
-    "asarUnpack": [
-      "node_modules/node-pty/**/*"
     ],
     "mac": {
       "category": "public.app-category.utilities",

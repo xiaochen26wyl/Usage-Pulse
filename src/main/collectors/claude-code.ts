@@ -149,8 +149,7 @@ const fetchUsagePayload = async (
 };
 
 /**
- * Fetches usage for a known token. Shared by the scheduled collector and by
- * the setup-token / paste-token path so validation is the same scrape.
+ * Fetches usage for a known token.
  */
 export const collectClaudeCodeQuotaFromToken = async (
   token: string,
@@ -203,21 +202,6 @@ const readSubscriptionCreatedAt = async (token: string): Promise<string | null> 
   } catch {
     return profileCache?.subscriptionCreatedAt ?? null;
   }
-};
-
-/**
- * Proves a hand-pasted token actually works before it is stored, and returns
- * the usage already fetched so the monitor can apply it without a second request.
- *
- * A token that fails here is never written anywhere, so a typo cannot quietly
- * outrank the automatic sources and make the situation worse than it was.
- */
-export const validateClaudeOAuthToken = async (token: string): Promise<ScrapeResult> => {
-  const result = await collectClaudeCodeQuotaFromToken(token);
-  if (result.windows.length === 0) {
-    throw new Error(t(settingsStore.get().language, "error.claudeMissingFields"));
-  }
-  return result;
 };
 
 export const collectClaudeCodeQuota = async (): Promise<ScrapeResult> => {

@@ -58,12 +58,11 @@ test("footer.license mentions non-commercial default in every language", () => {
 
 test("the Keychain re-detect keys resolve to a non-empty, distinct string in every language", () => {
   const keys = [
-    "setupToken.keychainFound",
-    "setupToken.keychainWriteFailed",
+    "quotaCheck.noUsageYet",
     "button.refreshQuota",
     "button.refreshQuota.tooltip",
     "button.redetect.tooltip",
-    "setupToken.quotaUpdated"
+    "quotaCheck.updated"
   ] as const;
   for (const key of keys) {
     const values = langs.map((lang) => t(lang, key));
@@ -75,17 +74,12 @@ test("the Keychain re-detect keys resolve to a non-empty, distinct string in eve
   }
 });
 
-test("the manual token setup keys resolve to a non-empty, distinct string in every language", () => {
+test("the Claude login keys resolve to a non-empty, distinct string in every language", () => {
   const keys = [
-    "manualToken.prompt",
-    "manualToken.copyCommand",
-    "manualToken.copied",
-    "manualToken.inputPlaceholder",
-    "manualToken.submit",
-    "manualToken.invalidFormat",
-    "manualToken.saved",
-    "claudeLogin.hint",
-    "claudeLogin.exited"
+    "claudeLogin.prompt",
+    "claudeLogin.copyCommand",
+    "claudeLogin.copied",
+    "claudeLogin.afterLoginHint"
   ] as const;
   for (const key of keys) {
     const values = langs.map((lang) => t(lang, key));

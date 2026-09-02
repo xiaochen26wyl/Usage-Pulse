@@ -9,6 +9,7 @@ import {
 } from "@main/collectors/claude-code";
 import { CodexLoginExpiredError, collectCodexQuota } from "@main/collectors/codex";
 import { collectCursorQuota } from "@main/collectors/cursor";
+import { CredentialMissingError } from "@main/credential-provider";
 import { settingsStore } from "@main/store";
 
 const detectErrorCode = (error: unknown): ErrorCode | undefined => {
@@ -43,11 +44,10 @@ const detectCredentialSource = (error: unknown): CredentialSource | undefined =>
   return undefined;
 };
 
-// Credential-monitor uses the same "找不到" sentinel to classify a missing
-// login; the UI already shows a dedicated hint for that case, so repeating it
-// here as a scrape failure just adds noise.
-const isMissingCredential = (error: unknown): boolean =>
-  error instanceof Error && error.message.includes("找不到");
+// Credential-monitor uses the same error type to classify a missing login;
+// the UI already shows a dedicated hint for that case, so repeating it here
+// as a scrape failure just adds noise.
+const isMissingCredential = (error: unknown): boolean => error instanceof CredentialMissingError;
 
 export const scrapeQuota = async (service: ServiceType): Promise<ScrapeResult> => {
   try {

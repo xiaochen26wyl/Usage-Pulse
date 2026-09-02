@@ -1,4 +1,4 @@
-import { execFile, spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
+import { execFile } from "node:child_process";
 import { readFile, stat } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { homedir, userInfo } from "node:os";
@@ -6,11 +6,21 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import axios from "axios";
 import type { SqlJsStatic } from "sql.js";
-import type { CredentialSource } from "@shared/types";
+import type { CredentialSource, Language } from "@shared/types";
 import { isClaudeOAuthToken } from "@shared/claude-auth";
 import { jwtExpiryMs, parseCodexAuthJson, parseCodexCredentialsStore, type ParsedCodexAuth } from "@shared/codex-auth";
+import { t } from "@shared/i18n";
 
 const execFileAsync = promisify(execFile);
+
+// Loaded lazily (not a static import) so this module — otherwise plain,
+// Electron-free logic that credential-provider.test.ts exercises directly
+// under node:test — never pulls in electron-store's `app.getPath`
+// dependency just by being imported.
+const currentLanguage = async (): Promise<Language> => {
+  const { settingsStore } = await import("@main/store");
+  return settingsStore.get().language;
+};
 
 const require = createRequire(import.meta.url);
 // Loaded via require(), not a static `import`: sql.js ships its Emscripten/CJS
@@ -25,27 +35,47 @@ const initSqlJs = require("sql.js") as (config?: {
 
 const CURSOR_ACCESS_TOKEN_KEY = "cursorAuth/accessToken";
 const CLAUDE_CLI_KEYCHAIN_SERVICE = "Claude Code-credentials";
-// Keep the setup-token in a service owned by Usage-Pulse. A separate service is
-// important in addition to a separate account: Claude CLI or another client
-// searching by service alone must never select Usage-Pulse's credential.
-export const USAGE_PULSE_KEYCHAIN_SERVICE = "Usage-Pulse-Claude-setup-token";
-export const USAGE_PULSE_KEYCHAIN_ACCOUNT = "Usage-Pulse";
+// Usage-Pulse no longer writes any Claude credential itself — the official
+// `claude auth login` flow already writes this Keychain item, and Usage-Pulse
+// only ever reads it. This service name is kept only so a leftover item from
+// the retired setup-token flow (pre-System-1) can be cleaned up once on startup.
+const LEGACY_SETUP_TOKEN_KEYCHAIN_SERVICE = "Usage-Pulse-Claude-setup-token";
 
-export const buildClaudeSetupTokenKeychainArgs = (): string[] => [
-  "add-generic-password",
-  "-s",
-  USAGE_PULSE_KEYCHAIN_SERVICE,
-  "-a",
-  USAGE_PULSE_KEYCHAIN_ACCOUNT,
-  "-U",
-  "-w"
-];
+/**
+ * One-time cleanup: removes the Keychain item the retired `claude setup-token`
+ * flow used to write. That item could only ever hold a `user:inference`-only
+ * token (see the comment on `readClaudeCliKeychainCredential`), so leaving it
+ * around only risks confusing future debugging. Safe to call on every launch —
+ * a missing item is not an error.
+ */
+export const removeLegacySetupTokenKeychainItem = async (): Promise<void> => {
+  if (process.platform !== "darwin") {
+    return;
+  }
+  try {
+    await execFileAsync("security", ["delete-generic-password", "-s", LEGACY_SETUP_TOKEN_KEYCHAIN_SERVICE]);
+  } catch {
+    // Nothing to remove, or already removed.
+  }
+};
+
 // sql.js loads the whole db file into the JS heap; beyond this size that becomes
 // slow/memory-heavy enough to effectively hang, so fall back to the sqlite3 CLI instead.
 const CURSOR_STATE_DB_LARGE_FILE_THRESHOLD_BYTES = 150 * 1024 * 1024;
 let sqlJsPromise: Promise<SqlJsStatic> | null = null;
 
 class CursorStateDbTooLargeError extends Error {}
+
+// A credential simply isn't there yet (never logged in, or logged out) — the
+// ordinary, expected case. Distinguished from every other read failure via
+// `instanceof` rather than by matching on message text, so the message itself
+// is free to be localized without breaking that classification.
+export class CredentialMissingError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "CredentialMissingError";
+  }
+}
 
 const pickAccessTokenFromUnknown = (value: unknown): string | null => {
   if (typeof value === "string") {
@@ -214,8 +244,9 @@ const readValueFromLargeStateDb = async (dbPath: string, key: string, sizeBytes:
     return await readValueViaSqliteCli(dbPath, key);
   } catch {
     const sizeMb = Math.round(sizeBytes / 1024 / 1024);
+    const lang = await currentLanguage();
     throw new CursorStateDbTooLargeError(
-      `Cursor 本機資料庫異常肥大（約 ${sizeMb} MB），無法安全載入。請先關閉 Cursor，備份並移除此檔案讓 Cursor 重新建立（會需要重新登入 Cursor）：${dbPath}`
+      t(lang, "error.cursorStateDbTooLarge", { sizeMb, dbPath })
     );
   }
 };
@@ -228,7 +259,8 @@ export const readCursorCredentialFromStateDbPath = async (dbPath: string): Promi
       : await runReadOnlySqliteQuery(dbPath, CURSOR_ACCESS_TOKEN_KEY);
   const credential = parseCredentialFromRawText(raw, "cursorStateDb");
   if (!credential) {
-    throw new Error("找不到 Cursor access token，請先在 Cursor Desktop 登入。");
+    const lang = await currentLanguage();
+    throw new CredentialMissingError(t(lang, "error.cursorCredentialMissing"));
   }
   return credential;
 };
@@ -241,10 +273,11 @@ const readCursorCredentialFromStateDb = async (): Promise<RawCredential> => {
   try {
     return await readCursorCredentialFromStateDbPath(dbPath);
   } catch (error) {
-    if (error instanceof CursorStateDbTooLargeError) {
+    if (error instanceof CursorStateDbTooLargeError || error instanceof CredentialMissingError) {
       throw error;
     }
-    throw new Error("無法讀取 Cursor 本機憑證，請先確認已登入 Cursor Desktop。");
+    const lang = await currentLanguage();
+    throw new Error(t(lang, "error.cursorCredentialReadFailed"));
   }
 };
 
@@ -270,6 +303,7 @@ const readKeychainCredentialForService = async (
     return null;
   }
 
+  let stdout: string;
   try {
     const args = [
       "find-generic-password",
@@ -280,12 +314,22 @@ const readKeychainCredentialForService = async (
       args.push("-a", account);
     }
     args.push("-w");
-    const { stdout } = await execFileAsync("security", args);
-    const credential = parseCredentialFromRawText(stdout, "keychain");
-    return credential && isClaudeOAuthToken(credential.token) ? credential : null;
+    ({ stdout } = await execFileAsync("security", args));
   } catch {
+    // No such Keychain item for this service/account — genuinely not logged in.
     return null;
   }
+
+  const credential = parseCredentialFromRawText(stdout, "keychain");
+  if (credential && isClaudeOAuthToken(credential.token)) {
+    return credential;
+  }
+
+  // The item exists but its contents don't look like a Claude OAuth token.
+  // Thrown (not swallowed) so callers can tell this apart from "nothing in
+  // Keychain at all" — e.g. a newer CLI version changed the storage shape.
+  const lang = await currentLanguage();
+  throw new Error(t(lang, "error.claudeKeychainFormatInvalid", { service }));
 };
 
 const readExistingKeychainAccount = async (service: string): Promise<string | null> => {
@@ -310,17 +354,36 @@ const readExistingKeychainAccount = async (service: string): Promise<string | nu
  * See anthropics/claude-code#22450 / #11985.
  */
 const readClaudeCliKeychainCredential = async (): Promise<RawCredential | null> => {
-  const direct = await readKeychainCredentialForService(CLAUDE_CLI_KEYCHAIN_SERVICE);
+  // readKeychainCredentialForService throws when it finds the Keychain item
+  // but can't parse it as a valid token. Keep trying other accounts (the
+  // item may just be filed under a different one), but remember the error so
+  // it can be reported instead of a misleading "nothing found" once every
+  // account has been tried.
+  let invalidFormatError: Error | null = null;
+  const tryRead = async (account?: string): Promise<RawCredential | null> => {
+    try {
+      return await readKeychainCredentialForService(CLAUDE_CLI_KEYCHAIN_SERVICE, account);
+    } catch (error) {
+      invalidFormatError = error instanceof Error ? error : new Error(String(error));
+      return null;
+    }
+  };
+
+  const direct = await tryRead();
   if (direct) {
     return direct;
   }
 
   const existingAccount = await readExistingKeychainAccount(CLAUDE_CLI_KEYCHAIN_SERVICE);
   for (const account of uniqueStrings([existingAccount, userInfo().username])) {
-    const credential = await readKeychainCredentialForService(CLAUDE_CLI_KEYCHAIN_SERVICE, account);
+    const credential = await tryRead(account);
     if (credential) {
       return credential;
     }
+  }
+
+  if (invalidFormatError) {
+    throw invalidFormatError;
   }
   return null;
 };
@@ -330,155 +393,7 @@ export const peekClaudeKeychainCredential = async (): Promise<RawCredential | nu
     return null;
   }
 
-  // Prefer the CLI's interactive-login item (full OAuth scopes). Fall back to
-  // a Usage-Pulse-saved setup-token only when the CLI item is missing — and
-  // that fallback still cannot satisfy the usage API (inference-only scope).
-  const claudeCliCredential = await readClaudeCliKeychainCredential();
-  if (claudeCliCredential) {
-    return claudeCliCredential;
-  }
-
-  const setupToken = await readKeychainCredentialForService(
-    USAGE_PULSE_KEYCHAIN_SERVICE,
-    USAGE_PULSE_KEYCHAIN_ACCOUNT
-  );
-  return setupToken;
-};
-
-export const KEYCHAIN_WRITE_TIMEOUT_MS = 8_000;
-
-// Injected in tests so a hung `security` can be simulated without talking to
-// the real Keychain. Production always uses child_process.spawn.
-export type PasswordStdinSpawn = (
-  command: string,
-  args: string[],
-  options: SpawnOptions
-) => Pick<ChildProcess, "stdin" | "stderr" | "on" | "kill">;
-
-/**
- * Runs `security add-generic-password` with the secret supplied on stdin
- * instead of in argv.
- *
- * `-w` with no value makes `security` prompt for the password rather than take
- * it from the command line, which keeps the token out of the process argument
- * list that any other process running as this user can read via `ps`. The
- * command prompts for the password twice, once for confirmation. Both lines
- * must be identical; otherwise this macOS command can exit with code 0 without
- * creating an item.
- *
- * `detached: true` gives the child its own session so `security` cannot steal
- * the parent TTY and hang the UI on `password data for new item:`. A timeout
- * still kills the child if stdin is ignored.
- *
- * Nothing about the failure path may quote the command: Node puts the full
- * argument list on `error.cmd` and `error.message`, which is the leak this
- * whole arrangement exists to avoid.
- */
-export const addGenericPasswordViaStdin = (
-  args: string[],
-  secret: string,
-  options: { spawnFn?: PasswordStdinSpawn; timeoutMs?: number } = {}
-): Promise<void> => {
-  const spawnFn = options.spawnFn ?? spawn;
-  const timeoutMs = options.timeoutMs ?? KEYCHAIN_WRITE_TIMEOUT_MS;
-
-  return new Promise((resolve, reject) => {
-    const child = spawnFn("security", args, {
-      stdio: ["pipe", "ignore", "pipe"],
-      detached: true
-    });
-
-    let settled = false;
-    const settle = (finish: () => void): void => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      clearTimeout(timer);
-      finish();
-    };
-
-    const timer = setTimeout(() => {
-      try {
-        child.kill("SIGTERM");
-      } catch {
-        // Already exited.
-      }
-      settle(() => reject(new Error("Keychain write timed out")));
-    }, timeoutMs);
-
-    let stderr = "";
-    child.stderr?.on("data", (chunk: Buffer | string) => {
-      stderr += String(chunk);
-    });
-    child.on("error", () => {
-      settle(() => reject(new Error("Keychain write could not start")));
-    });
-    child.on("close", (code) => {
-      settle(() => {
-        if (code === 0) {
-          resolve();
-          return;
-        }
-        reject(new Error(`Keychain write failed (exit ${code}): ${stderr.trim().slice(0, 200)}`));
-      });
-    });
-
-    child.stdin?.end(`${secret}\n${secret}\n`);
-  });
-};
-
-/**
- * Persist the password as `security add-generic-password ... -w <secret>`.
- * Prompting via stdin (`-w` with no value) exits 0 in Electron without storing
- * the secret. Never rethrow the raw execFile error — Node copies argv onto
- * `error.message`.
- */
-export const addGenericPasswordWithSecret = async (
-  args: string[],
-  secret: string,
-  options: { timeoutMs?: number } = {}
-): Promise<void> => {
-  const timeoutMs = options.timeoutMs ?? KEYCHAIN_WRITE_TIMEOUT_MS;
-  try {
-    await execFileAsync("security", [...args, secret], { timeout: timeoutMs });
-  } catch (error) {
-    const stderr =
-      error && typeof error === "object" && "stderr" in error
-        ? String((error as { stderr: unknown }).stderr).trim().slice(0, 200)
-        : "";
-    throw new Error(stderr ? `Keychain write failed: ${stderr}` : "Keychain write failed");
-  }
-};
-
-/**
- * Exception write: persist a long-lived setup-token into a Usage-Pulse-owned
- * macOS Keychain item, so the next re-detect and ordinary `readClaudeCredential`
- * can find it without modifying the official CLI's item.
- *
- * This is the only Keychain write Usage-Pulse performs. It does not write
- * `state.vscdb`, `~/.claude/.credentials.json`, or anything Cursor-related.
- * The Claude Keychain integration is currently macOS-only; other platforms
- * report the credential as unavailable instead of storing it in plain text.
- */
-export const writeClaudeSetupTokenToKeychain = async (token: string): Promise<void> => {
-  if (process.platform !== "darwin") {
-    return;
-  }
-
-  const blob = JSON.stringify({ claudeAiOauth: { accessToken: token } });
-  await addGenericPasswordWithSecret(buildClaudeSetupTokenKeychainArgs(), blob);
-
-  // Do not report success based only on `security`'s exit code. Read the exact
-  // account we wrote back so duplicate service entries cannot make verification
-  // inspect an older Keychain item.
-  const saved = await readKeychainCredentialForService(
-    USAGE_PULSE_KEYCHAIN_SERVICE,
-    USAGE_PULSE_KEYCHAIN_ACCOUNT
-  );
-  if (!saved || saved.token !== token) {
-    throw new Error("Keychain write verification failed");
-  }
+  return readClaudeCliKeychainCredential();
 };
 
 export const readCursorCredential = async (): Promise<RawCredential> => {
@@ -491,7 +406,8 @@ export const readClaudeCredential = async (): Promise<RawCredential> => {
     return fromKeychain;
   }
 
-  throw new Error("找不到 Claude Code Keychain 憑證，請按「獲取憑證」並貼上 claude setup-token 產生的 token。");
+  const lang = await currentLanguage();
+  throw new CredentialMissingError(t(lang, "error.claudeCredentialMissing"));
 };
 
 export const getCursorAccessToken = async (): Promise<string> => {
@@ -613,7 +529,8 @@ const loadCodexAuthFromDisk = async (): Promise<ParsedCodexAuth> => {
       }
     }
   }
-  throw new Error("找不到 Codex 憑證，請先在 Codex CLI 登入。");
+  const lang = await currentLanguage();
+  throw new CredentialMissingError(t(lang, "error.codexCredentialMissing"));
 };
 
 const applyParsedToMemory = (parsed: ParsedCodexAuth): ParsedCodexAuth => {
@@ -638,7 +555,8 @@ const refreshCodexAccessToken = async (refreshToken: string, source: CredentialS
   const data = (response.data ?? {}) as Record<string, unknown>;
   const accessToken = typeof data.access_token === "string" ? data.access_token.trim() : "";
   if (!accessToken) {
-    throw new Error("Codex token 刷新失敗：回應沒有 access_token。");
+    const lang = await currentLanguage();
+    throw new Error(t(lang, "error.codexTokenRefreshFailed"));
   }
   const nextRefresh =
     typeof data.refresh_token === "string" && data.refresh_token.trim() ? data.refresh_token.trim() : refreshToken;

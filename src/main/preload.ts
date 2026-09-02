@@ -7,7 +7,6 @@ import type {
   CombinedSnapshot,
   CredentialStatus,
   ManualQuotaResult,
-  ManualTokenResult,
   SessionStats,
   ServiceType,
   WaterCupSizeMl
@@ -19,34 +18,8 @@ const api = {
     ipcRenderer.invoke("settings:save", settings) as Promise<AppSettings>,
   getAuthStatus: () => ipcRenderer.invoke("auth:status") as Promise<AuthStatus>,
   checkAuth: (service: ServiceType) => ipcRenderer.invoke("auth:check", service) as Promise<CredentialStatus>,
-  runSetupToken: () => ipcRenderer.invoke("credential:run-setup-token") as Promise<ManualTokenResult>,
-  submitManualToken: (token: string) =>
-    ipcRenderer.invoke("credential:submit-manual-token", token) as Promise<ManualTokenResult>,
   runManualCheck: (service: ServiceType) =>
     ipcRenderer.invoke("monitor:run-manual", service) as Promise<ManualQuotaResult>,
-  sendClaudeLoginInput: (data: string) => ipcRenderer.send("claude-login:input", data),
-  resizeClaudeLoginPty: (cols: number, rows: number) => ipcRenderer.send("claude-login:resize", { cols, rows }),
-  onClaudeLoginData: (handler: (chunk: string) => void) => {
-    const listener = (_event: Electron.IpcRendererEvent, chunk: string) => handler(chunk);
-    ipcRenderer.on("claude-login:data", listener);
-    return () => {
-      ipcRenderer.removeListener("claude-login:data", listener);
-    };
-  },
-  onClaudeLoginExit: (handler: (exitCode: number) => void) => {
-    const listener = (_event: Electron.IpcRendererEvent, exitCode: number) => handler(exitCode);
-    ipcRenderer.on("claude-login:exit", listener);
-    return () => {
-      ipcRenderer.removeListener("claude-login:exit", listener);
-    };
-  },
-  onSetupTokenSpawnError: (handler: (message: string) => void) => {
-    const listener = (_event: Electron.IpcRendererEvent, message: string) => handler(message);
-    ipcRenderer.on("credential:setup-token-spawn-error", listener);
-    return () => {
-      ipcRenderer.removeListener("credential:setup-token-spawn-error", listener);
-    };
-  },
   getLatestSnapshot: () => ipcRenderer.invoke("monitor:get-latest") as Promise<CombinedSnapshot | null>,
   sendLineTest: () => ipcRenderer.invoke("line:send-test") as Promise<boolean>,
   sendLineStatus: () => ipcRenderer.invoke("line:send-status") as Promise<boolean>,

@@ -10,7 +10,13 @@ import {
 } from "@shared/credential-utils";
 import { isDuplicateInCooldown } from "@shared/monitor-utils";
 import { t } from "@shared/i18n";
-import { readClaudeCredential, readCodexCredential, readCursorCredential, type RawCredential } from "@main/credential-provider";
+import {
+  CredentialMissingError,
+  readClaudeCredential,
+  readCodexCredential,
+  readCursorCredential,
+  type RawCredential
+} from "@main/credential-provider";
 import { buildPlainAlertFlex } from "@shared/line-templates";
 import { sendLineBroadcast } from "@main/line-notifier";
 import { sendPlainDesktopNotification } from "@main/notifiers";
@@ -46,9 +52,11 @@ const fingerprint = (token: string): string => createHash("sha256").update(token
 
 // A credential the provider refused to hand over. "missing" is the ordinary
 // not-logged-in case; anything else (an unreadable state.vscdb, API-key-only
-// mode) is a real fault worth showing the message for.
-const classifyFailure = (message: string): CredentialState =>
-  message.includes("找不到") ? "missing" : "error";
+// mode) is a real fault worth showing the message for. Classified by error
+// type rather than by matching on message text, so the message itself is
+// free to be localized.
+const classifyFailure = (error: Error): CredentialState =>
+  error instanceof CredentialMissingError ? "missing" : "error";
 
 interface Probe {
   status: CredentialStatus;
@@ -187,7 +195,7 @@ export class CredentialMonitor extends EventEmitter {
         record: null,
         status: {
           service,
-          state: classifyFailure(result.message),
+          state: classifyFailure(result),
           expiresAt: null,
           rotatedAt: previous?.rotatedAt ?? null,
           checkedAt,

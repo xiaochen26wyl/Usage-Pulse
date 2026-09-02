@@ -6,7 +6,6 @@ import type {
   CombinedSnapshot,
   CredentialStatus,
   ManualQuotaResult,
-  ManualTokenResult,
   SessionStats,
   ServiceType,
   WaterCupSizeMl
@@ -17,14 +16,7 @@ interface UsagePulseApi {
   saveSettings: (settings: Partial<AppSettings>) => Promise<AppSettings>;
   getAuthStatus: () => Promise<AuthStatus>;
   checkAuth: (service: ServiceType) => Promise<CredentialStatus>;
-  runSetupToken: () => Promise<ManualTokenResult>;
-  submitManualToken: (token: string) => Promise<ManualTokenResult>;
   runManualCheck: (service: ServiceType) => Promise<ManualQuotaResult>;
-  sendClaudeLoginInput: (data: string) => void;
-  resizeClaudeLoginPty: (cols: number, rows: number) => void;
-  onClaudeLoginData: (handler: (chunk: string) => void) => () => void;
-  onClaudeLoginExit: (handler: (exitCode: number) => void) => () => void;
-  onSetupTokenSpawnError: (handler: (message: string) => void) => () => void;
   getLatestSnapshot: () => Promise<CombinedSnapshot | null>;
   sendLineTest: () => Promise<boolean>;
   sendLineStatus: () => Promise<boolean>;

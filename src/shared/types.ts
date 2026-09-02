@@ -323,19 +323,6 @@ export interface AlarmStatusReport {
 }
 
 
-// The outcome of the "re-detect" flow (Keychain lookup, or a `claude
-// setup-token` run when that comes up empty). `message` is already localized.
-export interface ManualTokenResult {
-  ok: boolean;
-  message: string;
-  // True when `claude setup-token` has been opened and the renderer should
-  // show the manual "copy the printed token, paste it back" field.
-  needsManualFallback?: boolean;
-  // True when Keychain already has a credential and the last scrape was not a
-  // 401 — the renderer should run a quota refresh instead of waiting on login.
-  alreadyHaveCredential?: boolean;
-}
-
 // Outcome of an explicit "Update Values" click. Quota is already applied in
 // main; `message` is localized. A 401 is still ok:true — the snapshot carries
 // claudeLoginExpired so the renderer can flip the button back to login.

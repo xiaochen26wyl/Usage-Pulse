@@ -1,7 +1,6 @@
 import {
   useEffect,
   useState,
-  type ChangeEvent,
   type ClipboardEvent,
   type KeyboardEvent,
 } from "react";
@@ -254,13 +253,7 @@ export const App = () => {
     claude: "",
     codex: "",
   });
-  // Shown while Claude's Keychain credential is missing, and also after
-  // "Get Credentials" opens a fresh claude-login window. The browser code
-  // belongs in that window's PTY; only the final setup-token is pasted here.
-  const [claudeNeedsManualFallback, setClaudeNeedsManualFallback] = useState(false);
-  const [manualTokenInput, setManualTokenInput] = useState("");
-  const [manualTokenSubmitting, setManualTokenSubmitting] = useState(false);
-  const [manualTokenCopied, setManualTokenCopied] = useState(false);
+  const [claudeLoginCommandCopied, setClaudeLoginCommandCopied] = useState(false);
   const [lineToken, setLineToken] = useState("");
   // False only on hosts with no OS keychain available, where a saved token
   // would land in the settings file as plain text. The user is told rather
@@ -343,15 +336,10 @@ export const App = () => {
       setSessionStats(next);
     });
 
-    const unsubscribeSpawnError = window.usagePulse.onSetupTokenSpawnError((message) => {
-      setAuthMessage((prev) => ({ ...prev, claude: message }));
-    });
-
     return () => {
       unsubscribeSnapshot();
       unsubscribeAuth();
       unsubscribeSession();
-      unsubscribeSpawnError();
     };
   }, []);
 
@@ -447,9 +435,12 @@ export const App = () => {
   // Scoped to one service: the Cursor card re-reads only Cursor's credential and
   // the Claude Code card only Claude's, so retrying one never disturbs the other.
   //
-  // Claude's two buttons are separate paths: "Get Credentials" only opens
-  // login; "Update Values" only hits the usage API. Valid numbers land on
-  // screen immediately — there is no extra confirmation click.
+  // Claude has one action, "Update Values": it hits the usage API and
+  // re-reads Keychain. Valid numbers land on screen immediately — there is
+  // no extra confirmation click. While the credential is missing, the
+  // instructions callout below (driven by credential.state) tells the user
+  // to run `claude auth login` in their own terminal — the app never touches
+  // the login itself.
   const pullClaudeOntoScreen = async (message: string) => {
     const [nextAuth, latestSnapshot, nextSettings] = await Promise.all([
       window.usagePulse.checkAuth("claude"),
@@ -503,32 +494,6 @@ export const App = () => {
   const refreshAuthStatus = async (service: ServiceType) => {
     setCheckingAuth((prev) => ({ ...prev, [service]: true }));
 
-    if (service === "claude") {
-      setAuthMessage((prev) => ({ ...prev, claude: t(lang, "setupToken.waiting") }));
-      try {
-        const result = await window.usagePulse.runSetupToken();
-        if (result.alreadyHaveCredential) {
-          const quota = await window.usagePulse.runManualCheck("claude");
-          setClaudeNeedsManualFallback(false);
-          await pullClaudeOntoScreen(quota.message);
-          return;
-        }
-        setAuthMessage((prev) => ({ ...prev, claude: result.message }));
-        if (result.needsManualFallback) {
-          setManualTokenInput("");
-          setClaudeNeedsManualFallback(true);
-        }
-      } catch (error) {
-        setAuthMessage((prev) => ({
-          ...prev,
-          claude: error instanceof Error ? error.message : t(lang, "app.authRefreshFailed"),
-        }));
-      } finally {
-        setCheckingAuth((prev) => ({ ...prev, claude: false }));
-      }
-      return;
-    }
-
     try {
       const next = await window.usagePulse.checkAuth(service);
       setAuthStatus((prev) => ({ ...prev, [service]: next }));
@@ -549,56 +514,13 @@ export const App = () => {
     }
   };
 
-  const copyManualSetupCommand = async () => {
+  const copyClaudeLoginCommand = async () => {
     try {
-      await window.usagePulse.copyToClipboard("claude setup-token");
-      setManualTokenCopied(true);
-      setTimeout(() => setManualTokenCopied(false), 3000);
+      await window.usagePulse.copyToClipboard("claude auth login");
+      setClaudeLoginCommandCopied(true);
+      setTimeout(() => setClaudeLoginCommandCopied(false), 3000);
     } catch (error) {
       console.error(error);
-    }
-  };
-
-  // Applied by hand instead of letting the browser do it: clearing the
-  // system clipboard afterward races the default paste action otherwise,
-  // which is why pasting used to leave the field empty (see clearSystemClipboard).
-  const handleManualTokenPaste = (event: ClipboardEvent<HTMLInputElement>) => {
-    event.preventDefault();
-    const pasted = event.clipboardData.getData("text").trim();
-    if (pasted) {
-      setManualTokenInput(pasted);
-      setAuthMessage((prev) => ({ ...prev, claude: "" }));
-    }
-    clearSystemClipboard();
-  };
-
-  const handleManualTokenChange = (event: ChangeEvent<HTMLInputElement>) => {
-    setManualTokenInput(event.target.value);
-    setAuthMessage((prev) => ({ ...prev, claude: "" }));
-  };
-
-  const submitManualToken = async () => {
-    const token = manualTokenInput.trim();
-    if (!token) {
-      setAuthMessage((prev) => ({ ...prev, claude: t(lang, "manualToken.invalidFormat") }));
-      return;
-    }
-    setManualTokenSubmitting(true);
-    try {
-      const result = await window.usagePulse.submitManualToken(token);
-      setAuthMessage((prev) => ({ ...prev, claude: result.message }));
-      if (result.ok) {
-        setManualTokenInput("");
-        setClaudeNeedsManualFallback(false);
-        await pullClaudeOntoScreen(result.message);
-      }
-    } catch (error) {
-      setAuthMessage((prev) => ({
-        ...prev,
-        claude: error instanceof Error ? error.message : t(lang, "app.authRefreshFailed"),
-      }));
-    } finally {
-      setManualTokenSubmitting(false);
     }
   };
 
@@ -821,10 +743,7 @@ export const App = () => {
     // Claude / Codex keep refresh and re-auth as separate actions so a scope or
     // login failure never hides "Update Values" behind a single swapped button.
     const showRefreshQuota = service === "claude" || service === "codex";
-    const showRedetect =
-      service === "claude" ||
-      service === "codex" ||
-      cursorCredentialBroken;
+    const showRedetect = service === "codex" || cursorCredentialBroken;
 
     return (
       <div className="credential-row">
@@ -906,22 +825,20 @@ export const App = () => {
           </p>
         ) : null}
         {service === "claude" &&
-        (claudeNeedsManualFallback ||
-          credential.state === "missing" ||
-          errorCode === "claudeScopeInsufficient")
-          ? renderManualTokenFallback()
+        (credential.state === "missing" || errorCode === "claudeScopeInsufficient")
+          ? renderClaudeLoginInstructions()
           : null}
       </div>
     );
   };
 
-  // Claude Code only. This remains visible while the Keychain credential is
-  // missing, so an existing setup-token can be pasted directly without
-  // repeating browser authorization. The browser's one-time code is entered
-  // in the PTY; this field accepts only the final setup-token.
-  const renderManualTokenFallback = () => (
+  // Claude Code only. Shown while the Keychain credential is missing: the
+  // user runs `claude auth login` in their own terminal — the official CLI
+  // opens the browser and writes the credential itself — then clicks
+  // "Update Values" here once done. Usage-Pulse never touches the login.
+  const renderClaudeLoginInstructions = () => (
     <div className="callout-warning" style={{ marginTop: "8px" }}>
-      <p style={{ margin: 0 }}>{t(lang, "manualToken.prompt")}</p>
+      <p style={{ margin: 0 }}>{t(lang, "claudeLogin.prompt")}</p>
       <div
         style={{
           display: "flex",
@@ -930,36 +847,19 @@ export const App = () => {
           marginTop: "8px",
         }}
       >
-        <code>claude setup-token</code>
+        <code>claude auth login</code>
         <button
           type="button"
           className="warning-btn"
           style={{ width: "auto" }}
-          onClick={copyManualSetupCommand}
+          onClick={copyClaudeLoginCommand}
         >
-          {manualTokenCopied ? t(lang, "manualToken.copied") : t(lang, "manualToken.copyCommand")}
+          {claudeLoginCommandCopied ? t(lang, "claudeLogin.copied") : t(lang, "claudeLogin.copyCommand")}
         </button>
       </div>
-      <label className="field" style={{ marginTop: "8px", marginBottom: 0 }}>
-        <input
-          type="text"
-          autoComplete="off"
-          spellCheck={false}
-          placeholder={t(lang, "manualToken.inputPlaceholder")}
-          value={manualTokenInput}
-          onChange={handleManualTokenChange}
-          onPaste={handleManualTokenPaste}
-        />
-      </label>
-      <button
-        type="button"
-        className="warning-btn"
-        style={{ width: "auto", marginTop: "8px" }}
-        onClick={submitManualToken}
-        disabled={manualTokenSubmitting || !manualTokenInput.trim()}
-      >
-        {manualTokenSubmitting ? t(lang, "button.detecting") : t(lang, "manualToken.submit")}
-      </button>
+      <p className="meta-text" style={{ margin: "8px 0 0" }}>
+        {t(lang, "claudeLogin.afterLoginHint")}
+      </p>
     </div>
   );
 

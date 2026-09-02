@@ -29,12 +29,7 @@ export default defineConfig({
       rollupOptions: {
         input: {
           index: resolve("src/main/index.ts")
-        },
-        // node-pty ships a native .node binary resolved by Node's own require
-        // at runtime (via node-gyp-build under prebuilds/<platform-arch>/) —
-        // Rollup bundling it in would break that resolution, the same class
-        // of problem sql.js works around with createRequire elsewhere.
-        external: ["node-pty"]
+        }
       }
     },
     resolve: {
@@ -70,8 +65,7 @@ export default defineConfig({
         input: {
           index: resolve("index.html"),
           alarm: resolve("alarm.html"),
-          session: resolve("session.html"),
-          claudeLogin: resolve("claude-login.html")
+          session: resolve("session.html")
         }
       }
     },
