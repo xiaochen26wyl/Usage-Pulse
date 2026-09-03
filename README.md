@@ -5,7 +5,7 @@
 Usage-Pulse is a cross-platform desktop menu bar tool that monitors Cursor, Claude Code, and Codex quotas, sending notifications when quota changes, runs low, or resets.  
 Usage-Pulse 是跨平台桌面選單列工具，監控 Cursor、Claude Code 與 Codex 配額，在配額變化、額度偏低、或重置時發送通知。
 
-It only reads credentials you're already logged in with locally and official usage data — it never writes back to any IDE's credential or config files.
+It only reads credentials you're already logged in with locally and official usage data — it never writes back to any IDE's credential or config files.  
 它只讀取你本機已登入的憑證與官方用量資料，不會寫回任何 IDE 的憑證或設定檔。
 
 ## Installation 安裝指引
@@ -35,17 +35,19 @@ It only reads credentials you're already logged in with locally and official usa
 - 出現提示時請允許系統通知權限。
 
 > Usage-Pulse does not read the Claude Desktop app's internal (encrypted) session. Even if you only use Claude through the Claude Desktop app day to day, you still need a Claude Code login saved via the official CLI.
+
 > Usage-Pulse 不會讀取 Claude Desktop App 內部（加密）的登入狀態。就算你平常只用 Claude Desktop，仍然需要一組透過官方 CLI 完成的 Claude Code 登入。
 
 ### Claude Code credential setup Claude Code 憑證設定
 
-Click **Update Values** in Usage-Pulse to detect the credential and fetch usage. Whenever the Claude card has no numbers to show, it opens a panel on the spot with the exact login command to run, a **Get Credentials** button that re-checks your credential, and a box you can paste a token into instead.
+Click **Update Values** in Usage-Pulse to detect the credential and fetch usage. Whenever the Claude card has no numbers to show, it opens a panel on the spot with the exact login command to run, a **Get Credentials** button that re-checks your credential, and a box you can paste a token into instead.  
 在 Usage-Pulse 按「更新數值」偵測憑證並抓取用量。只要 Claude 卡片沒有數值可顯示，就會當場展開一個區塊，裡面有要執行的登入指令、重新檢查憑證的「獲取憑證」按鈕，以及一個可以直接貼上 token 的欄位。
 
-A pasted token is tried against your real usage before it is kept: if it can't read your usage, it isn't saved and the panel tells you why.
+A pasted token is tried against your real usage before it is kept: if it can't read your usage, it isn't saved and the panel tells you why.  
 貼上的 token 會先實際查一次你的用量再決定是否保留：查不到就不會存起來，並且會告訴你原因。
 
 > Why the numbers can look different from Claude Desktop's own "Plan usage limits" panel: Usage-Pulse shows **remaining** quota, while Claude Desktop's panel shows **used** quota. `44%` remaining and `56%` used describe the same state — not a data error.
+
 > 為什麼數字看起來跟 Claude Desktop 自己的「Plan usage limits」面板不一樣：Usage-Pulse 顯示的是**剩餘**配額，Claude Desktop 面板顯示的是**已使用**配額。「剩餘 44%」跟「已使用 56%」是同一個狀態，不是資料錯誤。
 
 ## Behavior 功能行為
@@ -70,26 +72,25 @@ V. 可隨時從 UI 或選單列離開；若 LINE 開啟，離開時會用最後�
 - General settings (notification toggles, language, and the rest of Settings) are stored locally only — there's no cloud sync.
 - 一般設定（通知開關、語言等）只存在本機，沒有雲端同步。
 
-If anything looks off — a reading that seems wrong, a notification that shouldn't have fired, anything unexpected — please open an issue rather than assuming; we'll look into it.
+If anything looks off — a reading that seems wrong, a notification that shouldn't have fired, anything unexpected — please open an issue rather than assuming; we'll look into it.  
 如果任何行為看起來不對勁——數值看起來錯誤、不該跳出的通知、任何預期外的狀況——歡迎直接開 issue 回報，不用自行猜測原因，我們會盡快確認。
 
 ## License and important notice 授權與重要聲明
 
-Usage-Pulse uses an **MIT-style license with a non-commercial default** (full terms in [`LICENSE`](LICENSE)). **Personal use and use within a company for the company's own internal purposes are both free.** Since it's provided free for company use, please have your company assess the security risk on its own before adopting it. Reselling, bundling into a commercial product, or a full project buyout still requires the author's agreement — please contact via [LinkedIn](https://www.linkedin.com/in/wenyu-li-1a9868bb/).
-Usage-Pulse 採用 **MIT 風格授權，預設僅限非商業使用**（完整條文見 [`LICENSE`](LICENSE)）。**個人使用與公司內部使用皆完全免費。** 因為是免費提供給公司使用，請公司在採用前自行評估資安風險。轉售、包裝成商業產品或專案買斷仍須經作者同意，請透過 [LinkedIn](https://www.linkedin.com/in/wenyu-li-1a9868bb/) 洽談。
+Usage-Pulse uses an **MIT-style license with a non-commercial default** (full terms in [`LICENSE`](LICENSE)). **Personal use and use within a company for the company's own internal purposes are both free.** Since it's provided free for company use, please have your company assess the security risk on its own before adopting it.  
+Usage-Pulse 採用 **MIT 風格授權，預設僅限非商業使用**（完整條文見 [`LICENSE`](LICENSE)）。**個人使用與公司內部使用皆完全免費。** 因為是免費提供給公司使用，請公司在採用前自行評估資安風險。
 
-**Only download Usage-Pulse from this repository's official GitHub Releases page.** Builds from any other source are not published by the original developer, and their handling of your credentials cannot be trusted.
+**Only download Usage-Pulse from this repository's official GitHub Releases page.** Builds from any other source are not published by the original developer, and their handling of your credentials cannot be trusted.  
 **請只從本 repo 官方的 GitHub Releases 頁面下載 Usage-Pulse。** 任何其他來源的安裝檔都不是原開發者發佈的版本，無法保證它如何處理你的憑證。
 
 ## Support 支援
-
-If Usage-Pulse helps you, please consider sponsoring via [GitHub Sponsors](https://github.com/sponsors/xiaochen26wyl).
-若這個專案對你有幫助，歡迎透過 [GitHub Sponsors](https://github.com/sponsors/xiaochen26wyl) 贊助。
-
 - Threads: [@xiaochen26wyl](https://www.threads.com/@xiaochen26wyl)
 - LINE: <https://lin.ee/6XYi49XZ>
 - Instagram: [@xiaochen26wyl](https://www.instagram.com/xiaochen26wyl/)
 - WhatsApp: <https://wa.me/message/ZENT2RTQIGPEI1>
+
+If Usage-Pulse has been helpful to you, please consider starring the project on GitHub ⭐ — it’s free, quick, and greatly appreciated. You can also support the project via [GitHub Sponsors](https://github.com/sponsors/xiaochen26wyl).  
+如果 Usage-Pulse 對你有幫助，歡迎到 GitHub 幫專案點一顆 ⭐——這是免費、快速，而且對我非常有幫助。你也可以透過 [GitHub Sponsors](https://github.com/sponsors/xiaochen26wyl) 贊助支持。
 
 ## Developer 開發者
 
