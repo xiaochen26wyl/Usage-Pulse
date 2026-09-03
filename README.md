@@ -86,13 +86,10 @@ Usage-Pulse 採用 **MIT 風格授權，預設僅限非商業使用**（完整�
 **請只從本 repo 官方的 GitHub Releases 頁面下載 Usage-Pulse。** 任何其他來源的安裝檔都不是原開發者發佈的版本，無法保證它如何處理你的憑證。
 
 ## Support 支援
-- LINE: <https://lin.ee/6XYi49XZ>
-- WhatsApp: <https://wa.me/message/ZENT2RTQIGPEI1>
-
 If Usage-Pulse has been helpful to you, please consider starring the project on GitHub ⭐ — it’s free, quick, and greatly appreciated. You can also support the project via [GitHub Sponsors](https://github.com/sponsors/xiaochen26wyl).  
 如果 Usage-Pulse 對你有幫助，歡迎到 GitHub 幫專案點一顆 ⭐——這是免費、快速，而且對我非常有幫助。你也可以透過 [GitHub Sponsors](https://github.com/sponsors/xiaochen26wyl) 贊助支持。
 
 ## Follow Developer 追蹤開發者
-- Instagram: [@xiaochen26wyl](https://www.instagram.com/xiaochen26wyl/)
-- Threads: [@xiaochen26wyl](https://www.threads.com/@xiaochen26wyl)
+- Instagram（English）: [@xiaochen26wyl](https://www.instagram.com/xiaochen26wyl/)
+- Threads（中文）: [@xiaochen26wyl](https://www.threads.com/@xiaochen26wyl)
 W.Y. LI — [LinkedIn](https://www.linkedin.com/in/wenyu-li-1a9868bb/) (commercial licensing & buyout / 商業授權與買斷)
