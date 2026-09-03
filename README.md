@@ -27,10 +27,10 @@ It only reads credentials you're already logged in with locally and official usa
 ### Before first use 首次使用前
 - Log in to **Cursor Desktop** first (required for Cursor quota reads).
 - 先登入 **Cursor Desktop**（供 Cursor 配額讀取）。
-- Install the **standalone Claude Code CLI** and log in with it first (see below).
-- 先安裝**獨立版 Claude Code CLI** 並登入（詳見下方）。
+- Install the **standalone Claude Code CLI** and log in with it first.
+- 先安裝**獨立版 Claude Code CLI** 並登入。
 - Log in to the **Codex CLI** first (Usage-Pulse does not open a Codex login UI).
-- 先登入 **Codex CLI**（Usage-Pulse 不會開啟 Codex 登入介面）。
+- 先登入 **Codex CLI** 或 **Codex Desktop**。
 - Allow system notification permissions when prompted.
 - 出現提示時請允許系統通知權限。
 
@@ -52,16 +52,16 @@ A pasted token is tried against your real usage before it is kept: if it can't r
 
 ## Behavior 功能行為
 
-I. Checks Cursor / Claude Code / Codex quota periodically in the background and alerts you on changes.
-I. 背景會定期檢查 Cursor / Claude Code / Codex 配額，並在變化時提醒你。
-II. Low-quota and quota-reset alerts can each be toggled independently, per service and per window, in Settings.
-II. 低額度與配額重置提醒都可以在設定中依服務、依視窗個別開關。
-III. Two notification channels, each toggled independently in Settings: an in-app popup (no OS permission needed, always works — top-right, auto-closes, can be snoozed) and LINE notifications (needs a Channel Access Token).
-III. 兩種通知管道，可在設定中個別開關：App 彈窗提醒（免權限、一定生效——顯示於右上角、自動關閉、可延後）與 LINE 通知（需要 Channel Access Token）。
-IV. Available in Traditional Chinese, English, Japanese, and Korean from the in-app language menu.
-IV. 支援繁體中文、英文、日文、韓文介面，可在 App 語言選單切換。
-V. Quit anytime from the UI or the tray menu; if LINE is on, quitting sends a final status from the last cached reading.
-V. 可隨時從 UI 或選單列離開；若 LINE 開啟，離開時會用最後一次快取用量送出現況。
+I. Checks Cursor / Claude Code / Codex quota periodically in the background and alerts you on changes.  
+背景會定期檢查 Cursor / Claude Code / Codex 配額，並在變化時提醒你。
+II. Low-quota and quota-reset alerts can each be toggled independently, per service and per window, in Settings.  
+低額度與配額重置提醒都可以在設定中依服務、依視窗個別開關。
+III. Two notification channels, each toggled independently in Settings: an in-app popup (no OS permission needed, always works — top-right, auto-closes, can be snoozed) and LINE notifications (needs a Channel Access Token).  
+兩種通知管道，可在設定中個別開關：App 彈窗提醒（免權限、一定生效——顯示於右上角、自動關閉、可延後）與 LINE 通知（需要 Channel Access Token）。
+IV. Available in Traditional Chinese, English, Japanese, and Korean from the in-app language menu.  
+支援繁體中文、英文、日文、韓文介面，可在 App 語言選單切換。
+V. Quit anytime from the UI or the tray menu; if LINE is on, quitting sends a final status from the last cached reading.  
+可隨時從 UI 或選單列離開；若 LINE 開啟，離開時會用最後一次快取用量送出現況。
 
 ## Security notes 安全性說明
 
@@ -72,8 +72,8 @@ V. 可隨時從 UI 或選單列離開；若 LINE 開啟，離開時會用最後�
 - General settings (notification toggles, language, and the rest of Settings) are stored locally only — there's no cloud sync.
 - 一般設定（通知開關、語言等）只存在本機，沒有雲端同步。
 
-If anything looks off — a reading that seems wrong, a notification that shouldn't have fired, anything unexpected — please open an issue rather than assuming; we'll look into it.  
-如果任何行為看起來不對勁——數值看起來錯誤、不該跳出的通知、任何預期外的狀況——歡迎直接開 issue 回報，不用自行猜測原因，我們會盡快確認。
+If anything looks off — a reading that seems wrong, a notification that shouldn't have fired, anything unexpected — please open an issue rather than assuming.  
+如果任何行為看起來不對勁——數值看起來錯誤、不該跳出的通知、任何預期外的狀況——歡迎直接開 issue 回報。
 
 ## License and important notice 授權與重要聲明
 
