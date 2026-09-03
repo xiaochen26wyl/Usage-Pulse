@@ -72,8 +72,10 @@ V. Quit anytime from the UI or the tray menu; if LINE is on, quitting sends a fi
 - General settings (notification toggles, language, and the rest of Settings) are stored locally only — there's no cloud sync.
 - 一般設定（通知開關、語言等）只存在本機，沒有雲端同步。
 
-If anything looks off — a reading that seems wrong, a notification that shouldn't have fired, anything unexpected — please open an issue rather than assuming.  
-如果任何行為看起來不對勁——數值看起來錯誤、不該跳出的通知、任何預期外的狀況——歡迎直接開 issue 回報。
+If anything appears incorrect — such as a reading that seems wrong, a notification that should not have been triggered, or any other unexpected behavior — please open a question in [Discussions Q&A](https://github.com/xiaochen26wyl/Usage-Pulse/discussions/categories/q-a-%E8%A7%A3%E6%B1%BA%E5%95%8F%E9%A1%8C) instead of making assumptions.
+
+如果有任何行為看起來不正確——例如數值異常、理應不會觸發的通知，或其他任何預期外的狀況——請不要自行推測，並請至 [Discussions Q&A](https://github.com/xiaochen26wyl/Usage-Pulse/discussions/categories/q-a-%E8%A7%A3%E6%B1%BA%E5%95%8F%E9%A1%8C)
+
 
 ## License and important notice 授權與重要聲明
 
@@ -84,14 +86,13 @@ Usage-Pulse 採用 **MIT 風格授權，預設僅限非商業使用**（完整�
 **請只從本 repo 官方的 GitHub Releases 頁面下載 Usage-Pulse。** 任何其他來源的安裝檔都不是原開發者發佈的版本，無法保證它如何處理你的憑證。
 
 ## Support 支援
-- Threads: [@xiaochen26wyl](https://www.threads.com/@xiaochen26wyl)
 - LINE: <https://lin.ee/6XYi49XZ>
-- Instagram: [@xiaochen26wyl](https://www.instagram.com/xiaochen26wyl/)
 - WhatsApp: <https://wa.me/message/ZENT2RTQIGPEI1>
 
 If Usage-Pulse has been helpful to you, please consider starring the project on GitHub ⭐ — it’s free, quick, and greatly appreciated. You can also support the project via [GitHub Sponsors](https://github.com/sponsors/xiaochen26wyl).  
 如果 Usage-Pulse 對你有幫助，歡迎到 GitHub 幫專案點一顆 ⭐——這是免費、快速，而且對我非常有幫助。你也可以透過 [GitHub Sponsors](https://github.com/sponsors/xiaochen26wyl) 贊助支持。
 
-## Developer 開發者
-
+## Follow Developer 追蹤開發者
+- Instagram: [@xiaochen26wyl](https://www.instagram.com/xiaochen26wyl/)
+- Threads: [@xiaochen26wyl](https://www.threads.com/@xiaochen26wyl)
 W.Y. LI — [LinkedIn](https://www.linkedin.com/in/wenyu-li-1a9868bb/) (commercial licensing & buyout / 商業授權與買斷)
