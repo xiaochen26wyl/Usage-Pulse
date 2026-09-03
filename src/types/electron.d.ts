@@ -3,6 +3,7 @@ import type {
   AlarmStatusReport,
   AppSettings,
   AuthStatus,
+  ClaudeTokenSaveResult,
   CombinedSnapshot,
   CredentialStatus,
   ManualQuotaResult,
@@ -18,6 +19,8 @@ interface UsagePulseApi {
   checkAuth: (service: ServiceType) => Promise<CredentialStatus>;
   runManualCheck: (service: ServiceType) => Promise<ManualQuotaResult>;
   getLatestSnapshot: () => Promise<CombinedSnapshot | null>;
+  saveClaudeToken: (token: string) => Promise<ClaudeTokenSaveResult>;
+  clearClaudeToken: () => Promise<ClaudeTokenSaveResult>;
   sendLineTest: () => Promise<boolean>;
   sendLineStatus: () => Promise<boolean>;
   quitApp: () => Promise<void>;

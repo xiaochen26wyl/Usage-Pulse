@@ -39,40 +39,27 @@ It only reads credentials you're already logged in with locally and official usa
 
 ### Claude Code credential setup Claude Code 憑證設定
 
-```bash
-npm install -g @anthropic-ai/claude-code
-```
+Click **Update Values** in Usage-Pulse to detect the credential and fetch usage. Whenever the Claude card has no numbers to show, it opens a panel on the spot with the exact login command to run, a **Get Credentials** button that re-checks your credential, and a box you can paste a token into instead.
+在 Usage-Pulse 按「更新數值」偵測憑證並抓取用量。只要 Claude 卡片沒有數值可顯示，就會當場展開一個區塊，裡面有要執行的登入指令、重新檢查憑證的「獲取憑證」按鈕，以及一個可以直接貼上 token 的欄位。
 
-Then log in from a terminal:
-接著在終端機執行登入：
-
-```bash
-claude auth login
-```
-
-Back in Usage-Pulse, click **Update Values** to detect the credential and fetch usage. If no usable credential is found, or it's expired, the Claude card shows **Get Credentials**, which just opens `https://claude.ai/login` for you — the login itself always happens in your own terminal via the command above.
-回到 Usage-Pulse 後按「更新數值」偵測憑證並抓取用量。若找不到可用憑證，或憑證已過期，Claude 卡片會顯示「獲取憑證」，點下去只會用瀏覽器打開 `https://claude.ai/login` — 實際登入一律透過上面的指令在你自己的終端機完成。
-
-Don't use `claude setup-token` for this — it won't satisfy what quota checks need. Use `claude auth login` instead.
-請不要用 `claude setup-token` 做這件事——它無法滿足配額查詢的需求，請改用 `claude auth login`。
+A pasted token is tried against your real usage before it is kept: if it can't read your usage, it isn't saved and the panel tells you why.
+貼上的 token 會先實際查一次你的用量再決定是否保留：查不到就不會存起來，並且會告訴你原因。
 
 > Why the numbers can look different from Claude Desktop's own "Plan usage limits" panel: Usage-Pulse shows **remaining** quota, while Claude Desktop's panel shows **used** quota. `44%` remaining and `56%` used describe the same state — not a data error.
 > 為什麼數字看起來跟 Claude Desktop 自己的「Plan usage limits」面板不一樣：Usage-Pulse 顯示的是**剩餘**配額，Claude Desktop 面板顯示的是**已使用**配額。「剩餘 44%」跟「已使用 56%」是同一個狀態，不是資料錯誤。
 
 ## Behavior 功能行為
 
-- Checks Cursor / Claude Code / Codex quota periodically in the background and alerts you on changes.
-- 背景會定期檢查 Cursor / Claude Code / Codex 配額，並在變化時提醒你。
-- Low-quota and quota-reset alerts can each be toggled independently, per service and per window, in Settings.
-- 低額度與配額重置提醒都可以在設定中依服務、依視窗個別開關。
-- Two notification channels: an always-on-top popup in the top-right (auto-closes, can be snoozed) and an optional LINE broadcast.
-- 兩種通知管道：螢幕右上角置頂彈窗（會自動關閉，可延後）與選用的 LINE 廣播。
-- Notification cooldown is configurable, avoiding repeated alerts with the same content in a short window.
-- 通知冷卻時間可調整，避免短時間內重複提醒同樣內容。
-- Available in Traditional Chinese, English, Japanese, and Korean from the in-app language menu.
-- 支援繁體中文、英文、日文、韓文介面，可在 App 語言選單切換。
-- Quit anytime from the UI or the tray menu; if LINE is on, quitting sends a final status from the last cached reading.
-- 可隨時從 UI 或選單列離開；若 LINE 開啟，離開時會用最後一次快取用量送出現況。
+I. Checks Cursor / Claude Code / Codex quota periodically in the background and alerts you on changes.
+I. 背景會定期檢查 Cursor / Claude Code / Codex 配額，並在變化時提醒你。
+II. Low-quota and quota-reset alerts can each be toggled independently, per service and per window, in Settings.
+II. 低額度與配額重置提醒都可以在設定中依服務、依視窗個別開關。
+III. Two notification channels, each toggled independently in Settings: an in-app popup (no OS permission needed, always works — top-right, auto-closes, can be snoozed) and LINE notifications (needs a Channel Access Token).
+III. 兩種通知管道，可在設定中個別開關：App 彈窗提醒（免權限、一定生效——顯示於右上角、自動關閉、可延後）與 LINE 通知（需要 Channel Access Token）。
+IV. Available in Traditional Chinese, English, Japanese, and Korean from the in-app language menu.
+IV. 支援繁體中文、英文、日文、韓文介面，可在 App 語言選單切換。
+V. Quit anytime from the UI or the tray menu; if LINE is on, quitting sends a final status from the last cached reading.
+V. 可隨時從 UI 或選單列離開；若 LINE 開啟，離開時會用最後一次快取用量送出現況。
 
 ## Security notes 安全性說明
 
@@ -80,18 +67,16 @@ Don't use `claude setup-token` for this — it won't satisfy what quota checks n
 - 讀取項目皆為唯讀：Cursor 本機工作階段資料、官方 Claude Code CLI 已存的登入資訊、Codex 本機憑證檔。
 - Usage-Pulse never writes to or modifies any of these files or credentials.
 - Usage-Pulse 不會寫入或修改這些檔案或憑證。
-- It never auto-refreshes your Cursor or Claude login. If a credential expires, log in again with that tool's own CLI or app.
-- 不會自動幫你刷新 Cursor 或 Claude 的登入。憑證過期時，請用該工具自己的 CLI 或 App 重新登入。
-- General settings (notification toggles, cooldown, language, and the rest of Settings) are stored locally only — there's no cloud sync.
-- 一般設定（通知開關、冷卻時間、語言等）只存在本機，沒有雲端同步。
+- General settings (notification toggles, language, and the rest of Settings) are stored locally only — there's no cloud sync.
+- 一般設定（通知開關、語言等）只存在本機，沒有雲端同步。
 
 If anything looks off — a reading that seems wrong, a notification that shouldn't have fired, anything unexpected — please open an issue rather than assuming; we'll look into it.
 如果任何行為看起來不對勁——數值看起來錯誤、不該跳出的通知、任何預期外的狀況——歡迎直接開 issue 回報，不用自行猜測原因，我們會盡快確認。
 
 ## License and important notice 授權與重要聲明
 
-Usage-Pulse uses an **MIT-style license with a non-commercial default** (full terms in [`LICENSE`](LICENSE)). **Personal use is free.** Commercial use, company use, or a full project buyout requires the author's agreement — please contact via [LinkedIn](https://www.linkedin.com/in/wenyu-li-1a9868bb/).
-Usage-Pulse 採用 **MIT 風格授權，預設僅限非商業使用**（完整條文見 [`LICENSE`](LICENSE)）。**個人使用完全免費。** 商業使用、公司內使用或專案買斷須經作者同意，請透過 [LinkedIn](https://www.linkedin.com/in/wenyu-li-1a9868bb/) 洽談。
+Usage-Pulse uses an **MIT-style license with a non-commercial default** (full terms in [`LICENSE`](LICENSE)). **Personal use and use within a company for the company's own internal purposes are both free.** Since it's provided free for company use, please have your company assess the security risk on its own before adopting it. Reselling, bundling into a commercial product, or a full project buyout still requires the author's agreement — please contact via [LinkedIn](https://www.linkedin.com/in/wenyu-li-1a9868bb/).
+Usage-Pulse 採用 **MIT 風格授權，預設僅限非商業使用**（完整條文見 [`LICENSE`](LICENSE)）。**個人使用與公司內部使用皆完全免費。** 因為是免費提供給公司使用，請公司在採用前自行評估資安風險。轉售、包裝成商業產品或專案買斷仍須經作者同意，請透過 [LinkedIn](https://www.linkedin.com/in/wenyu-li-1a9868bb/) 洽談。
 
 **Only download Usage-Pulse from this repository's official GitHub Releases page.** Builds from any other source are not published by the original developer, and their handling of your credentials cannot be trusted.
 **請只從本 repo 官方的 GitHub Releases 頁面下載 Usage-Pulse。** 任何其他來源的安裝檔都不是原開發者發佈的版本，無法保證它如何處理你的憑證。

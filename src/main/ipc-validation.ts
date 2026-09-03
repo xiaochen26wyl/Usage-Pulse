@@ -42,6 +42,23 @@ export const asClipboardText = (value: unknown): string | null => {
   return CONTROL_CHARACTERS.test(value) ? null : value;
 };
 
+/**
+ * A Claude token pasted into the renderer, on its way to being verified.
+ *
+ * Bounded and stripped of control characters like every other IPC string. What
+ * it deliberately does NOT do is judge whether the token is any good: that is
+ * decided by actually calling the usage API with it (see claude-manual-token.ts),
+ * because the shape of a token has never been a reliable guide to whether it
+ * works. Returns the trimmed string, or null when it could not be one at all.
+ */
+export const asClaudeToken = (value: unknown): string | null => {
+  if (typeof value !== "string" || value.length > MAX_TOKEN_LENGTH) {
+    return null;
+  }
+  const trimmed = value.trim();
+  return CONTROL_CHARACTERS.test(trimmed) ? null : trimmed;
+};
+
 // Alarm popup height reported by the renderer after layout. Bounded so a
 // misbehaving renderer cannot ask for an absurd BrowserWindow size.
 const MIN_ALARM_HEIGHT = 80;

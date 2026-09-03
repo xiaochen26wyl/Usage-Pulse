@@ -5,6 +5,7 @@ import type {
   AlarmStatusReport,
   AppSettings,
   AuthStatus,
+  ClaudeTokenSaveResult,
   CombinedSnapshot,
   CredentialStatus,
   ManualQuotaResult,
@@ -12,7 +13,7 @@ import type {
   ServiceType,
   WaterCupSizeMl
 } from "@shared/types";
-import { LINE_TOKEN_MASK } from "@shared/types";
+import { CLAUDE_TOKEN_MASK, LINE_TOKEN_MASK } from "@shared/types";
 import { localeForLanguage, t } from "@shared/i18n";
 import { isSupportLink } from "@shared/support-links";
 import { resolveTrayValueColor, TRAY_CLAUDE_LABEL_COLOR, TRAY_CODEX_LABEL_COLOR, TRAY_CURSOR_LABEL_COLOR } from "@shared/tray-value-color";
@@ -38,11 +39,14 @@ import { applyIdeLaunchHelper } from "@main/ide-launch-helper";
 import { IdePresenceMonitor, probeIdeRunning } from "@main/ide-presence";
 import {
   asAlarmHeight,
+  asClaudeToken,
   asClipboardText,
   asServiceType,
   asSettingsPatch,
   asWaterCupSize
 } from "@main/ipc-validation";
+import { classifyClaudeTokenProbe, preflightClaudeToken } from "@main/claude-manual-token";
+import { collectClaudeCodeQuotaFromToken } from "@main/collectors/claude-code";
 import { redact } from "@main/log-redaction";
 import { isSecretStorageAvailable } from "@main/secure-store";
 import { sendLineBroadcast } from "@main/line-notifier";
@@ -421,7 +425,8 @@ const buildTrayMenu = (): Menu =>
 // one is set, so each leaves the main process as a placeholder.
 const maskSecrets = (settings: AppSettings): AppSettings => ({
   ...settings,
-  lineChannelAccessToken: settings.lineChannelAccessToken ? LINE_TOKEN_MASK : ""
+  lineChannelAccessToken: settings.lineChannelAccessToken ? LINE_TOKEN_MASK : "",
+  claudeManualToken: settings.claudeManualToken ? CLAUDE_TOKEN_MASK : ""
 });
 
 // ...and a patch carrying a placeholder back is a no-op, not an instruction to
@@ -430,6 +435,9 @@ const stripMaskedSecrets = (patch: Partial<AppSettings>): Partial<AppSettings> =
   const result = { ...patch };
   if (result.lineChannelAccessToken === LINE_TOKEN_MASK) {
     delete result.lineChannelAccessToken;
+  }
+  if (result.claudeManualToken === CLAUDE_TOKEN_MASK) {
+    delete result.claudeManualToken;
   }
   return result;
 };
@@ -493,7 +501,11 @@ const setupIpcHandlers = (): void => {
     }
     try {
       const checkResult = await monitor.runServiceCheck(service, "manual");
-      await credentialMonitor.check(service);
+      // runServiceCheck has just spent a usage request; without this the
+      // credential sweep spends a second one refreshing the very credential
+      // that request already exercised. That doubles the API traffic on
+      // exactly the path the user clicks repeatedly when something is wrong.
+      await credentialMonitor.check(service, { refreshQuota: false });
       const snapshot = checkResult.snapshot[service];
       if (snapshot.errorCode === "claudeLoginExpired") {
         return { ok: true, message: snapshot.message || t(lang, "error.claudeLoginExpired") };
@@ -518,6 +530,52 @@ const setupIpcHandlers = (): void => {
         message: error instanceof Error ? error.message : t(lang, "app.authRefreshFailed")
       };
     }
+  });
+
+  /**
+   * Verify a pasted Claude token by using it, and store it only if that works.
+   *
+   * The token never becomes a stored credential on the strength of its shape or
+   * an expiry claim — it has to answer the usage API first. That is the whole
+   * point of this handler: every other way of deciding whether a credential is
+   * usable has, in this app, eventually disagreed with what the API does.
+   */
+  ipcMain.handle("claude:save-token", async (_event, tokenRaw: unknown): Promise<ClaudeTokenSaveResult> => {
+    const lang = settingsStore.get().language;
+    const token = asClaudeToken(tokenRaw);
+    const preflight = preflightClaudeToken(token, lang);
+    if (preflight) {
+      return preflight;
+    }
+
+    const verified = token as string;
+    let probe;
+    try {
+      probe = { ok: true as const, result: await collectClaudeCodeQuotaFromToken(verified, "manualToken") };
+    } catch (error) {
+      console.error("[Usage-Pulse] pasted Claude token failed verification", redact(error));
+      probe = { ok: false as const, error };
+    }
+
+    const outcome = classifyClaudeTokenProbe(probe, lang);
+    if (!outcome.ok) {
+      return outcome;
+    }
+
+    settingsStore.update({ claudeManualToken: verified });
+    // Re-run through the normal path so the card, tray and credential state all
+    // come from one snapshot rather than from this handler's private result.
+    await monitor.runServiceCheck("claude", "manual");
+    await credentialMonitor.check("claude", { refreshQuota: false });
+    return outcome;
+  });
+
+  ipcMain.handle("claude:clear-token", async (): Promise<ClaudeTokenSaveResult> => {
+    const lang = settingsStore.get().language;
+    settingsStore.update({ claudeManualToken: "" });
+    await monitor.runServiceCheck("claude", "manual");
+    await credentialMonitor.check("claude", { refreshQuota: false });
+    return { ok: true, message: t(lang, "claudeToken.cleared") };
   });
 
   ipcMain.handle("monitor:get-latest", () => monitor.getLatestSnapshot());

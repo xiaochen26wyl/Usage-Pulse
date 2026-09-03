@@ -25,7 +25,7 @@ const LANGUAGES: ReadonlySet<Language> = new Set(["zh", "en", "ja", "ko"]);
 // Settings fields listed here are encrypted at rest via OS-native secret storage (see secure-store.ts)
 // whenever they're written to the electron-store JSON file, and decrypted on read. Add future
 // secrets (e.g. additional LINE keys) to this list rather than storing them in plain text.
-const SECRET_SETTINGS_KEYS: Array<keyof AppSettings> = ["lineChannelAccessToken"];
+const SECRET_SETTINGS_KEYS: Array<keyof AppSettings> = ["lineChannelAccessToken", "claudeManualToken"];
 
 const asStringRecord = (settings: AppSettings) => settings as unknown as Record<string, string>;
 
@@ -68,6 +68,7 @@ interface UsagePulseStore {
   alarmPending: Record<string, AlarmObservation>;
   alarmLastGood: Record<string, AlarmLastGoodRecord>;
   credentials: Record<string, CredentialRecord>;
+  migrations: Record<string, boolean>;
 }
 
 const store = new Store<UsagePulseStore>({
@@ -81,7 +82,8 @@ const store = new Store<UsagePulseStore>({
     alarmFires: {},
     alarmPending: {},
     alarmLastGood: {},
-    credentials: {}
+    credentials: {},
+    migrations: {}
   }
 });
 
@@ -104,15 +106,19 @@ const migrateClaudeWeeklyResetAlarm = (raw: StoredSettings): boolean =>
 const migrateClaudeBillingCadence = (raw: StoredSettings): ClaudeBillingCadence =>
   raw.claudeBillingCadence === "annual" ? "annual" : "monthly";
 
+const CODEX_ACTIVITY_POLLING_DEFAULT_OFF_MIGRATION = "codexActivityPollingDefaultOff20260903";
+
 const readSettings = (): AppSettings => {
   const raw = store.get("settings") as StoredSettings;
+  const migrations = (store.get("migrations") as Record<string, boolean> | undefined) ?? {};
+  const shouldMigrateCodexActivityPolling = !migrations[CODEX_ACTIVITY_POLLING_DEFAULT_OFF_MIGRATION];
   const {
     launchAtLogin: _legacy,
     claudeManualOAuthToken: _legacyClaudeToken,
     claudeManualOAuthTokenExpiresAt: _legacyClaudeTokenExpiresAt,
     ...rest
   } = raw;
-  return decryptSettings({
+  const settings = decryptSettings({
     ...DEFAULT_SETTINGS,
     ...rest,
     launchWithIde: migrateLaunchWithIde(raw),
@@ -121,8 +127,21 @@ const readSettings = (): AppSettings => {
       typeof raw.enableClaudeBillingAlarm === "boolean"
         ? raw.enableClaudeBillingAlarm
         : DEFAULT_SETTINGS.enableClaudeBillingAlarm,
-    claudeBillingCadence: migrateClaudeBillingCadence(raw)
+    claudeBillingCadence: migrateClaudeBillingCadence(raw),
+    codexUseCliActivityPolling: shouldMigrateCodexActivityPolling
+      ? false
+      : Boolean(raw.codexUseCliActivityPolling ?? DEFAULT_SETTINGS.codexUseCliActivityPolling)
   });
+
+  if (shouldMigrateCodexActivityPolling) {
+    store.set("settings", encryptSettings(settings));
+    store.set("migrations", {
+      ...migrations,
+      [CODEX_ACTIVITY_POLLING_DEFAULT_OFF_MIGRATION]: true
+    });
+  }
+
+  return settings;
 };
 
 export const settingsStore = {

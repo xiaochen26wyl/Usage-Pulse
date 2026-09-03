@@ -58,7 +58,7 @@ const NORMAL_POLL_INTERVAL_MS = 15 * 60_000;
 
 // Codex gets a single fixed cadence instead of the fast/normal split above,
 // and no separate minimum-gap floor: the fixed interval is the floor.
-const CODEX_POLL_INTERVAL_MS = 5 * 60_000;
+const CODEX_POLL_INTERVAL_MS = 60_000;
 
 // How far back to look in the CLI's own logs when corroborating a lockout.
 // Wider than the 5-hour window so a rejection recorded at its start is still

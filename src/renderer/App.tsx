@@ -22,7 +22,7 @@ import {
   type TrayValueColorMode,
   type WaterCupSizeMl,
 } from "@shared/types";
-import { LINE_TOKEN_MASK } from "@shared/types";
+import { CLAUDE_TOKEN_MASK, LINE_TOKEN_MASK } from "@shared/types";
 import {
   ALARM_POPUP_AUTO_DISMISS_SECONDS,
   formatCountdown,
@@ -46,7 +46,7 @@ const TOKEN_MASK_MAX = 10;
 // Both cases render as the same run of asterisks — the field shows that a
 // secret is set, and nothing about the secret itself.
 const maskToken = (token: string): string =>
-  token === LINE_TOKEN_MASK
+  token === LINE_TOKEN_MASK || token === CLAUDE_TOKEN_MASK
     ? "*".repeat(TOKEN_MASK_MAX)
     : "*".repeat(Math.min(token.length, TOKEN_MASK_MAX));
 
@@ -95,8 +95,9 @@ const defaultSettings: AppSettings = {
   enableAlarmPopup: true,
   enableLineNotification: true,
   lineChannelAccessToken: "",
+  claudeManualToken: "",
   claudeUseCliActivityPolling: true,
-  codexUseCliActivityPolling: true,
+  codexUseCliActivityPolling: false,
   enableWaterReminder: true,
   waterReminderMinutes: 50,
   waterCupSizeMl: 500,
@@ -254,6 +255,15 @@ export const App = () => {
     codex: "",
   });
   const [claudeLoginCommandCopied, setClaudeLoginCommandCopied] = useState(false);
+  const [claudeToken, setClaudeToken] = useState("");
+  const [savingClaudeToken, setSavingClaudeToken] = useState(false);
+  const [claudeTokenMessage, setClaudeTokenMessage] = useState<{
+    text: string;
+    isError: boolean;
+  }>({
+    text: "",
+    isError: false,
+  });
   const [lineToken, setLineToken] = useState("");
   // False only on hosts with no OS keychain available, where a saved token
   // would land in the settings file as plain text. The user is told rather
@@ -633,46 +643,109 @@ export const App = () => {
   // The pasted text is applied by hand instead of letting the browser do it:
   // clearing the system clipboard raced the default paste action, which is why
   // pasting a token used to leave the field empty.
-  const handleTokenPaste = (event: ClipboardEvent<HTMLInputElement>) => {
-    event.preventDefault();
-    const pasted = event.clipboardData.getData("text").trim();
-    if (pasted) {
-      setLineToken(pasted);
-      setLineTokenMessage({ text: "", isError: false });
+  // Both secret fields in this app behave the same way: the input only ever
+  // renders asterisks, so every edit has to be applied to the real value held
+  // in state rather than to what is on screen. Shared rather than duplicated,
+  // so the two fields cannot drift apart on the details that make masking safe.
+  const maskedTokenHandlers = (
+    value: string,
+    setValue: (updater: (prev: string) => string) => void,
+    storedMask: string,
+    clearMessage: () => void,
+  ) => ({
+    onPaste: (event: ClipboardEvent<HTMLInputElement>) => {
+      event.preventDefault();
+      const pasted = event.clipboardData.getData("text").trim();
+      if (pasted) {
+        setValue(() => pasted);
+        clearMessage();
+      }
+      clearSystemClipboard();
+    },
+    onKeyDown: (event: KeyboardEvent<HTMLInputElement>) => {
+      // Let the shortcuts through: cmd+V arrives as a paste event, and cmd+A has
+      // to reach the field so "select all, then retype" can clear a long token —
+      // backspacing a 170-character token one asterisk at a time is no way out.
+      if (event.metaKey || event.ctrlKey || event.altKey) {
+        return;
+      }
+
+      const field = event.currentTarget;
+      const wholeMaskSelected =
+        field.selectionStart === 0 &&
+        field.selectionEnd === field.value.length &&
+        field.value.length > 0;
+
+      // Editing a field that is only showing the placeholder starts a new token:
+      // there is no real value in state to append to or trim from.
+      const startsFresh = wholeMaskSelected || value === storedMask;
+
+      if (event.key === "Backspace" || event.key === "Delete") {
+        event.preventDefault();
+        setValue((prev) => (startsFresh ? "" : prev.slice(0, -1)));
+        clearMessage();
+        return;
+      }
+      if (event.key.length === 1) {
+        event.preventDefault();
+        setValue((prev) => (startsFresh ? event.key : prev + event.key));
+        clearMessage();
+      }
+    },
+  });
+
+  const lineTokenHandlers = maskedTokenHandlers(lineToken, setLineToken, LINE_TOKEN_MASK, () =>
+    setLineTokenMessage({ text: "", isError: false }),
+  );
+  const claudeTokenHandlers = maskedTokenHandlers(
+    claudeToken,
+    setClaudeToken,
+    CLAUDE_TOKEN_MASK,
+    () => setClaudeTokenMessage({ text: "", isError: false }),
+  );
+
+  // Verification happens in main, against the real usage API, and only its
+  // verdict comes back — so what is shown here is the outcome of an actual
+  // request, never a guess made from the token's shape.
+  const handleSaveClaudeToken = async () => {
+    const token = claudeToken.trim();
+    if (!token || token === CLAUDE_TOKEN_MASK) {
+      setClaudeTokenMessage({ text: t(lang, "claudeToken.empty"), isError: true });
+      return;
     }
-    clearSystemClipboard();
+    setSavingClaudeToken(true);
+    setClaudeTokenMessage({ text: "", isError: false });
+    try {
+      const result = await window.usagePulse.saveClaudeToken(token);
+      setClaudeTokenMessage({ text: result.message, isError: !result.ok });
+      if (result.ok) {
+        setClaudeToken("");
+        await pullClaudeOntoScreen("");
+      }
+    } catch (error) {
+      setClaudeTokenMessage({
+        text: error instanceof Error ? error.message : t(lang, "claudeToken.apiFailed"),
+        isError: true,
+      });
+    } finally {
+      setSavingClaudeToken(false);
+    }
   };
 
-  // The field shows the mask, not the token, so every edit is applied to the
-  // real value held in state rather than to what is on screen.
-  const handleTokenKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
-    // Let the shortcuts through: cmd+V arrives as a paste event, and cmd+A has
-    // to reach the field so "select all, then retype" can clear a long token —
-    // backspacing a 170-character token one asterisk at a time is no way out.
-    if (event.metaKey || event.ctrlKey || event.altKey) {
-      return;
-    }
-
-    const field = event.currentTarget;
-    const wholeMaskSelected =
-      field.selectionStart === 0 &&
-      field.selectionEnd === field.value.length &&
-      field.value.length > 0;
-
-    // Editing a field that is only showing the placeholder starts a new token:
-    // there is no real value in state to append to or trim from.
-    const startsFresh = wholeMaskSelected || lineToken === LINE_TOKEN_MASK;
-
-    if (event.key === "Backspace" || event.key === "Delete") {
-      event.preventDefault();
-      setLineToken((prev) => (startsFresh ? "" : prev.slice(0, -1)));
-      setLineTokenMessage({ text: "", isError: false });
-      return;
-    }
-    if (event.key.length === 1) {
-      event.preventDefault();
-      setLineToken((prev) => (startsFresh ? event.key : prev + event.key));
-      setLineTokenMessage({ text: "", isError: false });
+  const handleClearClaudeToken = async () => {
+    setSavingClaudeToken(true);
+    try {
+      const result = await window.usagePulse.clearClaudeToken();
+      setClaudeToken("");
+      setClaudeTokenMessage({ text: result.message, isError: false });
+      await pullClaudeOntoScreen("");
+    } catch (error) {
+      setClaudeTokenMessage({
+        text: error instanceof Error ? error.message : t(lang, "app.authRefreshFailed"),
+        isError: true,
+      });
+    } finally {
+      setSavingClaudeToken(false);
     }
   };
 
@@ -712,7 +785,8 @@ export const App = () => {
   // Lives inside each quota card rather than in a section of its own: a card
   // showing "no data" is almost always explained by the credential right above
   // it, and the re-detect button here only ever touches this one service.
-  const renderCredentialRow = (service: ServiceType, errorCode?: ErrorCode) => {
+  const renderCredentialRow = (service: ServiceType, item?: QuotaSnapshot, hasData = true) => {
+    const errorCode = item?.errorCode;
     const credential = authStatus[service];
     const message = authMessage[service];
     const credentialTag = resolveCredentialTag(service, credential, errorCode);
@@ -743,7 +817,7 @@ export const App = () => {
     // Claude / Codex keep refresh and re-auth as separate actions so a scope or
     // login failure never hides "Update Values" behind a single swapped button.
     const showRefreshQuota = service === "claude" || service === "codex";
-    const showRedetect = service === "codex" || cursorCredentialBroken;
+    const showRedetect = service === "claude" || service === "codex" || cursorCredentialBroken;
 
     return (
       <div className="credential-row">
@@ -824,10 +898,118 @@ export const App = () => {
             {message}
           </p>
         ) : null}
-        {service === "claude" &&
-        (credential.state === "missing" || errorCode === "claudeScopeInsufficient")
-          ? renderClaudeLoginInstructions()
-          : null}
+        {service === "claude" && !hasData ? renderClaudeCredentialBlock(credential, item) : null}
+      </div>
+    );
+  };
+
+  /**
+   * What actually stopped the Claude card from showing numbers this time.
+   *
+   * The block below appears whenever there are no numbers, whatever the cause —
+   * but it must not blame the credential for a rate limit or a dropped
+   * connection, so the reason comes from what the fetch really returned rather
+   * than from a guess about the credential.
+   */
+  const claudeNoDataReasonKey = (
+    credential: CredentialStatus,
+    item?: QuotaSnapshot,
+  ): TranslationKey => {
+    if (item?.errorCode === "claudeScopeInsufficient") {
+      return "error.claudeScopeInsufficient";
+    }
+    if (item?.errorCode === "claudeRateLimited") {
+      return "error.claudeRateLimited";
+    }
+    if (item?.errorCode === "claudeLoginExpired") {
+      return "error.claudeLoginExpired";
+    }
+    if (credential.state === "missing") {
+      return "error.claudeCredentialMissing";
+    }
+    if (item?.status === "error") {
+      return "error.claudeApiFailed";
+    }
+    if (!item) {
+      return "app.notFetchedYet";
+    }
+    return "quotaCheck.noUsageYet";
+  };
+
+  /**
+   * The one gate that matters: no usable quota on screen means the user gets a
+   * way out, immediately and without hunting for a button.
+   *
+   * Deliberately NOT gated on credential.state. That state is inferred locally
+   * from an expiry timestamp and the presence of a Keychain item, and it has
+   * repeatedly disagreed with what the usage API actually does — which is how
+   * the card ended up telling users to press a button that was never rendered.
+   * Whether the last fetch returned data is the only signal that cannot lie.
+   */
+  const renderClaudeCredentialBlock = (credential: CredentialStatus, item?: QuotaSnapshot) => {
+    const hasStoredToken = Boolean(settings.claudeManualToken);
+    return (
+      <div style={{ marginTop: "8px" }}>
+        <p className="meta-text" style={{ margin: 0 }}>
+          {t(lang, claudeNoDataReasonKey(credential, item))}
+        </p>
+        {renderClaudeLoginInstructions()}
+        {secretStorageOk ? null : (
+          <div className="callout-warning" style={{ marginTop: "8px" }}>
+            ⚠️ {t(lang, "settings.insecureStorage")}
+          </div>
+        )}
+        <label className="field" style={{ marginTop: "8px" }}>
+          <span>{t(lang, "claudeToken.title")}</span>
+          <input
+            type="text"
+            autoComplete="off"
+            spellCheck={false}
+            placeholder={t(lang, "claudeToken.placeholder")}
+            value={maskToken(claudeToken)}
+            onPaste={claudeTokenHandlers.onPaste}
+            onKeyDown={claudeTokenHandlers.onKeyDown}
+            // Controlled by the mask: every mutation goes through the paste and
+            // key handlers above, so there is nothing for onChange to apply.
+            onChange={() => undefined}
+          />
+        </label>
+        <p className="meta-text" style={{ margin: "6px 0 0" }}>
+          {t(lang, "claudeToken.hint")}
+        </p>
+        <div className="alarm-actions-row">
+          <button
+            type="button"
+            className="primary-btn"
+            onClick={handleSaveClaudeToken}
+            disabled={savingClaudeToken}
+          >
+            {savingClaudeToken ? t(lang, "claudeToken.saving") : t(lang, "claudeToken.save")}
+          </button>
+          {hasStoredToken ? (
+            <button
+              type="button"
+              className="ghost-btn"
+              onClick={handleClearClaudeToken}
+              disabled={savingClaudeToken}
+            >
+              {t(lang, "claudeToken.clear")}
+            </button>
+          ) : null}
+        </div>
+        {hasStoredToken ? (
+          <p className="meta-text" style={{ margin: "6px 0 0" }}>
+            {t(lang, "claudeToken.stored")}
+          </p>
+        ) : null}
+        {claudeTokenMessage.text ? (
+          <p
+            className={claudeTokenMessage.isError ? "form-error" : "meta-text"}
+            style={{ margin: "6px 0 0" }}
+          >
+            {claudeTokenMessage.text}
+          </p>
+        ) : null}
       </div>
     );
   };
@@ -1160,7 +1342,7 @@ export const App = () => {
                       {item?.status || "unknown"}
                     </span>
                   </div>
-                  {renderCredentialRow(service, item?.errorCode)}
+                  {renderCredentialRow(service, item, barWindows.length > 0)}
                   {barWindows.length ? (
                     <div className="window-bars">
                       {sessionWindow &&
@@ -1237,7 +1419,7 @@ export const App = () => {
                       {item?.status || "unknown"}
                     </span>
                   </div>
-                  {renderCredentialRow(service, item?.errorCode)}
+                  {renderCredentialRow(service, item)}
                   {hasBars ? (
                     <div className="window-bars">
                       {sessionWindow &&
@@ -2003,8 +2185,8 @@ export const App = () => {
                 spellCheck={false}
                 placeholder={t(lang, "line.tokenPlaceholder")}
                 value={maskToken(lineToken)}
-                onPaste={handleTokenPaste}
-                onKeyDown={handleTokenKeyDown}
+                onPaste={lineTokenHandlers.onPaste}
+                onKeyDown={lineTokenHandlers.onKeyDown}
                 // Controlled by the mask: every mutation goes through the paste
                 // and key handlers above, so there is nothing for onChange to
                 // apply.

@@ -4,6 +4,7 @@ import type {
   AlarmStatusReport,
   AppSettings,
   AuthStatus,
+  ClaudeTokenSaveResult,
   CombinedSnapshot,
   CredentialStatus,
   ManualQuotaResult,
@@ -21,6 +22,11 @@ const api = {
   runManualCheck: (service: ServiceType) =>
     ipcRenderer.invoke("monitor:run-manual", service) as Promise<ManualQuotaResult>,
   getLatestSnapshot: () => ipcRenderer.invoke("monitor:get-latest") as Promise<CombinedSnapshot | null>,
+  // One-way: the token goes to main, is verified against the usage API there,
+  // and only a localized outcome comes back. It is never handed out again.
+  saveClaudeToken: (token: string) =>
+    ipcRenderer.invoke("claude:save-token", token) as Promise<ClaudeTokenSaveResult>,
+  clearClaudeToken: () => ipcRenderer.invoke("claude:clear-token") as Promise<ClaudeTokenSaveResult>,
   sendLineTest: () => ipcRenderer.invoke("line:send-test") as Promise<boolean>,
   sendLineStatus: () => ipcRenderer.invoke("line:send-status") as Promise<boolean>,
   quitApp: () => ipcRenderer.invoke("app:quit") as Promise<void>,

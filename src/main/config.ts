@@ -39,8 +39,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   enableAlarmPopup: true,
   enableLineNotification: true,
   lineChannelAccessToken: "",
+  claudeManualToken: "",
   claudeUseCliActivityPolling: true,
-  codexUseCliActivityPolling: true,
+  codexUseCliActivityPolling: false,
   enableWaterReminder: true,
   waterReminderMinutes: 50,
   waterCupSizeMl: 500

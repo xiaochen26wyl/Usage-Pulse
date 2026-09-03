@@ -48,6 +48,24 @@ const zh = {
   "claudeLogin.copyCommand": "複製指令",
   "claudeLogin.copied": "已複製",
   "claudeLogin.afterLoginHint": "完成登入後，請按上方「更新數值」重新偵測憑證",
+  "claudeToken.title": "貼上 Claude Code token",
+  "claudeToken.hint":
+    "沒有終端機時的備援：貼上 sk-ant-oat01- 開頭的 token。Usage-Pulse 會先用它實際查一次用量，查得到才會存起來。",
+  "claudeToken.placeholder": "sk-ant-oat01-...",
+  "claudeToken.save": "驗證並儲存",
+  "claudeToken.saving": "驗證中...",
+  "claudeToken.saved": "token 可用，已儲存並更新數值",
+  "claudeToken.savedNoUsage": "token 可用，已儲存；目前還沒有用量資料",
+  "claudeToken.stored": "已儲存一組可用的 token（Keychain 憑證正常時優先使用 Keychain）",
+  "claudeToken.clear": "清除已儲存的 token",
+  "claudeToken.cleared": "已清除儲存的 token",
+  "claudeToken.empty": "請先貼上 token 再按儲存",
+  "claudeToken.formatInvalid": "這不是 Claude OAuth token（需以 sk-ant-oat01- 開頭），沒有送出驗證。",
+  "claudeToken.scopeInsufficient":
+    "這個 token 缺少 user:profile 權限，查不到用量，沒有儲存。claude setup-token 產生的 token 天生就是這樣，請改用 claude auth login。",
+  "claudeToken.loginExpired": "Anthropic 回應 401：這個 token 已失效，沒有儲存。",
+  "claudeToken.rateLimited": "目前被限流（429），無法驗證這個 token，因此沒有儲存。請稍後再試一次。",
+  "claudeToken.apiFailed": "無法連上 Anthropic 用量 API，這個 token 沒有通過驗證，因此沒有儲存。",
   "settings.claudeActivityPolling": "只在 Claude Code CLI 有動作時才抓取",
   "settings.codexActivityPolling": "只在 Codex CLI 有動作時才抓取",
   "water.title": "喝水提醒",
@@ -173,7 +191,8 @@ const zh = {
   "error.cursorCredentialReadFailed": "無法讀取 Cursor 本機憑證，請先確認已登入 Cursor Desktop。",
   "error.cursorStateDbTooLarge":
     "Cursor 本機資料庫異常肥大（約 {sizeMb} MB），無法安全載入。請先關閉 Cursor，備份並移除此檔案讓 Cursor 重新建立（會需要重新登入 Cursor）：{dbPath}",
-  "error.claudeLoginExpired": "Claude Code 憑證已失效，請點「獲取憑證」重新授權。",
+  "error.claudeLoginExpired":
+    "Claude Code 憑證已失效（Anthropic 回應 401）。請在終端機執行 claude auth login，或在下方貼上一組 token。",
   "error.claudeRateLimited": "Claude Code 用量 API 暫時限流，請稍後再試。",
   "error.claudeScopeInsufficient":
     "目前 token 無法查詢用量（claude setup-token 只含 user:inference，用量 API 需要 user:profile）。請在終端機執行 claude 完成一般登入，不要再用 setup-token。",
@@ -316,6 +335,24 @@ const en: Record<keyof typeof zh, string> = {
   "claudeLogin.copyCommand": "Copy command",
   "claudeLogin.copied": "Copied",
   "claudeLogin.afterLoginHint": "Once you've logged in, click \"Update Values\" above to re-detect the credential.",
+  "claudeToken.title": "Paste a Claude Code token",
+  "claudeToken.hint":
+    "A fallback for when you have no terminal handy: paste a token starting with sk-ant-oat01-. Usage-Pulse reads your usage with it first and stores it only if that works.",
+  "claudeToken.placeholder": "sk-ant-oat01-...",
+  "claudeToken.save": "Verify and save",
+  "claudeToken.saving": "Verifying...",
+  "claudeToken.saved": "Token works. Saved, and the values are updated.",
+  "claudeToken.savedNoUsage": "Token works and has been saved. There is no usage recorded yet.",
+  "claudeToken.stored": "A working token is saved (the Keychain credential is preferred whenever it is healthy).",
+  "claudeToken.clear": "Clear saved token",
+  "claudeToken.cleared": "Saved token cleared",
+  "claudeToken.empty": "Paste a token before saving.",
+  "claudeToken.formatInvalid": "That is not a Claude OAuth token (it must start with sk-ant-oat01-), so nothing was sent for verification.",
+  "claudeToken.scopeInsufficient":
+    "This token lacks the user:profile scope and cannot read usage, so it was not saved. Tokens from claude setup-token are always like this - use claude auth login instead.",
+  "claudeToken.loginExpired": "Anthropic answered 401: this token is no longer valid, so it was not saved.",
+  "claudeToken.rateLimited": "Rate-limited right now (429), so this token could not be verified and was not saved. Try again shortly.",
+  "claudeToken.apiFailed": "Could not reach the Anthropic usage API, so this token was not verified and was not saved.",
   "settings.claudeActivityPolling": "Only fetch when the Claude Code CLI has been active",
   "settings.codexActivityPolling": "Only fetch when the Codex CLI has been active",
   "water.title": "Water reminder",
@@ -443,7 +480,7 @@ const en: Record<keyof typeof zh, string> = {
   "error.cursorStateDbTooLarge":
     "Cursor's local database is abnormally large (about {sizeMb} MB) and can't be loaded safely. Quit Cursor, back up and remove this file so Cursor rebuilds it (you'll need to log in to Cursor again): {dbPath}",
   "error.claudeLoginExpired":
-    'Claude Code credential is no longer valid. Click "Get Credentials" to authorize again.',
+    "Claude Code credential is no longer valid (Anthropic answered 401). Run claude auth login in a terminal, or paste a token below.",
   "error.claudeRateLimited": "Claude Code usage API is temporarily rate-limited. Please try again later.",
   "error.claudeScopeInsufficient":
     "This token cannot query usage (claude setup-token only has user:inference; the usage API needs user:profile). Run claude in a terminal and complete the normal login — do not use setup-token again.",
@@ -587,6 +624,24 @@ const ja: Record<keyof typeof zh, string> = {
   "claudeLogin.copyCommand": "コマンドをコピー",
   "claudeLogin.copied": "コピーしました",
   "claudeLogin.afterLoginHint": "ログインが完了したら、上の「数値を更新」を押して認証情報を再検出してください。",
+  "claudeToken.title": "Claude Code のトークンを貼り付け",
+  "claudeToken.hint":
+    "ターミナルが使えないときの代替手段です。sk-ant-oat01- で始まるトークンを貼り付けてください。Usage-Pulse はまず実際に利用量を取得し、成功した場合だけ保存します。",
+  "claudeToken.placeholder": "sk-ant-oat01-...",
+  "claudeToken.save": "検証して保存",
+  "claudeToken.saving": "検証中...",
+  "claudeToken.saved": "トークンは有効です。保存して数値を更新しました。",
+  "claudeToken.savedNoUsage": "トークンは有効で保存しました。まだ利用量の記録はありません。",
+  "claudeToken.stored": "有効なトークンを保存済みです（Keychain の認証情報が正常なときはそちらを優先します）。",
+  "claudeToken.clear": "保存したトークンを削除",
+  "claudeToken.cleared": "保存したトークンを削除しました",
+  "claudeToken.empty": "保存する前にトークンを貼り付けてください。",
+  "claudeToken.formatInvalid": "Claude の OAuth トークンではありません（sk-ant-oat01- で始まる必要があります）。検証は送信していません。",
+  "claudeToken.scopeInsufficient":
+    "このトークンには user:profile がなく利用量を取得できないため、保存しませんでした。claude setup-token のトークンは必ずこうなります。claude auth login を使ってください。",
+  "claudeToken.loginExpired": "Anthropic が 401 を返しました。このトークンは無効なので保存していません。",
+  "claudeToken.rateLimited": "現在レート制限中（429）のため検証できず、保存していません。しばらくしてからもう一度お試しください。",
+  "claudeToken.apiFailed": "Anthropic の利用量 API に接続できず、検証できなかったため保存していません。",
   "settings.claudeActivityPolling": "Claude Code CLI に動作があるときだけ取得",
   "settings.codexActivityPolling": "Codex CLI に動作があるときだけ取得",
   "water.title": "水分リマインダー",
@@ -714,7 +769,7 @@ const ja: Record<keyof typeof zh, string> = {
   "error.cursorStateDbTooLarge":
     "Cursor のローカルデータベースが異常に肥大化しており（約 {sizeMb} MB）、安全に読み込めません。Cursor を終了し、このファイルをバックアップして削除して Cursor に再作成させてください（Cursor への再ログインが必要です）：{dbPath}",
   "error.claudeLoginExpired":
-    "Claude Code の認証情報が無効になりました。「認証情報を取得」をクリックして再認証してください。",
+    "Claude Code の認証情報が無効になりました（Anthropic が 401 を返しました）。ターミナルで claude auth login を実行するか、下でトークンを貼り付けてください。",
   "error.claudeRateLimited": "Claude Code 利用量 API が一時的にレート制限中です。しばらくしてから再試行してください。",
   "error.claudeScopeInsufficient":
     "このトークンでは利用量を照会できません（setup-token は user:inference のみ、利用量 API は user:profile が必要）。ターミナルで claude を実行して通常ログインしてください。setup-token は再実行しないでください。",
@@ -858,6 +913,24 @@ const ko: Record<keyof typeof zh, string> = {
   "claudeLogin.copyCommand": "명령 복사",
   "claudeLogin.copied": "복사됨",
   "claudeLogin.afterLoginHint": "로그인을 마쳤다면 위의 \"값 업데이트\"를 눌러 자격 증명을 다시 감지하세요.",
+  "claudeToken.title": "Claude Code 토큰 붙여넣기",
+  "claudeToken.hint":
+    "터미널을 쓸 수 없을 때의 대비책입니다. sk-ant-oat01- 로 시작하는 토큰을 붙여넣으세요. Usage-Pulse가 먼저 실제로 사용량을 조회하고, 성공한 경우에만 저장합니다.",
+  "claudeToken.placeholder": "sk-ant-oat01-...",
+  "claudeToken.save": "확인 후 저장",
+  "claudeToken.saving": "확인 중...",
+  "claudeToken.saved": "토큰이 정상입니다. 저장하고 값을 업데이트했습니다.",
+  "claudeToken.savedNoUsage": "토큰이 정상이라 저장했습니다. 아직 기록된 사용량이 없습니다.",
+  "claudeToken.stored": "사용 가능한 토큰이 저장되어 있습니다(Keychain 자격 증명이 정상이면 그쪽을 우선합니다).",
+  "claudeToken.clear": "저장된 토큰 삭제",
+  "claudeToken.cleared": "저장된 토큰을 삭제했습니다",
+  "claudeToken.empty": "저장하기 전에 토큰을 붙여넣으세요.",
+  "claudeToken.formatInvalid": "Claude OAuth 토큰이 아닙니다(sk-ant-oat01- 로 시작해야 합니다). 확인 요청을 보내지 않았습니다.",
+  "claudeToken.scopeInsufficient":
+    "이 토큰에는 user:profile 권한이 없어 사용량을 조회할 수 없으므로 저장하지 않았습니다. claude setup-token으로 만든 토큰은 항상 이렇습니다. claude auth login을 사용하세요.",
+  "claudeToken.loginExpired": "Anthropic이 401을 반환했습니다. 이 토큰은 유효하지 않아 저장하지 않았습니다.",
+  "claudeToken.rateLimited": "현재 요청이 제한되어(429) 토큰을 확인할 수 없어 저장하지 않았습니다. 잠시 후 다시 시도하세요.",
+  "claudeToken.apiFailed": "Anthropic 사용량 API에 연결할 수 없어 토큰을 확인하지 못했고 저장하지 않았습니다.",
   "settings.claudeActivityPolling": "Claude Code CLI가 동작할 때만 가져오기",
   "settings.codexActivityPolling": "Codex CLI가 동작할 때만 가져오기",
   "water.title": "수분 알림",
@@ -984,7 +1057,8 @@ const ko: Record<keyof typeof zh, string> = {
     "Cursor 로컬 자격 증명을 읽을 수 없습니다. Cursor Desktop에 로그인되어 있는지 확인하세요.",
   "error.cursorStateDbTooLarge":
     "Cursor 로컬 데이터베이스가 비정상적으로 커져(약 {sizeMb} MB) 안전하게 불러올 수 없습니다. 먼저 Cursor를 종료하고 이 파일을 백업한 뒤 삭제하여 Cursor가 다시 생성하도록 하세요(Cursor에 다시 로그인해야 합니다): {dbPath}",
-  "error.claudeLoginExpired": "Claude Code 자격 증명이 유효하지 않습니다. '자격 증명 받기'를 클릭해 다시 인증하세요.",
+  "error.claudeLoginExpired":
+    "Claude Code 자격 증명이 유효하지 않습니다(Anthropic이 401을 반환). 터미널에서 claude auth login을 실행하거나 아래에 토큰을 붙여넣으세요.",
   "error.claudeRateLimited": "Claude Code 사용량 API가 일시적으로 제한되었습니다. 잠시 후 다시 시도하세요.",
   "error.claudeScopeInsufficient":
     "이 토큰으로는 사용량을 조회할 수 없습니다(setup-token은 user:inference만 있고 사용량 API는 user:profile이 필요함). 터미널에서 claude로 일반 로그인하세요. setup-token을 다시 실행하지 마세요.",

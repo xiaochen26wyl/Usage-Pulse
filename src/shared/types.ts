@@ -55,10 +55,11 @@ export interface QuotaSnapshot {
 
 export type ErrorCode = "claudeLoginExpired" | "claudeScopeInsufficient" | "claudeRateLimited" | "codexLoginExpired";
 
-// Which ranked source supplied the token a request used. Claude monitoring now
-// treats the macOS Keychain item as authoritative; Cursor's only source is its
-// local state database; Codex is the CLI auth file or OS keyring.
-export type CredentialSource = "keychain" | "cursorStateDb" | "codexAuthFile" | "codexKeyring";
+// Which ranked source supplied the token a request used. Claude monitoring
+// treats the macOS Keychain item as authoritative and falls back to a token the
+// user pasted into the app ("manualToken"); Cursor's only source is its local
+// state database; Codex is the CLI auth file or OS keyring.
+export type CredentialSource = "keychain" | "cursorStateDb" | "codexAuthFile" | "manualToken" | "codexKeyring";
 
 export interface CombinedSnapshot {
   cursor: QuotaSnapshot;
@@ -152,10 +153,16 @@ export interface AppSettings {
   // Stored encrypted and never handed back to a renderer in cleartext — see
   // LINE_TOKEN_MASK.
   lineChannelAccessToken: string;
+  // A Claude OAuth token the user pasted into the app, used only when the CLI's
+  // own Keychain credential is missing or expired. Stored encrypted and never
+  // handed back to a renderer in cleartext - see CLAUDE_TOKEN_MASK. Nothing is
+  // written here unless it has already proved it can read the usage API, so a
+  // stored value is one that worked at least once.
+  claudeManualToken: string;
   // Poll Claude Code only when its CLI has actually been active since the last
   // successful fetch. Idle ticks skip the request but keep the normal interval.
   claudeUseCliActivityPolling: boolean;
-  // Same idea as Claude: skip the Codex usage API while the CLI session dir
+  // Optional Codex traffic saver: skip the usage API while the CLI session dir
   // has been idle since the last successful fetch.
   codexUseCliActivityPolling: boolean;
   // Drink-water reminder: interval from launch (or last response) and the cup
@@ -204,6 +211,11 @@ export interface SessionStats {
 // anyone holding it can broadcast to the user's official account — so the
 // renderer, which only needs to know whether one is stored, gets this instead.
 export const LINE_TOKEN_MASK = "__stored__";
+
+// Same contract as LINE_TOKEN_MASK, for the manually pasted Claude token: what
+// settings:get hands the renderer in place of the real value, and what
+// settings:save strips back out so the mask can never overwrite the secret.
+export const CLAUDE_TOKEN_MASK = "__stored__";
 
 export interface MonitorResult {
   snapshot: CombinedSnapshot;
@@ -328,5 +340,24 @@ export interface AlarmStatusReport {
 // claudeLoginExpired so the renderer can flip the button back to login.
 export interface ManualQuotaResult {
   ok: boolean;
+  message: string;
+}
+
+// Why a pasted Claude token was refused. Every one of these means nothing was
+// stored: a token only earns a place in settings by proving, right there, that
+// it can read the usage API.
+export type ClaudeTokenRejectCode =
+  | "empty"
+  | "formatInvalid"
+  | "loginExpired"
+  | "scopeInsufficient"
+  | "rateLimited"
+  | "apiFailed";
+
+// Outcome of "validate this pasted token, and store it only if it works".
+// `message` is localized and safe to render as-is.
+export interface ClaudeTokenSaveResult {
+  ok: boolean;
+  code?: ClaudeTokenRejectCode;
   message: string;
 }

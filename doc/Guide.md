@@ -46,24 +46,49 @@
 #### Re-detecting a Claude Code credential
 On startup, `credentialMonitor.checkAll()` reads the official, read-only
 `Claude Code-credentials` Keychain item. The startup usage pass then calls the
-usage API once so the interface reflects the stored credential immediately. If
-Keychain is missing, or the usage API returns `claudeLoginExpired`, the Claude
-card shows **Get Credentials**.
+usage API once so the interface reflects the stored credential immediately.
 
-Usage-Pulse deliberately does not spawn the `claude` CLI or implement any OAuth
-flow of its own. `claude setup-token`'s authorize request only ever asks for the
+**One gate decides whether the card offers a way to fix the credential: whether
+the last fetch produced quota windows to display.** Not `CredentialState`, not
+an expiry timestamp, not the presence of a Keychain item. Those are inferred
+locally and have repeatedly disagreed with what the usage API actually does —
+which is how the card once showed "click Get Credentials" on a screen that
+rendered no such button. `App.tsx` passes `barWindows.length > 0` into
+`renderCredentialRow`, and `renderClaudeCredentialBlock` renders whenever it is
+false. The explanation above the block still comes from what the fetch really
+returned (`claudeNoDataReasonKey`), so a 429 reads as rate limiting and a 200
+with no usage reads as "nothing recorded yet" rather than as a broken login.
+
+The block offers two routes:
+
+1. **`claude auth login` in the user's own terminal** — the preferred one, and
+   the only one that yields a credential the CLI keeps refreshed. Usage-Pulse
+   deliberately does not spawn the `claude` CLI or implement any OAuth flow of
+   its own; the official CLI opens its own browser page and writes
+   `Claude Code-credentials` itself. **Get Credentials** on the card re-reads
+   Keychain afterwards (`auth:check`), and **Update Values** re-fetches usage.
+2. **Pasting a token into the card** — a fallback for when no terminal is at
+   hand. `claude:save-token` verifies it by calling
+   `collectClaudeCodeQuotaFromToken` with it *before* storing anything;
+   `classifyClaudeTokenProbe` (`src/main/claude-manual-token.ts`) turns that
+   attempt into store-or-refuse. A token that cannot read usage is never
+   stored, and the refusal names the reason that actually occurred. A 200 with
+   no quota windows counts as success — the token answered the API, which is
+   the whole test. The value lives in `AppSettings.claudeManualToken`,
+   encrypted at rest by `safeStorage` through `SECRET_SETTINGS_KEYS`, and is
+   masked as `CLAUDE_TOKEN_MASK` before `settings:get` returns. No Keychain
+   item is written for it.
+
+`readClaudeCredential` ranks these: the Keychain credential while it is
+unexpired, then the pasted token, then the expired Keychain credential (so the
+API's own 401 surfaces instead of a misleading "no credential found").
+
+`claude setup-token`'s authorize request only ever asks for the
 `user:inference` scope — a hard limitation of the official CLI, confirmed in
 `anthropics/claude-code#22450` / `#11985` and unrelated to how the token is
-obtained — so any workflow built around it can never satisfy the usage API's
-`user:profile` requirement. Only `claude auth login` (the CLI's normal
-interactive login) requests `user:profile`. Clicking **Get Credentials**
-therefore just opens `https://claude.ai/login` for the user, and Settings shows
-a "copy `claude auth login`" button plus instructions to run it in a terminal.
-The user completes that login entirely outside Usage-Pulse — the official CLI
-opens its own browser page and writes `Claude Code-credentials` itself — then
-clicks **Update Values** to re-read Keychain and fetch usage. If Keychain
-already holds a credential when **Get Credentials** is clicked, the app skips
-straight to a quota refresh instead of reopening the login page.
+obtained — so such a token cannot satisfy the usage API's `user:profile`
+requirement. Pasting one is refused with exactly that explanation rather than
+being stored and failing silently later.
 
 A leftover `Usage-Pulse-Claude-setup-token` Keychain item from the retired
 setup-token flow (pre-System-1) is removed once on startup, since it could only
@@ -115,11 +140,11 @@ Usage-Pulse deliberately keeps its request volume to Anthropic low.
 ### Codex polling
 
 Codex does not share Claude/Cursor's fast/normal schedule. It polls on a
-single fixed cadence — every 5 minutes (`CODEX_POLL_INTERVAL_MS`) — with no
+single fixed cadence — every minute (`CODEX_POLL_INTERVAL_MS`) — with no
 separate minimum-gap floor, since the fixed interval already is the floor.
-`codexUseCliActivityPolling` (on by default) still applies on top of that: if
-neither the Codex CLI's session logs nor its credential have changed since the
-last fetch, that tick is skipped and no request is made.
+`codexUseCliActivityPolling` is an optional traffic saver (off by default). If
+the user turns it on, neither the Codex CLI's session logs nor its credential
+changing since the last fetch means that tick is skipped and no request is made.
 
 ### Completed features
 - Electron + React + TypeScript project skeleton (Electron `^43.4.1`)
@@ -203,7 +228,7 @@ Two failure modes of the old reset alert are fixed here:
 - OAuth tokens are only held briefly in memory.
 - Writing to `state.vscdb` or `.credentials.json` is forbidden.
 - Claude Code credentials are entirely read-only: Usage-Pulse never spawns the `claude` CLI, never implements OAuth itself, and never writes to the official `Claude Code-credentials` Keychain item. The only Keychain write it ever performs is a one-time, best-effort deletion of the retired `Usage-Pulse-Claude-setup-token` item left over from the old setup-token flow.
-- **Get Credentials** only opens `https://claude.ai/login` via `shell.openExternal`; the user completes `claude auth login` entirely in their own terminal, outside the app.
+- **Get Credentials** only re-reads the Keychain item; the user completes `claude auth login` entirely in their own terminal, outside the app. A token pasted into the card is verified against the usage API before it is stored, and lives in `electron-store` under `safeStorage` encryption — never in a Keychain item.
 - On a 401 or missing quota data, return an actionable error message; never perform automatic token refresh.
 
 ### Development and packaging
@@ -280,19 +305,37 @@ Two failure modes of the old reset alert are fixed here:
 #### 重新偵測 Claude Code 憑證
 啟動時，`credentialMonitor.checkAll()` 會以唯讀方式檢查官方的
 `Claude Code-credentials` 項目。接著 startup usage pass 會打一次 usage API，讓介面立刻反映
-已存憑證的數值。若 Keychain 沒有憑證，或 usage API 回 `claudeLoginExpired`，Claude
-卡片會顯示「獲取憑證」。
+已存憑證的數值。
 
-Usage-Pulse 刻意不 spawn `claude` CLI，也不自己實作任何 OAuth 流程。`claude
-setup-token` 的授權請求天生只會要求 `user:inference` scope——這是官方 CLI 本身
-的限制（見 `anthropics/claude-code#22450` / `#11985`），跟呼叫方式無關，任何圍繞它
-建的流程都不可能滿足 usage API 需要的 `user:profile`。只有 `claude auth login`
-（CLI 的一般互動登入）會要求 `user:profile`。因此點擊「獲取憑證」只會用
-`shell.openExternal` 打開 `https://claude.ai/login`，Settings 同時顯示複製
-`claude auth login` 指令的按鈕與說明，請使用者在自己的終端機執行。整個登入完全
-在 Usage-Pulse 之外完成——官方 CLI 自己開瀏覽器、自己寫入 `Claude Code-credentials`
-——使用者完成後點「更新數值」重新讀取 Keychain 並抓用量。若點擊「獲取憑證」時
-Keychain 已經有憑證，App 會直接更新用量，不會再打開登入頁。
+**卡片要不要給出修復憑證的路，只由一件事決定：這次抓取有沒有拿到可顯示的配額。**
+不看 `CredentialState`、不看到期時間、不看 Keychain 項目在不在。那些都是本機推論出來的，
+而且一再與 usage API 的實際行為不一致——卡片曾經因此在一個根本沒有渲染該按鈕的畫面上，
+叫使用者「請點獲取憑證」。`App.tsx` 把 `barWindows.length > 0` 傳進
+`renderCredentialRow`，只要是 false 就渲染 `renderClaudeCredentialBlock`。
+區塊上方的原因文字仍取自這次抓取真正的結果（`claudeNoDataReasonKey`），所以 429 會說是被限流、
+200 但沒有用量會說是還沒有紀錄，而不是一律推給登入失效。
+
+區塊提供兩條路：
+
+1. **在使用者自己的終端機執行 `claude auth login`**——首選，也是唯一能拿到「CLI 會自動續期」
+   憑證的方式。Usage-Pulse 刻意不 spawn `claude` CLI，也不自己實作任何 OAuth 流程；
+   官方 CLI 自己開瀏覽器、自己寫入 `Claude Code-credentials`。之後卡片上的「獲取憑證」
+   負責重讀 Keychain（`auth:check`），「更新數值」負責重抓用量。
+2. **直接在卡片貼上 token**——手邊沒有終端機時的備援。`claude:save-token` 會先用這個 token
+   呼叫 `collectClaudeCodeQuotaFromToken` 實際驗證，**驗證通過才儲存**；
+   `classifyClaudeTokenProbe`（`src/main/claude-manual-token.ts`）負責把這次嘗試轉成
+   「存」或「拒絕並說明原因」。查不到用量的 token 一律不存，拒絕訊息會指出真正發生的原因。
+   200 但沒有配額視窗算成功——token 有回應 usage API，這正是要測的東西。值存在
+   `AppSettings.claudeManualToken`，經 `SECRET_SETTINGS_KEYS` 由 `safeStorage` 加密落地，
+   `settings:get` 回傳前遮罩成 `CLAUDE_TOKEN_MASK`。不會為它寫入任何 Keychain 項目。
+
+`readClaudeCredential` 的排序：Keychain 憑證未過期時優先，其次是貼上的 token，
+最後才是已過期的 Keychain 憑證（讓 API 自己回 401，而不是誤報「找不到憑證」）。
+
+`claude setup-token` 的授權請求天生只會要求 `user:inference` scope——這是官方 CLI 本身
+的限制（見 `anthropics/claude-code#22450` / `#11985`），跟呼叫方式無關，因此這種 token
+無法滿足 usage API 需要的 `user:profile`。貼上它會被以這個理由當場拒絕，而不是先存起來、
+之後再默默失敗。
 
 啟動時會一次性靜默刪除舊 setup-token 流程（System 1 之前）留下的
 `Usage-Pulse-Claude-setup-token` Keychain 項目，因為它天生只可能裝著
@@ -335,11 +378,11 @@ Usage-Pulse 刻意把送往 Anthropic 的請求次數壓到最低。
 
 ### Codex 輪詢
 
-Codex 不套用 Claude/Cursor 的正常/低額度雙檔排程，而是走單一固定間隔——每 5
+Codex 不套用 Claude/Cursor 的正常/低額度雙檔排程，而是走單一固定間隔——每 1
 分鐘一次（`CODEX_POLL_INTERVAL_MS`），沒有獨立的最短間隔 floor，因為固定間隔本身
-就是 floor。`codexUseCliActivityPolling`（預設開啟）仍然會疊加在上面：若 Codex
-CLI 的 session 紀錄與憑證自上次抓取以來都沒有動靜，這次 tick 就會跳過，不打
-API。
+就是 floor。`codexUseCliActivityPolling` 是可選的省流量模式（預設關閉）：若使用者
+手動開啟，且 Codex CLI 的 session 紀錄與憑證自上次抓取以來都沒有動靜，這次 tick
+就會跳過，不打 API。
 
 ### 已完成功能
 - Electron + React + TypeScript 專案骨架（Electron `^43.4.1`）
@@ -403,7 +446,7 @@ Cursor 是「到期提醒」（本期 `billingCycleEnd`，用量重設與計費�
 - OAuth token 僅在記憶體中短暫使用。
 - 禁止寫入 `state.vscdb`、`.credentials.json`。
 - Claude Code 憑證完全唯讀：Usage-Pulse 不 spawn `claude` CLI、不自己實作 OAuth，也不寫入官方的 `Claude Code-credentials` Keychain 項目。唯一會做的 Keychain 寫入，是啟動時一次性、盡力刪除舊 setup-token 流程留下的 `Usage-Pulse-Claude-setup-token` 項目。
-- 「獲取憑證」只會用 `shell.openExternal` 打開 `https://claude.ai/login`；使用者完全在自己的終端機執行 `claude auth login` 完成登入，App 不參與。
+- 「獲取憑證」只負責重讀 Keychain 項目；使用者完全在自己的終端機執行 `claude auth login` 完成登入，App 不參與。貼進卡片的 token 會先對 usage API 驗證通過才儲存，並存在 `electron-store` 內由 `safeStorage` 加密，不會寫成 Keychain 項目。
 - 發生 401 / 配額資料缺失時，回傳可行動的錯誤訊息，不做自動 token refresh。
 
 ### 開發與打包

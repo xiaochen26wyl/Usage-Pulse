@@ -400,8 +400,49 @@ export const readCursorCredential = async (): Promise<RawCredential> => {
   return readCursorCredentialFromStateDb();
 };
 
+/**
+ * A token the user pasted into the app, if one is stored. Loaded lazily for the
+ * same reason as currentLanguage: this module stays importable without Electron.
+ *
+ * Nothing reaches this store until it has already answered the usage API once
+ * (see claude-manual-token.ts), so a stored value is a token that demonstrably
+ * worked rather than one that merely looked plausible.
+ */
+const readClaudeManualCredential = async (): Promise<RawCredential | null> => {
+  const { settingsStore } = await import("@main/store");
+  const token = settingsStore.get().claudeManualToken?.trim();
+  if (!token || !isClaudeOAuthToken(token)) {
+    return null;
+  }
+  return toCredential(token, null, "manualToken");
+};
+
+const hasExpired = (credential: RawCredential): boolean =>
+  credential.expiresAt !== null && Date.parse(credential.expiresAt) <= Date.now();
+
+/**
+ * Ranked, with the official CLI credential first: it is the one the Claude Code
+ * CLI keeps refreshed, and it is the only one that is guaranteed to carry
+ * `user:profile`.
+ *
+ * The manual token is a fallback for exactly one situation — the CLI credential
+ * is absent or has gone stale (the user hasn't run Claude Code in a while, so
+ * nothing has refreshed it, and Usage-Pulse is read-only and cannot refresh it
+ * itself). When both are unusable we still hand back the Keychain one rather
+ * than reporting "missing": letting the API return its own 401 tells the user
+ * the truth, where a local "no credential found" would not.
+ */
 export const readClaudeCredential = async (): Promise<RawCredential> => {
   const fromKeychain = await peekClaudeKeychainCredential();
+  if (fromKeychain && !hasExpired(fromKeychain)) {
+    return fromKeychain;
+  }
+
+  const manual = await readClaudeManualCredential();
+  if (manual) {
+    return manual;
+  }
+
   if (fromKeychain) {
     return fromKeychain;
   }

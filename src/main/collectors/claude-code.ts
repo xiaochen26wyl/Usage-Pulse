@@ -83,6 +83,9 @@ export class ClaudeLoginExpiredError extends Error {
     readonly source: CredentialSource
   ) {
     super(message);
+    // Named like its siblings so callers outside this module can classify it
+    // without importing the class — see claude-manual-token.ts.
+    this.name = "ClaudeLoginExpiredError";
   }
 }
 
