@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Usage-Pulse is a cross-platform desktop menu bar tool that monitors Cursor, Claude Code, and Codex quotas, sending notifications when quota changes, runs low, or resets.
+Usage-Pulse is a cross-platform desktop menu bar tool that monitors Cursor, Claude Code, and Codex quotas, sending notifications when quota changes, runs low, or resets.  
 Usage-Pulse 是跨平台桌面選單列工具，監控 Cursor、Claude Code 與 Codex 配額，在配額變化、額度偏低、或重置時發送通知。
 
 It only reads credentials you're already logged in with locally and official usage data — it never writes back to any IDE's credential or config files.
