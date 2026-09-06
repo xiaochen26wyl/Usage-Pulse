@@ -8,6 +8,15 @@ Language / 語言：[English](#english) | [繁體中文](#繁體中文)
 
 All notable changes to Usage-Pulse are documented in this file.
 
+### [2.0.1] - 2026-09-06
+
+#### Changed
+- Codex quota card now shows extra windows (for example code-review limits) and remaining credits when the API reports them.
+
+#### Fixed
+- Codex 5-hour and weekly windows are classified by duration, not backend slot names like `primary_window`, so a weekly window is no longer mislabeled as the 5-hour session.
+- Cached Codex snapshots are normalized on read and write, so an older mislabeled window is repaired the next time the app loads it.
+
 ### [2.0.0] - 2026-09-03
 
 #### Added
@@ -40,6 +49,15 @@ All notable changes to Usage-Pulse are documented in this file.
 ## 繁體中文
 
 本檔案記錄 Usage-Pulse 所有重要版本變更。
+
+### [2.0.1] - 2026-09-06
+
+#### 變更
+- Codex 配額卡片會顯示額外視窗（例如 code-review 限額）以及 API 回報的剩餘 credits。
+
+#### 修復
+- Codex 的 5 小時與每週視窗改依時長分類，不再被 `primary_window` 這類後端槽位名稱誤標，避免把每週視窗顯示成 5 小時 session。
+- 讀取與寫入快取時會正規化 Codex snapshot，下次載入即可修正舊的錯誤標籤。
 
 ### [2.0.0] - 2026-09-03
 

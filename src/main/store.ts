@@ -15,6 +15,7 @@ import type {
   TrayValueColorMode
 } from "@shared/types";
 import { DEFAULT_SETTINGS } from "@main/config";
+import { normalizeCodexSnapshot } from "@shared/codex-usage";
 import { clampWaterReminderMinutes, normalizeWaterCupSize } from "@shared/water";
 import { migrateLaunchWithIde } from "@main/ide-presence";
 import { decryptSecret, encryptSecret } from "@main/secure-store";
@@ -216,10 +217,11 @@ const hydrateCombinedSnapshot = (raw: CombinedSnapshot | null): CombinedSnapshot
     return null;
   }
   const fetchedAt = raw.fetchedAt || "";
+  const lang = readSettings().language;
   return {
     cursor: raw.cursor ?? emptyQuotaSnapshot("cursor", fetchedAt),
     claude: raw.claude ?? emptyQuotaSnapshot("claude", fetchedAt),
-    codex: raw.codex ?? emptyQuotaSnapshot("codex", fetchedAt),
+    codex: normalizeCodexSnapshot(raw.codex ?? emptyQuotaSnapshot("codex", fetchedAt), lang),
     fetchedAt
   };
 };
@@ -229,7 +231,11 @@ export const snapshotStore = {
     return hydrateCombinedSnapshot(store.get("lastSnapshot"));
   },
   set(snapshot: CombinedSnapshot): void {
-    store.set("lastSnapshot", snapshot);
+    const lang = readSettings().language;
+    store.set("lastSnapshot", {
+      ...snapshot,
+      codex: normalizeCodexSnapshot(snapshot.codex, lang)
+    });
   }
 };
 

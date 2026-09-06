@@ -1,4 +1,4 @@
-import type { Language, QuotaWindow, ScrapeResult } from "./types";
+import type { Language, QuotaSnapshot, QuotaWindow, ScrapeResult } from "./types";
 import { t } from "./i18n";
 import { clampPercent, toIsoTime, toPercentField } from "./claude-usage";
 
@@ -59,6 +59,21 @@ const usedPercentOf = (raw: Record<string, unknown>): number | null =>
   toPercentField(raw.utilization) ??
   toPercentField(raw.percentUsed);
 
+const resetSecondsRemainingOf = (raw: Record<string, unknown>, nowMs: number): number | null => {
+  const direct =
+    toIsoTime(raw.reset_at) ??
+    toIsoTime(raw.resetAt) ??
+    toIsoTime(raw.resets_at) ??
+    toIsoTime(raw.resetsAt);
+  if (direct) {
+    const diffSeconds = (Date.parse(direct) - nowMs) / 1000;
+    return Number.isFinite(diffSeconds) && diffSeconds >= 0 ? diffSeconds : null;
+  }
+  const afterSeconds =
+    toNumber(raw.reset_after_seconds) ?? toNumber(raw.resetAfterSeconds) ?? toNumber(raw.reset_after);
+  return afterSeconds !== null && afterSeconds >= 0 ? afterSeconds : null;
+};
+
 const resetsAtOf = (raw: Record<string, unknown>, nowMs: number): string | null => {
   const direct =
     toIsoTime(raw.reset_at) ??
@@ -79,7 +94,22 @@ const resetsAtOf = (raw: Record<string, unknown>, nowMs: number): string | null 
 const rawNameOf = (raw: Record<string, unknown>): string =>
   `${raw.name ?? raw.id ?? raw.type ?? raw.model ?? raw.window ?? raw.limit ?? raw.key ?? ""}`.trim();
 
-export const classifyCodexWindowKey = (seconds: number | null, rawName: string, usedSlot: "session" | "weekly" | null): string => {
+const isPrimaryWindowName = (name: string): boolean => {
+  const normalized = name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  return normalized === "primary" || normalized === "primary_window";
+};
+
+const isSecondaryWindowName = (name: string): boolean => {
+  const normalized = name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  return normalized === "secondary" || normalized === "secondary_window";
+};
+
+export const classifyCodexWindowKey = (
+  seconds: number | null,
+  rawName: string,
+  usedSlot: "session" | "weekly" | null,
+  resetSecondsRemaining: number | null = null
+): string => {
   if (seconds !== null) {
     if (nearSeconds(seconds, SESSION_WINDOW_SECONDS) && usedSlot !== "session") {
       return "session";
@@ -88,16 +118,25 @@ export const classifyCodexWindowKey = (seconds: number | null, rawName: string, 
       return "weekly";
     }
   }
+  if (
+    seconds === null &&
+    resetSecondsRemaining !== null &&
+    resetSecondsRemaining > SESSION_WINDOW_SECONDS * (1 + DURATION_TOLERANCE) &&
+    usedSlot !== "weekly" &&
+    (isPrimaryWindowName(rawName) || isSecondaryWindowName(rawName))
+  ) {
+    return "weekly";
+  }
   const lower = rawName.toLowerCase();
   if (usedSlot !== "session") {
-    if (lower.includes("five_hour") || lower.includes("five-hour") || lower.includes("5h") || lower === "primary") {
+    if (lower.includes("five_hour") || lower.includes("five-hour") || lower.includes("5h") || isPrimaryWindowName(rawName)) {
       if (seconds === null || nearSeconds(seconds, SESSION_WINDOW_SECONDS)) {
         return "session";
       }
     }
   }
   if (usedSlot !== "weekly") {
-    if (lower.includes("seven_day") || lower.includes("weekly") || lower.includes("7d") || lower === "secondary") {
+    if (lower.includes("seven_day") || lower.includes("weekly") || lower.includes("7d") || isSecondaryWindowName(rawName)) {
       if (seconds === null || nearSeconds(seconds, WEEKLY_WINDOW_SECONDS)) {
         return "weekly";
       }
@@ -144,13 +183,14 @@ const parseWindowObject = (
 ): CodexNormalizedWindow | null => {
   const usedPercent = usedPercentOf(raw);
   const seconds = windowSeconds(raw);
+  const resetSecondsRemaining = resetSecondsRemainingOf(raw, nowMs);
   const rawName = rawNameOf(raw);
   if (usedPercent === null && seconds === null && !rawName) {
     return null;
   }
 
   const reserved: "session" | "weekly" | null = usedSlot.session ? "session" : usedSlot.weekly ? "weekly" : null;
-  let key = classifyCodexWindowKey(seconds, rawName, reserved);
+  let key = classifyCodexWindowKey(seconds, rawName, reserved, resetSecondsRemaining);
   if (key === "session" && usedSlot.session) {
     key = slugFromName(rawName || `window_${seconds ?? "x"}`);
   }
@@ -170,6 +210,65 @@ const parseWindowObject = (
     usedPercent,
     resetsAt: resetsAtOf(raw, nowMs),
     windowSeconds: seconds
+  };
+};
+
+const isBackendSlotName = (name: string): boolean => isPrimaryWindowName(name) || isSecondaryWindowName(name);
+
+const resetSecondsRemainingFromIso = (resetsAt: string | null, nowMs: number): number | null => {
+  if (!resetsAt) {
+    return null;
+  }
+  const diffSeconds = (Date.parse(resetsAt) - nowMs) / 1000;
+  return Number.isFinite(diffSeconds) && diffSeconds >= 0 ? diffSeconds : null;
+};
+
+export const normalizeCodexSnapshot = (
+  snapshot: QuotaSnapshot,
+  lang: Language,
+  nowMs = Date.now()
+): QuotaSnapshot => {
+  const usedSlot = { session: false, weekly: false };
+  const windows: QuotaWindow[] = [];
+
+  for (const window of snapshot.windows ?? []) {
+    const rawName = window.key || window.label;
+    const reserved: "session" | "weekly" | null = usedSlot.session ? "session" : usedSlot.weekly ? "weekly" : null;
+    const normalizedKey = classifyCodexWindowKey(
+      null,
+      rawName,
+      reserved,
+      resetSecondsRemainingFromIso(window.resetsAt, nowMs)
+    );
+    const rawWasBackendSlot = isBackendSlotName(rawName);
+    const key = rawWasBackendSlot ? normalizedKey : window.key;
+    if ((key === "session" || key === "weekly") && usedSlot[key]) {
+      continue;
+    }
+    if (key === "session") {
+      usedSlot.session = true;
+    } else if (key === "weekly") {
+      usedSlot.weekly = true;
+    }
+    windows.push({
+      ...window,
+      key,
+      label: rawWasBackendSlot ? labelForKey(key, rawName, lang) : window.label
+    });
+  }
+
+  const session = windows.find((window) => window.key === "session") ?? null;
+  const weekly = windows.find((window) => window.key === "weekly") ?? null;
+  const remaining = session?.remaining ?? weekly?.remaining ?? snapshot.remaining;
+
+  return {
+    ...snapshot,
+    remaining,
+    total: remaining === null ? snapshot.total : (session?.total ?? weekly?.total ?? snapshot.total),
+    percent: remaining ?? snapshot.percent,
+    resetsAt: session?.resetsAt ?? null,
+    weeklyResetAt: weekly?.resetsAt ?? snapshot.weeklyResetAt ?? null,
+    windows
   };
 };
 

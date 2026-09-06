@@ -65,8 +65,11 @@ The block offers two routes:
    the only one that yields a credential the CLI keeps refreshed. Usage-Pulse
    deliberately does not spawn the `claude` CLI or implement any OAuth flow of
    its own; the official CLI opens its own browser page and writes
-   `Claude Code-credentials` itself. **Get Credentials** on the card re-reads
-   Keychain afterwards (`auth:check`), and **Update Values** re-fetches usage.
+   `Claude Code-credentials` itself. Afterwards **Update Values** is all that is
+   needed: it re-fetches usage and re-reads Keychain in the same pass
+   (`monitor:run-manual` runs `credentialMonitor.check`). The Claude card
+   deliberately no longer carries a separate **Get Credentials** button — that
+   button's work is already covered by **Update Values**.
 2. **Pasting a token into the card** — a fallback for when no terminal is at
    hand. `claude:save-token` verifies it by calling
    `collectClaudeCodeQuotaFromToken` with it *before* storing anything;
@@ -78,6 +81,13 @@ The block offers two routes:
    encrypted at rest by `safeStorage` through `SECRET_SETTINGS_KEYS`, and is
    masked as `CLAUDE_TOKEN_MASK` before `settings:get` returns. No Keychain
    item is written for it.
+
+   Automatic Keychain detection is macOS-only (`peekClaudeKeychainCredential`
+   returns `null` on every other platform), so the renderer only renders this
+   input on macOS when a token is already stored there (so it stays visible
+   and clearable) — otherwise it always shows on Windows/Linux, since pasting
+   a token is the only way to supply a Claude Code credential on those
+   platforms.
 
 `readClaudeCredential` ranks these: the Keychain credential while it is
 unexpired, then the pasted token, then the expired Keychain credential (so the
@@ -228,7 +238,7 @@ Two failure modes of the old reset alert are fixed here:
 - OAuth tokens are only held briefly in memory.
 - Writing to `state.vscdb` or `.credentials.json` is forbidden.
 - Claude Code credentials are entirely read-only: Usage-Pulse never spawns the `claude` CLI, never implements OAuth itself, and never writes to the official `Claude Code-credentials` Keychain item. The only Keychain write it ever performs is a one-time, best-effort deletion of the retired `Usage-Pulse-Claude-setup-token` item left over from the old setup-token flow.
-- **Get Credentials** only re-reads the Keychain item; the user completes `claude auth login` entirely in their own terminal, outside the app. A token pasted into the card is verified against the usage API before it is stored, and lives in `electron-store` under `safeStorage` encryption — never in a Keychain item.
+- Re-reading a credential (`auth:check`) only reads the Keychain item, never writes to it; the user completes `claude auth login` entirely in their own terminal, outside the app. A token pasted into the card is verified against the usage API before it is stored, and lives in `electron-store` under `safeStorage` encryption — never in a Keychain item.
 - On a 401 or missing quota data, return an actionable error message; never perform automatic token refresh.
 
 ### Development and packaging
@@ -319,8 +329,10 @@ Two failure modes of the old reset alert are fixed here:
 
 1. **在使用者自己的終端機執行 `claude auth login`**——首選，也是唯一能拿到「CLI 會自動續期」
    憑證的方式。Usage-Pulse 刻意不 spawn `claude` CLI，也不自己實作任何 OAuth 流程；
-   官方 CLI 自己開瀏覽器、自己寫入 `Claude Code-credentials`。之後卡片上的「獲取憑證」
-   負責重讀 Keychain（`auth:check`），「更新數值」負責重抓用量。
+   官方 CLI 自己開瀏覽器、自己寫入 `Claude Code-credentials`。之後按卡片上的「更新數值」
+   即可：它會重抓用量，並在同一次流程中重讀 Keychain（`monitor:run-manual` 內含
+   `credentialMonitor.check`）。Claude 卡片刻意不再另外給一顆「獲取憑證」——
+   它做的事已被「更新數值」完整涵蓋。
 2. **直接在卡片貼上 token**——手邊沒有終端機時的備援。`claude:save-token` 會先用這個 token
    呼叫 `collectClaudeCodeQuotaFromToken` 實際驗證，**驗證通過才儲存**；
    `classifyClaudeTokenProbe`（`src/main/claude-manual-token.ts`）負責把這次嘗試轉成
@@ -328,6 +340,11 @@ Two failure modes of the old reset alert are fixed here:
    200 但沒有配額視窗算成功——token 有回應 usage API，這正是要測的東西。值存在
    `AppSettings.claudeManualToken`，經 `SECRET_SETTINGS_KEYS` 由 `safeStorage` 加密落地，
    `settings:get` 回傳前遮罩成 `CLAUDE_TOKEN_MASK`。不會為它寫入任何 Keychain 項目。
+
+   自動偵測 Keychain 只支援 macOS（`peekClaudeKeychainCredential` 在其他平台恆回傳
+   `null`），所以 renderer 只在 macOS 上、且已經存有舊 token 時才畫出這個輸入框（讓它保持
+   看得到、可以清除）；在 Windows／Linux 上則一律顯示，因為貼上 token 是那些平台上
+   唯一能提供 Claude Code 憑證的方式。
 
 `readClaudeCredential` 的排序：Keychain 憑證未過期時優先，其次是貼上的 token，
 最後才是已過期的 Keychain 憑證（讓 API 自己回 401，而不是誤報「找不到憑證」）。
@@ -446,7 +463,7 @@ Cursor 是「到期提醒」（本期 `billingCycleEnd`，用量重設與計費�
 - OAuth token 僅在記憶體中短暫使用。
 - 禁止寫入 `state.vscdb`、`.credentials.json`。
 - Claude Code 憑證完全唯讀：Usage-Pulse 不 spawn `claude` CLI、不自己實作 OAuth，也不寫入官方的 `Claude Code-credentials` Keychain 項目。唯一會做的 Keychain 寫入，是啟動時一次性、盡力刪除舊 setup-token 流程留下的 `Usage-Pulse-Claude-setup-token` 項目。
-- 「獲取憑證」只負責重讀 Keychain 項目；使用者完全在自己的終端機執行 `claude auth login` 完成登入，App 不參與。貼進卡片的 token 會先對 usage API 驗證通過才儲存，並存在 `electron-store` 內由 `safeStorage` 加密，不會寫成 Keychain 項目。
+- 憑證重讀（`auth:check`）只讀取 Keychain 項目，不寫入；使用者完全在自己的終端機執行 `claude auth login` 完成登入，App 不參與。貼進卡片的 token 會先對 usage API 驗證通過才儲存，並存在 `electron-store` 內由 `safeStorage` 加密，不會寫成 Keychain 項目。
 - 發生 401 / 配額資料缺失時，回傳可行動的錯誤訊息，不做自動 token refresh。
 
 ### 開發與打包

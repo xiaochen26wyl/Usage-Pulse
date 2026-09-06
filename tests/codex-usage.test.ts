@@ -1,14 +1,105 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildCodexScrapeResult, classifyCodexWindowKey, extractCodexWindows, formatCodexCreditsText } from "../src/shared/codex-usage";
+import type { QuotaSnapshot } from "../src/shared/types";
+import {
+  buildCodexScrapeResult,
+  classifyCodexWindowKey,
+  extractCodexWindows,
+  formatCodexCreditsText,
+  normalizeCodexSnapshot
+} from "../src/shared/codex-usage";
 
 const NOW = Date.parse("2026-08-29T02:00:00.000Z");
 
 test("classifyCodexWindowKey uses duration, not slot names", () => {
   assert.equal(classifyCodexWindowKey(18_000, "primary", null), "session");
+  assert.equal(classifyCodexWindowKey(null, "primary_window", null), "session");
+  assert.equal(classifyCodexWindowKey(null, "primary_window", null, 604_500), "weekly");
   assert.equal(classifyCodexWindowKey(604_800, "secondary", null), "weekly");
+  assert.equal(classifyCodexWindowKey(null, "secondary_window", null), "weekly");
   assert.equal(classifyCodexWindowKey(604_800, "something_else", null), "weekly");
   assert.equal(classifyCodexWindowKey(86_400, "code_review", null), "code_review");
+});
+
+test("extractCodexWindows normalizes backend primary_window and secondary_window keys", () => {
+  const windows = extractCodexWindows(
+    {
+      rate_limit: {
+        primary_window: {
+          used_percent: 40,
+          reset_after_seconds: 3_600
+        },
+        secondary_window: {
+          used_percent: 12,
+          reset_after_seconds: 86_400
+        }
+      }
+    },
+    "en",
+    NOW
+  );
+
+  assert.deepEqual(
+    windows.map((window) => window.key),
+    ["session", "weekly"]
+  );
+  assert.deepEqual(
+    windows.map((window) => window.label),
+    ["5-hour window", "Weekly quota"]
+  );
+});
+
+test("extractCodexWindows treats a long primary_window countdown as weekly", () => {
+  const windows = extractCodexWindows(
+    {
+      rate_limit: {
+        primary_window: {
+          used_percent: 0,
+          reset_after_seconds: 604_500
+        }
+      }
+    },
+    "en",
+    NOW
+  );
+
+  assert.deepEqual(
+    windows.map((window) => window.key),
+    ["weekly"]
+  );
+  assert.equal(windows[0]?.label, "Weekly quota");
+});
+
+test("normalizeCodexSnapshot repairs cached primary_window snapshots", () => {
+  const snapshot: QuotaSnapshot = {
+    service: "codex",
+    remaining: 100,
+    total: 100,
+    percent: 100,
+    unit: "percent",
+    resetsAt: new Date(NOW + 604_500 * 1000).toISOString(),
+    weeklyResetAt: null,
+    windows: [
+      {
+        key: "primary_window",
+        label: "primary_window",
+        remaining: 100,
+        total: 100,
+        percent: 100,
+        resetsAt: new Date(NOW + 604_500 * 1000).toISOString()
+      }
+    ],
+    status: "ok",
+    message: "",
+    fetchedAt: new Date(NOW).toISOString()
+  };
+
+  const normalized = normalizeCodexSnapshot(snapshot, "en", NOW);
+
+  assert.equal(normalized.windows[0]?.key, "weekly");
+  assert.equal(normalized.windows[0]?.label, "Weekly quota");
+  assert.equal(normalized.resetsAt, null);
+  assert.equal(normalized.weeklyResetAt, snapshot.windows[0]?.resetsAt);
 });
 
 test("extractCodexWindows keeps extra windows after session and weekly are taken", () => {

@@ -791,19 +791,6 @@ export const App = () => {
     const message = authMessage[service];
     const credentialTag = resolveCredentialTag(service, credential, errorCode);
 
-    // Claude: the button always stays — it's also the "manually refresh
-    // usage now" entry point, still useful when the credential is healthy.
-    // Only relabel/restyle it toward "needs a fresh login" when the
-    // credential is either confirmed missing, or the last usage fetch came
-    // back with a definitive auth failure (401 / missing OAuth scope).
-    const needsFreshLogin =
-      service === "claude" &&
-      (errorCode === "claudeLoginExpired" ||
-        errorCode === "claudeScopeInsufficient" ||
-        credential.state === "missing" ||
-        credential.state === "expired" ||
-        credential.state === "error");
-
     const cursorCredentialBroken =
       service === "cursor" &&
       (credential.state === "expired" || credential.state === "missing" || credential.state === "error");
@@ -813,11 +800,16 @@ export const App = () => {
         credential.state === "expired" ||
         credential.state === "missing" ||
         credential.state === "error");
-    const needsAttention = needsFreshLogin || cursorCredentialBroken || (service === "codex" && codexCredentialBroken);
-    // Claude / Codex keep refresh and re-auth as separate actions so a scope or
-    // login failure never hides "Update Values" behind a single swapped button.
+    const needsAttention = cursorCredentialBroken || codexCredentialBroken;
+    // Claude deliberately shows only "Update Values": that path already re-reads
+    // the credential (monitor:run-manual runs credentialMonitor.check, and the
+    // renderer follows up with the same auth:check the re-detect button used), so
+    // a second button bought nothing but confusion.
+    // Codex keeps both as separate actions so a login failure never hides
+    // "Update Values" behind a single swapped button. Cursor has no quota refresh
+    // of its own, so re-detect is its only way out of a broken credential.
     const showRefreshQuota = service === "claude" || service === "codex";
-    const showRedetect = service === "claude" || service === "codex" || cursorCredentialBroken;
+    const showRedetect = service === "codex" || cursorCredentialBroken;
 
     return (
       <div className="credential-row">
@@ -948,6 +940,12 @@ export const App = () => {
    */
   const renderClaudeCredentialBlock = (credential: CredentialStatus, item?: QuotaSnapshot) => {
     const hasStoredToken = Boolean(settings.claudeManualToken);
+    // macOS already auto-detects the Keychain credential written by
+    // `claude auth login`, so the paste-a-token fallback only needs to show
+    // there if a legacy token is still stored (so it stays clearable). On
+    // every other platform there is no automatic detection at all, so this
+    // is the only way to supply a credential.
+    const showManualTokenInput = window.usagePulse.platform !== "darwin" || hasStoredToken;
     return (
       <div style={{ marginTop: "8px" }}>
         <p className="meta-text" style={{ margin: 0 }}>
@@ -959,56 +957,60 @@ export const App = () => {
             ⚠️ {t(lang, "settings.insecureStorage")}
           </div>
         )}
-        <label className="field" style={{ marginTop: "8px" }}>
-          <span>{t(lang, "claudeToken.title")}</span>
-          <input
-            type="text"
-            autoComplete="off"
-            spellCheck={false}
-            placeholder={t(lang, "claudeToken.placeholder")}
-            value={maskToken(claudeToken)}
-            onPaste={claudeTokenHandlers.onPaste}
-            onKeyDown={claudeTokenHandlers.onKeyDown}
-            // Controlled by the mask: every mutation goes through the paste and
-            // key handlers above, so there is nothing for onChange to apply.
-            onChange={() => undefined}
-          />
-        </label>
-        <p className="meta-text" style={{ margin: "6px 0 0" }}>
-          {t(lang, "claudeToken.hint")}
-        </p>
-        <div className="alarm-actions-row">
-          <button
-            type="button"
-            className="primary-btn"
-            onClick={handleSaveClaudeToken}
-            disabled={savingClaudeToken}
-          >
-            {savingClaudeToken ? t(lang, "claudeToken.saving") : t(lang, "claudeToken.save")}
-          </button>
-          {hasStoredToken ? (
-            <button
-              type="button"
-              className="ghost-btn"
-              onClick={handleClearClaudeToken}
-              disabled={savingClaudeToken}
-            >
-              {t(lang, "claudeToken.clear")}
-            </button>
-          ) : null}
-        </div>
-        {hasStoredToken ? (
-          <p className="meta-text" style={{ margin: "6px 0 0" }}>
-            {t(lang, "claudeToken.stored")}
-          </p>
-        ) : null}
-        {claudeTokenMessage.text ? (
-          <p
-            className={claudeTokenMessage.isError ? "form-error" : "meta-text"}
-            style={{ margin: "6px 0 0" }}
-          >
-            {claudeTokenMessage.text}
-          </p>
+        {showManualTokenInput ? (
+          <>
+            <label className="field" style={{ marginTop: "8px" }}>
+              <span>{t(lang, "claudeToken.title")}</span>
+              <input
+                type="text"
+                autoComplete="off"
+                spellCheck={false}
+                placeholder={t(lang, "claudeToken.placeholder")}
+                value={maskToken(claudeToken)}
+                onPaste={claudeTokenHandlers.onPaste}
+                onKeyDown={claudeTokenHandlers.onKeyDown}
+                // Controlled by the mask: every mutation goes through the paste and
+                // key handlers above, so there is nothing for onChange to apply.
+                onChange={() => undefined}
+              />
+            </label>
+            <p className="meta-text" style={{ margin: "6px 0 0" }}>
+              {t(lang, "claudeToken.hint")}
+            </p>
+            <div className="alarm-actions-row">
+              <button
+                type="button"
+                className="primary-btn"
+                onClick={handleSaveClaudeToken}
+                disabled={savingClaudeToken}
+              >
+                {savingClaudeToken ? t(lang, "claudeToken.saving") : t(lang, "claudeToken.save")}
+              </button>
+              {hasStoredToken ? (
+                <button
+                  type="button"
+                  className="ghost-btn"
+                  onClick={handleClearClaudeToken}
+                  disabled={savingClaudeToken}
+                >
+                  {t(lang, "claudeToken.clear")}
+                </button>
+              ) : null}
+            </div>
+            {hasStoredToken ? (
+              <p className="meta-text" style={{ margin: "6px 0 0" }}>
+                {t(lang, "claudeToken.stored")}
+              </p>
+            ) : null}
+            {claudeTokenMessage.text ? (
+              <p
+                className={claudeTokenMessage.isError ? "form-error" : "meta-text"}
+                style={{ margin: "6px 0 0" }}
+              >
+                {claudeTokenMessage.text}
+              </p>
+            ) : null}
+          </>
         ) : null}
       </div>
     );

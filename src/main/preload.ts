@@ -14,6 +14,9 @@ import type {
 } from "@shared/types";
 
 const api = {
+  // Static Node info already available in this preload script; no ipcMain
+  // round-trip needed since it never changes at runtime.
+  platform: process.platform,
   getSettings: () => ipcRenderer.invoke("settings:get") as Promise<AppSettings>,
   saveSettings: (settings: Partial<AppSettings>) =>
     ipcRenderer.invoke("settings:save", settings) as Promise<AppSettings>,

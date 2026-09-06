@@ -11,12 +11,30 @@ It only reads credentials you're already logged in with locally and official usa
 ## Installation 安裝指引
 
 ### Download 下載
-- Apple Silicon (M1/M2/M3...): `Usage-Pulse-1.0.0-arm64.dmg`
-- Intel Mac: `Usage-Pulse-1.0.0.dmg` (or the x64-labeled file)
-- Windows x64: `Usage-Pulse Setup 1.0.0.exe`
-- Apple Silicon（M1/M2/M3...）：`Usage-Pulse-1.0.0-arm64.dmg`
-- Intel Mac：`Usage-Pulse-1.0.0.dmg`（或 x64 標示檔）
-- Windows x64：`Usage-Pulse Setup 1.0.0.exe`
+- Apple Silicon (M1/M2/M3...): `Usage-Pulse-2.0.1-arm64.dmg`
+- Intel Mac: `Usage-Pulse-2.0.1.dmg` (or the x64-labeled file)
+- Windows x64: `Usage-Pulse.Setup.2.0.1.exe`
+- Apple Silicon（M1/M2/M3...）：`Usage-Pulse-2.0.1-arm64.dmg`
+- Intel Mac：`Usage-Pulse-2.0.1.dmg`（或 x64 標示檔）
+- Windows x64：`Usage-Pulse.Setup.2.0.1.exe`
+
+### Run from source 從原始碼執行
+
+Usage-Pulse is open source — you can clone the repository, read the code yourself, and run it directly.  
+Usage-Pulse 是開源專案——你可以把 repo clone 下來，自己讀過程式碼，再直接執行。
+
+Requires [Node.js](https://nodejs.org/) 24 and pnpm 9.15.9 (run `corepack enable` once and pnpm picks the right version automatically).  
+需要 [Node.js](https://nodejs.org/) 24 與 pnpm 9.15.9（先執行一次 `corepack enable`，pnpm 就會自動使用正確版本）。
+
+```bash
+git clone https://github.com/xiaochen26wyl/Usage-Pulse.git
+cd Usage-Pulse
+pnpm install
+pnpm dev
+```
+
+`pnpm dev` starts the app in development mode; the menu bar icon works the same as the installed version, and the logins listed in **Before first use** are still required.  
+`pnpm dev` 會以開發模式啟動，選單列圖示與安裝版相同；下方**首次使用前**列出的登入前置條件同樣適用。
 
 ### Unsigned build warnings 未簽章安裝提示
 - macOS Gatekeeper: on first launch, right-click the app in Finder -> `Open` -> click `Open` again.
@@ -40,8 +58,8 @@ It only reads credentials you're already logged in with locally and official usa
 
 ### Claude Code credential setup Claude Code 憑證設定
 
-Click **Update Values** in Usage-Pulse to detect the credential and fetch usage. Whenever the Claude card has no numbers to show, it opens a panel on the spot with the exact login command to run, a **Get Credentials** button that re-checks your credential, and a box you can paste a token into instead.  
-在 Usage-Pulse 按「更新數值」偵測憑證並抓取用量。只要 Claude 卡片沒有數值可顯示，就會當場展開一個區塊，裡面有要執行的登入指令、重新檢查憑證的「獲取憑證」按鈕，以及一個可以直接貼上 token 的欄位。
+Click **Update Values** in Usage-Pulse to detect the credential and fetch usage. Whenever the Claude card has no numbers to show, it opens a panel on the spot with the exact login command to run and a box you can paste a token into instead.  
+在 Usage-Pulse 按「更新數值」偵測憑證並抓取用量。只要 Claude 卡片沒有數值可顯示，就會當場展開一個區塊，裡面有要執行的登入指令，以及一個可以直接貼上 token 的欄位。
 
 A pasted token is tried against your real usage before it is kept: if it can't read your usage, it isn't saved and the panel tells you why.  
 貼上的 token 會先實際查一次你的用量再決定是否保留：查不到就不會存起來，並且會告訴你原因。

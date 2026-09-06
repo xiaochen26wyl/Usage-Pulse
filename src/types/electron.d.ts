@@ -13,6 +13,7 @@ import type {
 } from "@shared/types";
 
 interface UsagePulseApi {
+  platform: NodeJS.Platform;
   getSettings: () => Promise<AppSettings>;
   saveSettings: (settings: Partial<AppSettings>) => Promise<AppSettings>;
   getAuthStatus: () => Promise<AuthStatus>;
