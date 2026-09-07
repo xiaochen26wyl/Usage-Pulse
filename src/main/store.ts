@@ -278,6 +278,21 @@ export const notificationStore = {
     };
     delete notifications[scope];
     store.set("notifications", notifications);
+  },
+  /**
+   * One-shot gate: fires the first time `key` is seen for this scope, then
+   * stays silent for every later call that reports the same key, no matter
+   * how much time passes. The only ways back in are the ones that should
+   * count as a new occurrence — the caller passing a different key, or
+   * clearing the scope on genuine recovery.
+   */
+  shouldFireOnce(scope: string, key: string): boolean {
+    const last = notificationStore.get(scope);
+    if (last.key === key) {
+      return false;
+    }
+    notificationStore.set(scope, key, new Date().toISOString());
+    return true;
   }
 };
 

@@ -8,7 +8,6 @@ import {
   isCredentialCheckDue,
   isCredentialUnusable
 } from "@shared/credential-utils";
-import { isDuplicateInCooldown } from "@shared/monitor-utils";
 import { t } from "@shared/i18n";
 import {
   CredentialMissingError,
@@ -161,6 +160,7 @@ export class CredentialMonitor extends EventEmitter {
     const troubled = isCredentialUnusable(probe.status.state);
 
     if (!rotated && !troubled) {
+      this.clearUnusableLatch(service);
       return this.commit(service, probe);
     }
 
@@ -173,10 +173,24 @@ export class CredentialMonitor extends EventEmitter {
 
     if (isCredentialUnusable(settled.state)) {
       this.notifyUnusable(service, settled);
+    } else {
+      this.clearUnusableLatch(service);
     }
 
     this.emit("auth", this.getStatus());
     return settled;
+  }
+
+  // Lets a later, genuinely new failure notify again even if it happens to
+  // carry the same state+expiresAt as a previous one (e.g. two separate
+  // logouts both read as "missing" with no expiresAt) — without this, the
+  // one-shot gate in notifyUnusable would mistake the second failure for the
+  // occurrence that already rang.
+  private clearUnusableLatch(service: ServiceType): void {
+    const scope = `credential:${service}`;
+    if (notificationStore.get(scope).key) {
+      notificationStore.clear(scope);
+    }
   }
 
   private async read(service: ServiceType): Promise<RawCredential | Error> {
@@ -256,11 +270,9 @@ export class CredentialMonitor extends EventEmitter {
   private notifyUnusable(service: ServiceType, status: CredentialStatus): void {
     const settings = settingsStore.get();
     const key = `${status.state}|${status.expiresAt ?? ""}`;
-    const last = notificationStore.get(`credential:${service}`);
-    if (isDuplicateInCooldown(last, key, settings.notifyCooldownMinutes * 60_000, Date.now())) {
+    if (!notificationStore.shouldFireOnce(`credential:${service}`, key)) {
       return;
     }
-    notificationStore.set(`credential:${service}`, key, nowIso());
 
     const body = t(settings.language, "notification.credentialExpired", {
       service: SERVICE_LABELS[service]

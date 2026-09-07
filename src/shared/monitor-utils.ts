@@ -1,4 +1,4 @@
-import type { CombinedSnapshot, ServiceType } from "./types";
+import type { CombinedSnapshot, QuotaWindow, ServiceType } from "./types";
 
 export const getLowQuotaServices = (snapshot: CombinedSnapshot): ServiceType[] =>
   (["cursor", "claude", "codex"] as ServiceType[]).filter((service) => snapshot[service].status === "low");
@@ -42,6 +42,32 @@ export const stabilizeResetTime = (
   candidate: string | null,
   nowMs: number
 ): string | null => (cached !== null && Date.parse(cached) > nowMs ? cached : candidate);
+
+/**
+ * Applies stabilizeResetTime to every window in a fresh scrape, matched by
+ * `key` against the previous poll's windows. Sources like Codex's
+ * reset_after_seconds field are recomputed as `now + secondsLeft` on every
+ * call, so the resulting resetsAt can drift by a second or two between polls
+ * of the very same underlying reset — without this, that drift becomes a
+ * different dedupeKey each poll and defeats the one-shot alert gate
+ * (shouldNotifyOnce), so a low-quota or exhausted alert never stops re-firing
+ * for as long as the window stays low.
+ */
+export const stabilizeWindowResets = (
+  previousWindows: QuotaWindow[] | null | undefined,
+  nextWindows: QuotaWindow[],
+  nowMs: number
+): QuotaWindow[] => {
+  if (!previousWindows || previousWindows.length === 0) {
+    return nextWindows;
+  }
+  const previousResetsAtByKey = new Map(previousWindows.map((window) => [window.key, window.resetsAt]));
+  return nextWindows.map((window) => {
+    const cached = previousResetsAtByKey.get(window.key) ?? null;
+    const resetsAt = stabilizeResetTime(cached, window.resetsAt, nowMs);
+    return resetsAt === window.resetsAt ? window : { ...window, resetsAt };
+  });
+};
 
 /**
  * Converts Cursor's `autoPercentUsed`/`apiPercentUsed` usage figure to a

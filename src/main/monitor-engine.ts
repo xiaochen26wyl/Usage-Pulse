@@ -9,7 +9,7 @@ import type {
   ScrapeResult,
   ServiceType
 } from "@shared/types";
-import { isDuplicateInCooldown, shouldClearLowQuotaLatch } from "@shared/monitor-utils";
+import { isDuplicateInCooldown, shouldClearLowQuotaLatch, stabilizeResetTime, stabilizeWindowResets } from "@shared/monitor-utils";
 import { isColdReading, isTrusted } from "@shared/snapshot-trust";
 import { buildExhaustedFlex, buildLowQuotaFlex } from "@shared/line-templates";
 import { localeForLanguage, t } from "@shared/i18n";
@@ -325,24 +325,6 @@ export class MonitorEngine extends EventEmitter {
     return true;
   }
 
-  /**
-   * One-shot gate for low-quota-style alerts: fires the first time `key` is
-   * seen for this scope, then stays silent for every later poll that reports
-   * the same key, no matter how much time passes. `key` encodes the exact
-   * occurrence (threshold + reset time), so the only ways back in are the
-   * ones that should count as a new occurrence — the window resetting, the
-   * threshold being edited — while a caller clearing the scope on genuine
-   * recovery is what lets the *same* occurrence alert again later.
-   */
-  private shouldNotifyOnce(scope: string, key: string): boolean {
-    const last = notificationStore.get(scope);
-    if (last.key === key) {
-      return false;
-    }
-    notificationStore.set(scope, key, nowIso());
-    return true;
-  }
-
   start(): void {
     this.reschedule();
   }
@@ -545,7 +527,7 @@ export class MonitorEngine extends EventEmitter {
     countdownTarget?: string | null;
   }): boolean {
     const { id, service, kind, dedupeKey, label, reason, settings, combined, countdownTarget } = options;
-    if (!this.shouldNotifyOnce(`lowquota:${id}`, dedupeKey)) {
+    if (!notificationStore.shouldFireOnce(`lowquota:${id}`, dedupeKey)) {
       return false;
     }
 
@@ -1040,9 +1022,28 @@ export class MonitorEngine extends EventEmitter {
     const lang = settings.language;
 
     const previous = previousServiceSnapshot ?? snapshotStore.get()?.[service] ?? null;
+
+    // Some sources (Codex's reset_after_seconds) recompute resetsAt as
+    // `now + secondsLeft` on every scrape, so the exact same underlying reset
+    // can come back a second or two off from one poll to the next. Pin it
+    // back to the previous poll's value while that value is still in the
+    // future, so the same occurrence keeps the same dedupeKey downstream
+    // (see fireWindowAlert) instead of re-arming the one-shot alert gate on
+    // every single poll.
+    const nowMs = Date.now();
+    const stabilizedScrapeResult: ScrapeResult = {
+      ...scrapeResult,
+      windows: stabilizeWindowResets(previous?.windows, scrapeResult.windows, nowMs),
+      resetsAt: stabilizeResetTime(previous?.resetsAt ?? null, scrapeResult.resetsAt, nowMs),
+      weeklyResetAt:
+        scrapeResult.weeklyResetAt !== undefined
+          ? stabilizeResetTime(previous?.weeklyResetAt ?? null, scrapeResult.weeklyResetAt ?? null, nowMs)
+          : scrapeResult.weeklyResetAt
+    };
+
     const { snapshot: nextServiceSnapshot, cursorFlags, claudeFlags } = makeQuotaSnapshot(
       service,
-      scrapeResult,
+      stabilizedScrapeResult,
       settings
     );
 

@@ -1,11 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import type { CombinedSnapshot } from "../src/shared/types";
+import type { CombinedSnapshot, QuotaWindow } from "../src/shared/types";
 import {
   getLowQuotaServices,
   isDuplicateInCooldown,
   shouldClearLowQuotaLatch,
-  stabilizeResetTime
+  stabilizeResetTime,
+  stabilizeWindowResets
 } from "../src/shared/monitor-utils";
 
 const baseSnapshot = (): CombinedSnapshot => ({
@@ -111,4 +112,54 @@ test("stabilizeResetTime accepts the first candidate when there is no cache yet"
   const nowMs = Date.parse("2026-08-26T10:00:00.000Z");
   assert.equal(stabilizeResetTime(null, "2026-08-26T15:00:00.000Z", nowMs), "2026-08-26T15:00:00.000Z");
   assert.equal(stabilizeResetTime(null, null, nowMs), null);
+});
+
+const window = (key: string, resetsAt: string | null): QuotaWindow => ({
+  key,
+  label: key,
+  remaining: 10,
+  total: 100,
+  percent: 10,
+  resetsAt
+});
+
+test("stabilizeWindowResets pins a window's resetsAt to the previous poll's value while it's still in the future", () => {
+  // Simulates Codex's reset_after_seconds being recomputed as `now + secondsLeft`
+  // on every poll: the same underlying reset drifts by a couple of seconds
+  // between two polls a moment apart.
+  const nowMs = Date.parse("2026-08-26T10:00:00.000Z");
+  const previous = [window("session", "2026-08-26T15:00:00.000Z")];
+  const next = [window("session", "2026-08-26T15:00:02.000Z")];
+
+  const stabilized = stabilizeWindowResets(previous, next, nowMs);
+
+  assert.equal(stabilized[0].resetsAt, "2026-08-26T15:00:00.000Z");
+});
+
+test("stabilizeWindowResets matches windows by key, not array position", () => {
+  const nowMs = Date.parse("2026-08-26T10:00:00.000Z");
+  const previous = [window("weekly", "2026-08-27T00:00:00.000Z"), window("session", "2026-08-26T15:00:00.000Z")];
+  const next = [window("session", "2026-08-26T15:00:03.000Z"), window("weekly", "2026-08-27T00:00:04.000Z")];
+
+  const stabilized = stabilizeWindowResets(previous, next, nowMs);
+
+  assert.equal(stabilized.find((w) => w.key === "session")?.resetsAt, "2026-08-26T15:00:00.000Z");
+  assert.equal(stabilized.find((w) => w.key === "weekly")?.resetsAt, "2026-08-27T00:00:00.000Z");
+});
+
+test("stabilizeWindowResets lets a genuinely new cycle through once the cached reset has elapsed", () => {
+  const nowMs = Date.parse("2026-08-26T16:00:00.000Z");
+  const previous = [window("session", "2026-08-26T15:00:00.000Z")];
+  const next = [window("session", "2026-08-26T21:00:00.000Z")];
+
+  const stabilized = stabilizeWindowResets(previous, next, nowMs);
+
+  assert.equal(stabilized[0].resetsAt, "2026-08-26T21:00:00.000Z");
+});
+
+test("stabilizeWindowResets passes windows through untouched when there is no previous poll", () => {
+  const nowMs = Date.parse("2026-08-26T10:00:00.000Z");
+  const next = [window("session", "2026-08-26T15:00:00.000Z")];
+
+  assert.equal(stabilizeWindowResets(null, next, nowMs), next);
 });
