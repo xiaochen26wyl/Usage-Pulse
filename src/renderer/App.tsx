@@ -28,6 +28,7 @@ import {
   formatCountdown,
 } from "@shared/alarm-utils";
 import { resolveClaudeBillingAt } from "@shared/claude-billing";
+import { isCodexBackendSlotKey } from "@shared/codex-usage";
 import { localeForLanguage, t, type TranslationKey } from "@shared/i18n";
 import {
   INSTAGRAM_URL,
@@ -1383,11 +1384,15 @@ export const App = () => {
                 windows.find((window) => window.key === "session") ?? null;
               const weeklyWindow =
                 windows.find((window) => window.key === "weekly") ?? null;
+              // Backend slot names (primary_window / secondary_window) are not
+              // real windows — main already drops them, this keeps a stale
+              // snapshot from ever drawing one as a nameless bar.
               const extraWindows = windows.filter(
                 (window) =>
                   window.key !== "session" &&
                   window.key !== "weekly" &&
-                  window.percent !== null,
+                  window.percent !== null &&
+                  !isCodexBackendSlotKey(window.key),
               );
               const hasBars =
                 Boolean(sessionWindow || weeklyWindow || extraWindows.length || item?.creditsText);

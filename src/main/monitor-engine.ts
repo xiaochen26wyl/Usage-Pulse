@@ -10,6 +10,7 @@ import type {
   ServiceType
 } from "@shared/types";
 import { isDuplicateInCooldown, shouldClearLowQuotaLatch, stabilizeResetTime, stabilizeWindowResets } from "@shared/monitor-utils";
+import { normalizeCodexSnapshot } from "@shared/codex-usage";
 import { isColdReading, isTrusted } from "@shared/snapshot-trust";
 import { buildExhaustedFlex, buildLowQuotaFlex } from "@shared/line-templates";
 import { localeForLanguage, t } from "@shared/i18n";
@@ -1041,11 +1042,20 @@ export class MonitorEngine extends EventEmitter {
           : scrapeResult.weeklyResetAt
     };
 
-    const { snapshot: nextServiceSnapshot, cursorFlags, claudeFlags } = makeQuotaSnapshot(
+    const { snapshot: makeResult, cursorFlags, claudeFlags } = makeQuotaSnapshot(
       service,
       stabilizedScrapeResult,
       settings
     );
+
+    // The store repairs Codex windows on the way in and out (see
+    // snapshotStore), but the snapshot pushed to the renderer used to skip
+    // that repair — so a window the store would have dropped still reached the
+    // UI on every poll, and only went away when the panel re-read the store.
+    // Normalizing here means the emitted, returned and persisted snapshots are
+    // all the same object.
+    const nextServiceSnapshot =
+      service === "codex" ? normalizeCodexSnapshot(makeResult, lang) : makeResult;
 
     // Re-read the store right before merging and writing back — the other
     // service's independent checkService() call may have completed and written

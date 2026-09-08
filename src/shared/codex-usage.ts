@@ -104,38 +104,63 @@ const isSecondaryWindowName = (name: string): boolean => {
   return normalized === "secondary" || normalized === "secondary_window";
 };
 
+/**
+ * True for names that are only the backend's own slot label (primary_window /
+ * secondary_window). Those carry no identity of their own, so they must never
+ * reach the UI as a window key or label — see parseWindowObject.
+ */
+export const isCodexBackendSlotKey = (name: string): boolean =>
+  isPrimaryWindowName(name) || isSecondaryWindowName(name);
+
+const longerThanSessionWindow = (resetSecondsRemaining: number | null): boolean =>
+  resetSecondsRemaining !== null &&
+  resetSecondsRemaining > SESSION_WINDOW_SECONDS * (1 + DURATION_TOLERANCE);
+
+/** Which of the two named slots have already been handed out. */
+export interface CodexSlotState {
+  session: boolean;
+  weekly: boolean;
+}
+
 export const classifyCodexWindowKey = (
   seconds: number | null,
   rawName: string,
-  usedSlot: "session" | "weekly" | null,
+  taken: CodexSlotState | null,
   resetSecondsRemaining: number | null = null
 ): string => {
+  // Both slots have to be visible here. Collapsing them into a single "which
+  // one is reserved" value hides the second one, which is how a third
+  // weekly-length window used to be classified as "weekly" while weekly was
+  // already taken — and then fell back to the raw backend slot name.
+  const sessionTaken = taken?.session === true;
+  const weeklyTaken = taken?.weekly === true;
   if (seconds !== null) {
-    if (nearSeconds(seconds, SESSION_WINDOW_SECONDS) && usedSlot !== "session") {
+    if (nearSeconds(seconds, SESSION_WINDOW_SECONDS) && !sessionTaken) {
       return "session";
     }
-    if (nearSeconds(seconds, WEEKLY_WINDOW_SECONDS) && usedSlot !== "weekly") {
+    if (nearSeconds(seconds, WEEKLY_WINDOW_SECONDS) && !weeklyTaken) {
       return "weekly";
     }
   }
   if (
     seconds === null &&
-    resetSecondsRemaining !== null &&
-    resetSecondsRemaining > SESSION_WINDOW_SECONDS * (1 + DURATION_TOLERANCE) &&
-    usedSlot !== "weekly" &&
+    longerThanSessionWindow(resetSecondsRemaining) &&
+    !weeklyTaken &&
     (isPrimaryWindowName(rawName) || isSecondaryWindowName(rawName))
   ) {
     return "weekly";
   }
   const lower = rawName.toLowerCase();
-  if (usedSlot !== "session") {
+  if (!sessionTaken) {
     if (lower.includes("five_hour") || lower.includes("five-hour") || lower.includes("5h") || isPrimaryWindowName(rawName)) {
-      if (seconds === null || nearSeconds(seconds, SESSION_WINDOW_SECONDS)) {
+      // A countdown longer than the 5-hour window disproves the name: whatever
+      // slot the backend put it in, this is not the session window.
+      if ((seconds === null || nearSeconds(seconds, SESSION_WINDOW_SECONDS)) && !longerThanSessionWindow(resetSecondsRemaining)) {
         return "session";
       }
     }
   }
-  if (usedSlot !== "weekly") {
+  if (!weeklyTaken) {
     if (lower.includes("seven_day") || lower.includes("weekly") || lower.includes("7d") || isSecondaryWindowName(rawName)) {
       if (seconds === null || nearSeconds(seconds, WEEKLY_WINDOW_SECONDS)) {
         return "weekly";
@@ -179,7 +204,7 @@ const parseWindowObject = (
   raw: Record<string, unknown>,
   lang: Language,
   nowMs: number,
-  usedSlot: { session: boolean; weekly: boolean }
+  usedSlot: CodexSlotState
 ): CodexNormalizedWindow | null => {
   const usedPercent = usedPercentOf(raw);
   const seconds = windowSeconds(raw);
@@ -189,13 +214,16 @@ const parseWindowObject = (
     return null;
   }
 
-  const reserved: "session" | "weekly" | null = usedSlot.session ? "session" : usedSlot.weekly ? "weekly" : null;
-  let key = classifyCodexWindowKey(seconds, rawName, reserved, resetSecondsRemaining);
-  if (key === "session" && usedSlot.session) {
-    key = slugFromName(rawName || `window_${seconds ?? "x"}`);
+  let key = classifyCodexWindowKey(seconds, rawName, usedSlot, resetSecondsRemaining);
+
+  // A window whose only identity is the backend's slot name and that could not
+  // claim the 5-hour or weekly slot is a repeat of a slot already on screen.
+  // Showing it as its own card is how "primary_window" used to leak into the UI.
+  if (key !== "session" && key !== "weekly" && isCodexBackendSlotKey(rawName)) {
+    return null;
   }
-  if (key === "weekly" && usedSlot.weekly) {
-    key = slugFromName(rawName || `window_${seconds ?? "x"}`);
+  if (key === "unknown") {
+    key = slugFromName(`window_${seconds ?? "x"}`);
   }
 
   if (key === "session") {
@@ -212,8 +240,6 @@ const parseWindowObject = (
     windowSeconds: seconds
   };
 };
-
-const isBackendSlotName = (name: string): boolean => isPrimaryWindowName(name) || isSecondaryWindowName(name);
 
 const resetSecondsRemainingFromIso = (resetsAt: string | null, nowMs: number): number | null => {
   if (!resetsAt) {
@@ -233,15 +259,19 @@ export const normalizeCodexSnapshot = (
 
   for (const window of snapshot.windows ?? []) {
     const rawName = window.key || window.label;
-    const reserved: "session" | "weekly" | null = usedSlot.session ? "session" : usedSlot.weekly ? "weekly" : null;
     const normalizedKey = classifyCodexWindowKey(
       null,
       rawName,
-      reserved,
+      usedSlot,
       resetSecondsRemainingFromIso(window.resetsAt, nowMs)
     );
-    const rawWasBackendSlot = isBackendSlotName(rawName);
+    const rawWasBackendSlot = isCodexBackendSlotKey(rawName);
     const key = rawWasBackendSlot ? normalizedKey : window.key;
+    // Repairs a snapshot cached by an older build: a slot-named window that
+    // cannot claim a slot is dropped rather than kept under its raw name.
+    if (rawWasBackendSlot && key !== "session" && key !== "weekly") {
+      continue;
+    }
     if ((key === "session" || key === "weekly") && usedSlot[key]) {
       continue;
     }
@@ -279,7 +309,7 @@ const collectFromValue = (
   value: unknown,
   lang: Language,
   nowMs: number,
-  usedSlot: { session: boolean; weekly: boolean },
+  usedSlot: CodexSlotState,
   into: CodexNormalizedWindow[],
   parentKey = ""
 ): void => {
