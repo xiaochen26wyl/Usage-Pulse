@@ -8,21 +8,22 @@
 
 ### Project overview
 - Project name: Usage-Pulse
-- Goal: monitor Cursor and Claude Code quotas from a menu bar tool on Mac / Windows, reporting changes via desktop notifications and optional LINE broadcast.
+- Goal: monitor Cursor, Claude Code, and Codex quotas from a menu bar tool on Mac / Windows, reporting changes via desktop notifications and optional LINE broadcast.
 - Distribution: installers are provided via GitHub Release; no website, no app store listing.
 - Architecture principle: Sidecar Observer — only reads local credentials and usage APIs, never writes back to IDE state.
 
 ### Data model
 - `AppSettings` (see `src/shared/types.ts`; there is no user-facing check interval):
-  - Per-service monitoring: `enableCursorMonitoring` / `enableClaudeMonitoring`
+  - Per-service monitoring: `enableCursorMonitoring` / `enableClaudeMonitoring` / `enableCodexMonitoring`
   - Cursor low-quota: `cursorModels` (`autoPercentUsed`) and advanced / other models (`apiPercentUsed`) each have their own threshold and toggle
   - Claude Code low-quota: 5-hour and weekly each have their own threshold and toggle; `enableClaudeCooldownAlert` is a lockout alert when the 5-hour window hits 0%, not a percent threshold
+  - Codex low-quota: mirrors Claude — 5-hour, weekly, and `enableCodexCooldownAlert`. Extra API windows (per-model, code review) are displayed but not independently alerted
   - Launch: `launchWithIde` and `launchAtStartup` are mutually exclusive
-  - Alarms: Cursor period-end; Claude Code 5-hour / weekly / subscription-renewal as three independent switches plus `claudeBillingCadence`
-  - Other: `trayValueColorMode`, `enableAlarmPopup`, `enableLineNotification`, `claudeUseCliActivityPolling`, water-reminder interval / cup size, UI language (`zh` / `en` / `ja` / `ko`), notification cooldown
-- `SessionStats`: per-launch duration, water logged, and Cursor / Claude Code usage delta since this process started
-- `CombinedSnapshot`: Cursor and Claude quota snapshots
-- `QuotaSnapshot.windows`: multi-window quotas (Cursor billing / cursor models / other models; Claude Code 5-hour / weekly)
+  - Alarms: Cursor period-end; Claude Code 5-hour / weekly / subscription-renewal as three independent switches plus `claudeBillingCadence`; Codex 5-hour / weekly as two independent switches
+  - Other: `trayValueColorMode`, `enableAlarmPopup`, `enableLineNotification`, `claudeUseCliActivityPolling`, `codexUseCliActivityPolling`, water-reminder interval / cup size, UI language (`zh` / `en` / `ja` / `ko`), notification cooldown
+- `SessionStats`: per-launch duration, water logged, and Cursor / Claude Code / Codex usage delta since this process started
+- `CombinedSnapshot`: Cursor, Claude, and Codex quota snapshots
+- `QuotaSnapshot.windows`: multi-window quotas (Cursor billing / cursor models / other models; Claude Code 5-hour / weekly; Codex 5-hour / weekly plus any extra named windows the API reports)
 
 ### Quota sources (read-only)
 
@@ -42,6 +43,13 @@
 - Corroborating local source: `~/.claude/projects/**/*.jsonl`, read-only, only the
   `quotaLimits` records — see "Restraint on the usage API" below
 - Metrics: remaining percentage for the 5-hour window and weekly quota
+
+#### Codex
+- Local source: `~/.codex/auth.json`, or the macOS Keychain item named in `~/.codex/config.toml`'s credentials-store pref (`Codex Auth` / `com.openai.codex` / `Codex Auth Credentials`). Both are read-only — Usage-Pulse never writes them. There is no in-app Codex login UI; the user logs in with the Codex CLI or Codex Desktop first.
+- Remote source: `https://chatgpt.com/backend-api/wham/usage`, falling back to `https://chatgpt.com/backend-api/codex/usage`
+- Windows (`src/shared/codex-usage.ts`): classified by duration (5 hours / 7 days), not by backend slot names like `primary_window` / `secondary_window`. Those labels carry no identity of their own. A window whose only name is a slot label and that cannot claim the 5-hour or weekly slot is dropped (`parseWindowObject` returns `null`; the renderer also filters with `isCodexBackendSlotKey`) rather than shown as its own card. Extra windows the API reports (for example code-review) are displayed but not independently alerted. Remaining credits are shown when the payload includes them.
+- Cached snapshots are re-normalized on read and write (`normalizeCodexSnapshot` in `src/main/store.ts`), so an older mislabeled window is repaired the next time the app loads it.
+- Token refresh: if the access token is near expiry, Usage-Pulse refreshes it in process memory using the official Codex CLI's public OAuth client id. The new token is never written back to `~/.codex/auth.json`.
 
 #### Re-detecting a Claude Code credential
 On startup, `credentialMonitor.checkAll()` reads the official, read-only
@@ -159,15 +167,15 @@ changing since the last fetch means that tick is skipped and no request is made.
 ### Completed features
 - Electron + React + TypeScript project skeleton (Electron `^43.4.1`)
 - Sidecar Observer refactor (removed web session login flow)
-- Local credential detection + API quota fetching
-- Background scheduled monitoring (15 minutes normally, 10 minutes when a window is low)
+- Local credential detection + API quota fetching (Cursor, Claude Code, Codex)
+- Background scheduled monitoring (15 minutes normally, 10 minutes when a window is low; Codex is a fixed 1-minute cadence)
 - Desktop notifications (quota change / low quota / reset alerts)
-- Timed alarm: an always-on-top popup in the top-right corner when due (Cursor period end / Claude window reset / subscription renewal)
+- Timed alarm: an always-on-top popup in the top-right corner when due (Cursor period end / Claude and Codex window reset / Claude subscription renewal)
 - Four-language UI (Traditional Chinese / English / Japanese / Korean), switchable in Settings
 - GitHub Actions Release (tag-triggered `.dmg` / `.exe`)
 - CI quality gates (typecheck, readonly guard, unit tests, build, smoke build)
-- Water reminder: interval popup (default 50 minutes) with “I'll go drink now” / “No, thanks”, three cup sizes (250 ml / 500 ml / 1 L), totals reset each launch
-- LINE quit status: a real quit (UI or tray) calls `app.quit()`; if LINE is on, `before-quit` broadcasts up to three Flex bubbles from the cached snapshot (Cursor / Claude 5-hour / weekly). No session-summary window is shown.
+- Water reminder: interval popup (default 50 minutes); the only button is “I drank.” (adds the selected cup size). Doing nothing auto-closes after 30 seconds with no water logged. Three cup sizes (250 ml / 500 ml / 1 L); totals reset each launch
+- LINE quit status: a real quit (UI or tray) calls `app.quit()`; if LINE is on, `before-quit` broadcasts Flex bubbles from the cached snapshot for every enabled service that has a known reading (Cursor overall, Claude 5-hour / weekly, Codex 5-hour / weekly). Unknown / never-polled windows are skipped. No session-summary window is shown.
 
 
 ### Alarm trigger precision
@@ -191,12 +199,22 @@ An alarm is only raised from a reading the app can stand behind.
   per source is remembered and armed from instead.
 - **Low-quota / exhausted alerts are one-shot.** Crossing a threshold or running
   out notifies once (desktop + LINE + popup) and then stays quiet in that same
-  state. `notifyCooldownMinutes` only applies to quota-change and credential
-  notices, not to low-quota alerts. One "event" is identified by threshold plus
+  state. `notifyCooldownMinutes` only applies to quota-change notices, not to
+  low-quota or credential-expiry alerts. One "event" is identified by threshold plus
   that window's reset time (`monitor-engine.ts` `fireWindowAlert`): changing the
   threshold, or the window actually resetting, is a new event and will alert
   again; quota recovering above the threshold clears the last record so the next
   drop is treated as fresh.
+- **`resetsAt` is pinned across polls.** Sources that recompute `resetsAt` as
+  `now + secondsLeft` (Codex's `reset_after_seconds`) would otherwise drift by a
+  second or two each poll, which looks like a new occurrence to the one-shot
+  gate. `stabilizeWindowResets` / `stabilizeResetTime` (`src/shared/monitor-utils.ts`)
+  keep the previous value while it is still in the future.
+- **A recovered credential re-arms the expiry notice.** The credential-expired
+  notice is one-shot per occurrence (`notificationStore.shouldFireOnce`). Recovery
+  (`credential-monitor.ts` `clearUnusableLatch`) clears that latch, so a later
+  genuine new failure — even one that happens to look like the same
+  `state|expiresAt` — can notify again.
 
 ### Timed alarm
 
@@ -207,10 +225,10 @@ frameless, always-on-top window (`alarm.html`) positioned in the
 monitor-arrangement change never leaves it off-screen). Quota / reset / low-quota popups are
 **silent** (`soundEnabled: false`); the water reminder uses a synthesised chime. It is shown with
 `showInactive()` so it never steals the keystroke you are in the middle of typing, and closes
-itself after `ALARM_POPUP_AUTO_DISMISS_SECONDS` (30 seconds; not a setting). Quota popups can be
-snoozed for 5 minutes (`SNOOZE_MS`).
-OS-native desktop notifications are also closed by `sendPlainDesktopNotification` after the
-same 30-second window.
+itself after `ALARM_POPUP_AUTO_DISMISS_SECONDS` (30 seconds; not a setting). Quota / reset /
+low-quota popups have no action buttons. The water reminder is the only popup with a button
+(“I drank.”); skipping it logs nothing. OS-native desktop notifications are also closed by
+`sendPlainDesktopNotification` after the same 30-second window.
 
 How to be notified is two peer switches: the app popup (`enableAlarmPopup`) and LINE
 (`enableLineNotification`; a token must still be pasted below before anything is sent). Each
@@ -222,7 +240,8 @@ splits three independent switches: **5-hour reset**, **weekly reset** (usage win
 `/api/oauth/profile` `subscription_created_at` plus the monthly/annual cadence
 setting). The subscription date does not refill quota. Max plans are monthly
 only; an annual Pro plan uses the yearly anniversary of that anchor. Switching from monthly
-to annual mid-stream may still use the original subscribe date as the anchor.
+to annual mid-stream may still use the original subscribe date as the anchor. Codex splits
+two independent switches: **5-hour reset** and **weekly reset**.
 
 Two failure modes of the old reset alert are fixed here:
 
@@ -236,10 +255,11 @@ Two failure modes of the old reset alert are fixed here:
 
 ### Security constraints
 - OAuth tokens are only held briefly in memory.
-- Writing to `state.vscdb` or `.credentials.json` is forbidden.
+- Writing to `state.vscdb`, `.credentials.json`, or `~/.codex/auth.json` is forbidden.
 - Claude Code credentials are entirely read-only: Usage-Pulse never spawns the `claude` CLI, never implements OAuth itself, and never writes to the official `Claude Code-credentials` Keychain item. The only Keychain write it ever performs is a one-time, best-effort deletion of the retired `Usage-Pulse-Claude-setup-token` item left over from the old setup-token flow.
 - Re-reading a credential (`auth:check`) only reads the Keychain item, never writes to it; the user completes `claude auth login` entirely in their own terminal, outside the app. A token pasted into the card is verified against the usage API before it is stored, and lives in `electron-store` under `safeStorage` encryption — never in a Keychain item.
-- On a 401 or missing quota data, return an actionable error message; never perform automatic token refresh.
+- Codex credentials are also read-only on disk. Near-expiry access tokens may be refreshed in process memory via the official Codex CLI's public OAuth client; the new token is never written back to `~/.codex/auth.json` or Keychain.
+- On a 401 or missing quota data, return an actionable error message. Claude Code and Cursor never auto-refresh; Codex's in-memory refresh (above) is the only exception.
 
 ### Development and packaging
 
@@ -277,21 +297,22 @@ Two failure modes of the old reset alert are fixed here:
 
 ### 專案概述
 - 專案名稱：Usage-Pulse
-- 目標：在 Mac / Windows 以選單列工具方式監控 Cursor 與 Claude Code 配額，並以桌面通知與可選的 LINE 廣播回報變化。
+- 目標：在 Mac / Windows 以選單列工具方式監控 Cursor、Claude Code 與 Codex 配額，並以桌面通知與可選的 LINE 廣播回報變化。
 - 發布方式：使用 GitHub Release 提供安裝檔，不建立網站，不上架 Store。
 - 架構原則：Sidecar Observer（旁路觀察者），僅讀取本機憑證與用量 API，不寫回 IDE 狀態。
 
 ### 資料架構
 - `AppSettings`（見 `src/shared/types.ts`；沒有使用者可調的檢查頻率）：
-  - 服務開關：`enableCursorMonitoring` / `enableClaudeMonitoring`
+  - 服務開關：`enableCursorMonitoring` / `enableClaudeMonitoring` / `enableCodexMonitoring`
   - Cursor 低額度：`cursorModels`（`autoPercentUsed`）與進階／其他模型（`apiPercentUsed`）各自有閾值與開關
   - Claude Code 低額度：5 小時與每週各自有閾值與開關；`enableClaudeCooldownAlert` 是 5 小時視窗用盡鎖定的提醒，不是百分比閾值
+  - Codex 低額度：與 Claude 相同——5 小時、每週，以及 `enableCodexCooldownAlert`。API 回報的額外視窗（單模型、code review）會顯示，但不獨立告警
   - 啟動：`launchWithIde` 與 `launchAtStartup` 互斥
-  - 鬧鐘：Cursor 本期到期；Claude Code 5 小時／每週／訂閱到期三個獨立開關，加上 `claudeBillingCadence`
-  - 其他：`trayValueColorMode`、`enableAlarmPopup`、`enableLineNotification`、`claudeUseCliActivityPolling`、喝水提醒間隔／杯量、介面語言（`zh`／`en`／`ja`／`ko`）、通知冷卻時間
-- `SessionStats`：本次啟動的使用時長、已記喝水量，以及 Cursor／Claude Code 相對啟動時的用量增量
-- `CombinedSnapshot`：Cursor 與 Claude 配額快照
-- `QuotaSnapshot.windows`：多視窗配額（Cursor 計費週期／Cursor 模型／其他模型；Claude Code 的 5 小時／每週）
+  - 鬧鐘：Cursor 本期到期；Claude Code 5 小時／每週／訂閱到期三個獨立開關，加上 `claudeBillingCadence`；Codex 5 小時／每週兩個獨立開關
+  - 其他：`trayValueColorMode`、`enableAlarmPopup`、`enableLineNotification`、`claudeUseCliActivityPolling`、`codexUseCliActivityPolling`、喝水提醒間隔／杯量、介面語言（`zh`／`en`／`ja`／`ko`）、通知冷卻時間
+- `SessionStats`：本次啟動的使用時長、已記喝水量，以及 Cursor／Claude Code／Codex 相對啟動時的用量增量
+- `CombinedSnapshot`：Cursor、Claude 與 Codex 配額快照
+- `QuotaSnapshot.windows`：多視窗配額（Cursor 計費週期／Cursor 模型／其他模型；Claude Code 的 5 小時／每週；Codex 的 5 小時／每週，以及 API 回報的其他具名視窗）
 
 ### 配額來源（唯讀）
 
@@ -311,6 +332,13 @@ Two failure modes of the old reset alert are fixed here:
 - 佐證用本機來源：`~/.claude/projects/**/*.jsonl`，唯讀，且只取 `quotaLimits`
   紀錄——詳見下方「對 usage API 的節制」
 - 指標：5 小時視窗與每週配額剩餘百分比
+
+#### Codex
+- 本機來源：`~/.codex/auth.json`，或 `~/.codex/config.toml` 憑證存放偏好所指定的 macOS Keychain 項目（`Codex Auth`／`com.openai.codex`／`Codex Auth Credentials`）。兩者皆唯讀——Usage-Pulse 從不寫入。沒有 App 內 Codex 登入介面；使用者需先用 Codex CLI 或 Codex Desktop 登入。
+- 遠端來源：`https://chatgpt.com/backend-api/wham/usage`，失敗再打 `https://chatgpt.com/backend-api/codex/usage`
+- 視窗（`src/shared/codex-usage.ts`）：依時長分類（5 小時／7 天），不用 `primary_window`／`secondary_window` 這類後端槽位名稱。那些標籤本身沒有身分。若一個視窗的名字只是槽位標籤、又佔不到 5 小時或每週槽位，就直接丟棄（`parseWindowObject` 回傳 `null`；renderer 也用 `isCodexBackendSlotKey` 再濾一次），不會當成獨立卡片。API 回報的額外視窗（例如 code-review）會顯示，但不獨立告警。payload 有剩餘 credits 時一併顯示。
+- 讀取與寫入快取時會再正規化（`src/main/store.ts` 的 `normalizeCodexSnapshot`），下次載入即可修正舊的錯誤標籤。
+- Token 刷新：access token 接近過期時，Usage-Pulse 會用官方 Codex CLI 的公開 OAuth client id 在行程記憶體中刷新。新 token **不會**寫回 `~/.codex/auth.json`。
 
 #### 重新偵測 Claude Code 憑證
 啟動時，`credentialMonitor.checkAll()` 會以唯讀方式檢查官方的
@@ -404,15 +432,15 @@ Codex 不套用 Claude/Cursor 的正常/低額度雙檔排程，而是走單一�
 ### 已完成功能
 - Electron + React + TypeScript 專案骨架（Electron `^43.4.1`）
 - Sidecar Observer 改造（移除網頁 Session 登入流程）
-- 本機憑證偵測 + API 配額抓取
-- 背景抓取與排程監控（一般 15 分鐘；視窗偏低時 10 分鐘）
+- 本機憑證偵測 + API 配額抓取（Cursor、Claude Code、Codex）
+- 背景抓取與排程監控（一般 15 分鐘；視窗偏低時 10 分鐘；Codex 為固定 1 分鐘）
 - 桌面通知（配額變化 / 低額度 / 重置提醒）
-- 到點／到期提醒：時間到點在螢幕右上角彈出置頂視窗（Cursor 為本期到期，Claude 為視窗重置／訂閱到期）
+- 到點／到期提醒：時間到點在螢幕右上角彈出置頂視窗（Cursor 為本期到期，Claude／Codex 為視窗重置，Claude 另有訂閱到期）
 - 四語介面（繁體中文／英文／日文／韓文），可在設定內切換
 - GitHub Actions Release（tag 觸發 `.dmg` / `.exe`）
 - CI 品質檢查（typecheck、readonly guard、unit test、build、smoke build）
-- 喝水提醒：依間隔彈窗（預設 50 分鐘），按鈕為「我現在去喝／不，謝謝」；杯量僅 250 ml／500 ml／1 L，水量每次開啟 App 後重新累計
-- LINE 結束現況：真正關閉（UI 或 tray）都是 `app.quit()`；若 LINE 開啟，`before-quit` 用快取 snapshot 最多送 3 則 Flex（Cursor／Claude 5 小時／每週）。不會跳出結束統計視窗。
+- 喝水提醒：依間隔彈窗（預設 50 分鐘）；唯一按鈕是「我喝了。」（加上所選杯量）。沒按就 30 秒自動關閉、不記水量。杯量僅 250 ml／500 ml／1 L，水量每次開啟 App 後重新累計
+- LINE 結束現況：真正關閉（UI 或 tray）都是 `app.quit()`；若 LINE 開啟，`before-quit` 用快取 snapshot，為每個已啟用且有已知讀數的服務送 Flex（Cursor 整體、Claude 5 小時／每週、Codex 5 小時／每週）。未知／從未抓取的視窗會跳過。不會跳出結束統計視窗。
 
 
 ### 警告觸發精確度
@@ -429,10 +457,16 @@ Codex 不套用 Claude/Cursor 的正常/低額度雙檔排程，而是走單一�
 - **中斷不會把真的鬧鐘解除掉**：抓取失敗會讓 `resetsAt` 變成 null，過去這會靜靜取消一個待響的
   鬧鐘。現在每個來源最後一次可信的重置時間都會被記住，中斷期間改用它來排程。
 - **低額度／用盡提醒是一次性的**：跨過閾值或配額用盡時只通知一次（桌面通知＋LINE＋彈窗），之後
-  即使一直卡在同一個狀態也不會再重複——`notifyCooldownMinutes` 只影響配額變化通知與憑證通知，
-  跟低額度提醒無關。同一次「事件」由「閾值＋該視窗的重置時間」共同識別（`monitor-engine.ts` 的
+  即使一直卡在同一個狀態也不會再重複——`notifyCooldownMinutes` 只影響配額變化通知，
+  跟低額度提醒、憑證失效提醒無關。同一次「事件」由「閾值＋該視窗的重置時間」共同識別（`monitor-engine.ts` 的
   `fireWindowAlert`）：改動閾值設定，或視窗真的重置到下一輪，都算新事件，會重新提醒一次；額度
   真的回升到閾值之上，則會清掉上一次的紀錄，下次再跌破閾值就當作全新事件重新提醒。
+- **`resetsAt` 會在輪詢之間釘住**：會把 `resetsAt` 重算成 `now + secondsLeft` 的來源（Codex 的
+  `reset_after_seconds`）每次輪詢可能差一兩秒，對一次性閘門來說就像新事件。
+  `stabilizeWindowResets`／`stabilizeResetTime`（`src/shared/monitor-utils.ts`）會在舊值仍屬未來時沿用舊值。
+- **憑證恢復後會重開失效通知閘門**：憑證失效通知依發生次數一次性發送（`notificationStore.shouldFireOnce`）。
+  恢復時（`credential-monitor.ts` 的 `clearUnusableLatch`）會清掉這個閘門，之後真正的新失效——就算
+  `state|expiresAt` 碰巧長得一樣——仍能再通知一次。
 
 ### 到點提醒
 
@@ -441,14 +475,14 @@ Usage-Pulse 完全不碰任何作業系統層級的鬧鐘或排程器——App �
 **右上角**（每次顯示時都會重新計算座標，所以解析度或多螢幕排列變動也不會讓視窗跑到畫面外）。
 配額／重置／低額度彈窗**靜音**（`soundEnabled: false`）；喝水提醒才用合成 chime。用
 `showInactive()` 顯示，所以不會搶走你正在輸入的鍵盤焦點。經過
-`ALARM_POPUP_AUTO_DISMISS_SECONDS`（30 秒，不是設定項）後自動關閉。配額彈窗可延後 5 分鐘
-（`SNOOZE_MS`）。
+`ALARM_POPUP_AUTO_DISMISS_SECONDS`（30 秒，不是設定項）後自動關閉。配額／重置／低額度彈窗
+沒有任何操作按鈕。喝水提醒是唯一帶按鈕的彈窗（「我喝了。」）；沒按就不記水量。
 OS 原生桌面通知也會由 `sendPlainDesktopNotification` 在同樣的 30 秒後主動關閉。
 
 「用什麼方式提醒」是兩個平級開關：App 彈窗（`enableAlarmPopup`）與 LINE 通知
 （`enableLineNotification`；仍須在下方區塊貼 Token 才會真的送出）。各服務的開關跟該服務的
 低額度預警閾值放在同一張卡片裡——沒有獨立的「重置鬧鐘」卡片，也沒有任何作業系統層級的設定。
-Cursor 是「到期提醒」（本期 `billingCycleEnd`，用量重設與計費同一天）。Claude Code 拆成三個獨立開關：5 小時到點、每週配額到點（`/api/oauth/usage` 的用量視窗），以及訂閱到期（`/api/oauth/profile` 的 `subscription_created_at` 加上月繳／年繳週年推算）。訂閱到期**不會**重設 5 小時或每週配額。Max 目前只有月繳；年繳 Pro 用該錨點的年週年。若中途從月繳改年繳，錨點可能仍是原始訂閱日。
+Cursor 是「到期提醒」（本期 `billingCycleEnd`，用量重設與計費同一天）。Claude Code 拆成三個獨立開關：5 小時到點、每週配額到點（`/api/oauth/usage` 的用量視窗），以及訂閱到期（`/api/oauth/profile` 的 `subscription_created_at` 加上月繳／年繳週年推算）。訂閱到期**不會**重設 5 小時或每週配額。Max 目前只有月繳；年繳 Pro 用該錨點的年週年。若中途從月繳改年繳，錨點可能仍是原始訂閱日。Codex 拆成兩個獨立開關：5 小時到點與每週配額到點。
 
 這個機制同時修掉舊版重置提醒的兩個缺陷：
 
@@ -461,10 +495,11 @@ Cursor 是「到期提醒」（本期 `billingCycleEnd`，用量重設與計費�
 
 ### 安全約束
 - OAuth token 僅在記憶體中短暫使用。
-- 禁止寫入 `state.vscdb`、`.credentials.json`。
+- 禁止寫入 `state.vscdb`、`.credentials.json`、`~/.codex/auth.json`。
 - Claude Code 憑證完全唯讀：Usage-Pulse 不 spawn `claude` CLI、不自己實作 OAuth，也不寫入官方的 `Claude Code-credentials` Keychain 項目。唯一會做的 Keychain 寫入，是啟動時一次性、盡力刪除舊 setup-token 流程留下的 `Usage-Pulse-Claude-setup-token` 項目。
 - 憑證重讀（`auth:check`）只讀取 Keychain 項目，不寫入；使用者完全在自己的終端機執行 `claude auth login` 完成登入，App 不參與。貼進卡片的 token 會先對 usage API 驗證通過才儲存，並存在 `electron-store` 內由 `safeStorage` 加密，不會寫成 Keychain 項目。
-- 發生 401 / 配額資料缺失時，回傳可行動的錯誤訊息，不做自動 token refresh。
+- Codex 憑證在磁碟上同樣唯讀。access token 接近過期時，可用官方 Codex CLI 的公開 OAuth client 在行程記憶體中刷新；新 token 不會寫回 `~/.codex/auth.json` 或 Keychain。
+- 發生 401 / 配額資料缺失時，回傳可行動的錯誤訊息。Claude Code 與 Cursor 不做自動 token refresh；唯一例外是上述 Codex 的記憶體刷新。
 
 ### 開發與打包
 

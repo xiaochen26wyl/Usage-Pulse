@@ -11,12 +11,12 @@ It only reads credentials you're already logged in with locally and official usa
 ## Installation 安裝指引
 
 ### Download 下載
-- Apple Silicon (M1/M2/M3...): `Usage-Pulse-2.0.1-arm64.dmg`
-- Intel Mac: `Usage-Pulse-2.0.1.dmg` (or the x64-labeled file)
-- Windows x64: `Usage-Pulse.Setup.2.0.1.exe`
-- Apple Silicon（M1/M2/M3...）：`Usage-Pulse-2.0.1-arm64.dmg`
-- Intel Mac：`Usage-Pulse-2.0.1.dmg`（或 x64 標示檔）
-- Windows x64：`Usage-Pulse.Setup.2.0.1.exe`
+- Apple Silicon (M1/M2/M3...): `Usage-Pulse-2.0.2-arm64.dmg`
+- Intel Mac: `Usage-Pulse-2.0.2.dmg` (or the x64-labeled file)
+- Windows x64: `Usage-Pulse.Setup.2.0.2.exe`
+- Apple Silicon（M1/M2/M3...）：`Usage-Pulse-2.0.2-arm64.dmg`
+- Intel Mac：`Usage-Pulse-2.0.2.dmg`（或 x64 標示檔）
+- Windows x64：`Usage-Pulse.Setup.2.0.2.exe`
 
 ### Run from source 從原始碼執行
 
@@ -47,8 +47,8 @@ pnpm dev
 - 先登入 **Cursor Desktop**（供 Cursor 配額讀取）。
 - Install the **standalone Claude Code CLI** and log in with it first.
 - 先安裝**獨立版 Claude Code CLI** 並登入。
-- Log in to the **Codex CLI** first (Usage-Pulse does not open a Codex login UI).
-- 先登入 **Codex CLI** 或 **Codex Desktop**。
+- Log in to the **Codex CLI** or **Codex Desktop** first (Usage-Pulse does not open a Codex login UI).
+- 先登入 **Codex CLI** 或 **Codex Desktop**（Usage-Pulse 不會開啟 Codex 登入介面）。
 - Allow system notification permissions when prompted.
 - 出現提示時請允許系統通知權限。
 
@@ -74,8 +74,8 @@ I. Checks Cursor / Claude Code / Codex quota periodically in the background and 
 背景會定期檢查 Cursor / Claude Code / Codex 配額，並在變化時提醒你。
 II. Low-quota and quota-reset alerts can each be toggled independently, per service and per window, in Settings.  
 低額度與配額重置提醒都可以在設定中依服務、依視窗個別開關。
-III. Two notification channels, each toggled independently in Settings: an in-app popup (no OS permission needed, always works — top-right, auto-closes, can be snoozed) and LINE notifications (needs a Channel Access Token).  
-兩種通知管道，可在設定中個別開關：App 彈窗提醒（免權限、一定生效——顯示於右上角、自動關閉、可延後）與 LINE 通知（需要 Channel Access Token）。
+III. Two notification channels, each toggled independently in Settings: an in-app popup (no OS permission needed, always works — top-right, auto-closes after 30 seconds) and LINE notifications (needs a Channel Access Token).  
+兩種通知管道，可在設定中個別開關：App 彈窗提醒（免權限、一定生效——顯示於右上角、30 秒後自動關閉）與 LINE 通知（需要 Channel Access Token）。
 IV. Available in Traditional Chinese, English, Japanese, and Korean from the in-app language menu.  
 支援繁體中文、英文、日文、韓文介面，可在 App 語言選單切換。
 V. Quit anytime from the UI or the tray menu; if LINE is on, quitting sends a final status from the last cached reading.  
@@ -92,7 +92,7 @@ V. Quit anytime from the UI or the tray menu; if LINE is on, quitting sends a fi
 
 If anything appears incorrect — such as a reading that seems wrong, a notification that should not have been triggered, or any other unexpected behavior — please open a question in [Discussions Q&A](https://github.com/xiaochen26wyl/Usage-Pulse/discussions/categories/q-a-%E8%A7%A3%E6%B1%BA%E5%95%8F%E9%A1%8C) instead of making assumptions.
 
-如果有任何行為看起來不正確——例如數值異常、理應不會觸發的通知，或其他任何預期外的狀況——請不要自行推測，並請至 [Discussions Q&A](https://github.com/xiaochen26wyl/Usage-Pulse/discussions/categories/q-a-%E8%A7%A3%E6%B1%BA%E5%95%8F%E9%A1%8C)
+如果有任何行為看起來不正確——例如數值異常、理應不會觸發的通知，或其他任何預期外的狀況——請不要自行推測，並請至 [Discussions Q&A](https://github.com/xiaochen26wyl/Usage-Pulse/discussions/categories/q-a-%E8%A7%A3%E6%B1%BA%E5%95%8F%E9%A1%8C) 提出問題。
 
 
 ## License and important notice 授權與重要聲明

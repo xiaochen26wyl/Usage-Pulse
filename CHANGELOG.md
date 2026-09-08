@@ -8,6 +8,13 @@ Language / 語言：[English](#english) | [繁體中文](#繁體中文)
 
 All notable changes to Usage-Pulse are documented in this file.
 
+### [2.0.2] - 2026-09-08
+
+#### Fixed
+- Codex backend slot names (`primary_window` / `secondary_window`) that cannot occupy the 5-hour or weekly slot are discarded, so they never appear as extra cards in the UI.
+- Window `resetsAt` is kept stable across polls (Codex's `reset_after_seconds` used to drift by a second or two), so a low-quota alert no longer re-fires for as long as the window stays low.
+- Credential-expired notifications fire once per occurrence; a later recovery clears the latch so a genuine new failure can notify again.
+
 ### [2.0.1] - 2026-09-06
 
 #### Changed
@@ -49,6 +56,13 @@ All notable changes to Usage-Pulse are documented in this file.
 ## 繁體中文
 
 本檔案記錄 Usage-Pulse 所有重要版本變更。
+
+### [2.0.2] - 2026-09-08
+
+#### 修復
+- 無法佔用 5 小時或每週槽位的 Codex 後端視窗名（`primary_window`／`secondary_window`）會被丟棄，不再以獨立卡片出現在 UI。
+- 視窗 `resetsAt` 在輪詢之間保持穩定（Codex 的 `reset_after_seconds` 過去每次會差一兩秒），低額度提醒不會在視窗持續偏低時反覆觸發。
+- 憑證失效通知依發生次數只發一次；之後若憑證恢復，會清掉閘門，真正的新失效才能再通知。
 
 ### [2.0.1] - 2026-09-06
 
