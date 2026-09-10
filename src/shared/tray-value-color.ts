@@ -10,7 +10,7 @@ export const TRAY_VALUE_COLOR_BLACK = "#1F2328";
 // and would vanish on a dark menu bar.
 export const TRAY_CURSOR_LABEL_COLOR = "#c084fc";
 export const TRAY_CLAUDE_LABEL_COLOR = "#E8945A";
-export const TRAY_CODEX_LABEL_COLOR = "#E8C44A";
+export const TRAY_CODEX_LABEL_COLOR = "#60A5FA";
 
 export const resolveTrayValueColor = (
   mode: TrayValueColorMode,

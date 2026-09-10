@@ -13,6 +13,9 @@ All notable changes to Usage-Pulse are documented in this file.
 #### Added
 - One-shot desktop + LINE notice when a window recovers from low quota, exhausted, or cooldown (no popup — recovery isn't urgent). Already-healthy windows never get a spurious recovered message.
 
+#### Changed
+- Codex accent colour is now blue (`#60A5FA`) across the quota card, menu bar, and LINE cards, replacing the previous gold.
+
 #### Fixed
 - Window `resetsAt` is still pinned against poll jitter, but a candidate more than 60 seconds away is trusted immediately, so a genuine early reset can re-arm the one-shot alert gate instead of being treated as noise.
 
@@ -69,6 +72,9 @@ All notable changes to Usage-Pulse are documented in this file.
 
 #### 新增
 - 視窗從低額度、用盡或冷卻恢復時，會發一則一次性桌面＋LINE 通知（不含彈窗——恢復不算緊急）。本來就健康的視窗不會誤發。
+
+#### 變更
+- Codex 識別色改為藍色（`#60A5FA`），配額卡片、選單列與 LINE 卡片一併更新，取代原本的金色。
 
 #### 修復
 - 視窗 `resetsAt` 仍會釘住輪詢雜訊，但新值差距超過 60 秒就立即採用，視窗真的提早重置時才能重新打開一次性提醒閘門，不會被當成雜訊卡住。

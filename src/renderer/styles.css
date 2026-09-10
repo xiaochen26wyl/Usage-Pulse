@@ -13,7 +13,7 @@
   --color-water-strong: #0ea5e9;
   --color-claude: #e8945a;
   --color-cursor: #c084fc;
-  --color-codex: #e8c44a;
+  --color-codex: #60a5fa;
   --color-text: #f5f6f8;
   --color-text-muted: #9aa4b5;
   --color-border: #2a3442;
@@ -228,7 +228,7 @@ h2 {
 }
 
 .progress-fill-codex {
-  background: linear-gradient(90deg, #ffe9a3, var(--color-codex));
+  background: linear-gradient(90deg, #bfdbfe, var(--color-codex));
 }
 
 .meta-text {
