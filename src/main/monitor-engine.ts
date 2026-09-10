@@ -12,7 +12,7 @@ import type {
 import { isDuplicateInCooldown, shouldClearLowQuotaLatch, stabilizeResetTime, stabilizeWindowResets } from "@shared/monitor-utils";
 import { normalizeCodexSnapshot } from "@shared/codex-usage";
 import { isColdReading, isTrusted } from "@shared/snapshot-trust";
-import { buildExhaustedFlex, buildLowQuotaFlex } from "@shared/line-templates";
+import { buildExhaustedFlex, buildLowQuotaFlex, buildRecoveredFlex } from "@shared/line-templates";
 import { localeForLanguage, t } from "@shared/i18n";
 import { alarmService } from "@main/alarm-service";
 import { showAlarmPopup } from "@main/alarm-window";
@@ -569,6 +569,32 @@ export class MonitorEngine extends EventEmitter {
   }
 
   /**
+   * Fires the one-shot "quota recovered" notice: desktop + LINE, no alarm
+   * popup — good news isn't urgent enough to interrupt. Callers only invoke
+   * this after notificationStore.clear() actually found a previously-fired
+   * low/exhausted/cooldown latch to remove; that success is itself the
+   * one-shot gate, so this needs no dedupe key of its own.
+   */
+  private fireRecoveredAlert(options: {
+    service: ServiceType;
+    label: string;
+    combined: CombinedSnapshot;
+    remainingPercent: number | null;
+    resetAt: string | null;
+    lang: AppSettings["language"];
+  }): void {
+    const { service, label, combined, remainingPercent, resetAt, lang } = options;
+    const serviceLabel = SERVICE_LABELS[service];
+    sendDesktopNotification({
+      snapshot: combined,
+      reason: t(lang, "reason.quotaRecoveredNotify", { service: serviceLabel, label })
+    });
+    void sendLineBroadcast(
+      buildRecoveredFlex({ service, serviceLabel, windowLabel: label, remainingPercent, resetAt, lang })
+    );
+  }
+
+  /**
    * Fires one window's alert, if it has one to fire.
    *
    * "Used up" supersedes "running low" for the same window: a spent window is
@@ -629,9 +655,11 @@ export class MonitorEngine extends EventEmitter {
         // Fully recovered: clear both latches so a later dip under the
         // threshold — even with the same threshold and reset time as before —
         // is treated as a new occurrence rather than the one that already fired.
-        notificationStore.clear(`lowquota:${lowId}`);
-        if (exhaustedId) {
-          notificationStore.clear(`lowquota:${exhaustedId}`);
+        const hadLow = notificationStore.clear(`lowquota:${lowId}`);
+        const hadExhausted = exhaustedId ? notificationStore.clear(`lowquota:${exhaustedId}`) : false;
+        if (hadLow || hadExhausted) {
+          this.fireRecoveredAlert({ service, label, combined, remainingPercent: state.remainingPercent, resetAt, lang });
+          return true;
         }
       }
       return false;
@@ -770,7 +798,17 @@ export class MonitorEngine extends EventEmitter {
     } else {
       // Cooldown lifted: clear the latch so the next cooldown window — even
       // one that lands on the same resetsAt by coincidence — rings fresh.
-      notificationStore.clear("lowquota:claude-cooldown");
+      if (notificationStore.clear("lowquota:claude-cooldown")) {
+        this.fireRecoveredAlert({
+          service: "claude",
+          label: t(lang, "alertLabel.claudeCooldown"),
+          combined,
+          remainingPercent: flags.session.remainingPercent,
+          resetAt: null,
+          lang
+        });
+        notified = true;
+      }
     }
 
     return notified;
@@ -837,7 +875,17 @@ export class MonitorEngine extends EventEmitter {
           }) || notified;
       }
     } else {
-      notificationStore.clear("lowquota:codex-cooldown");
+      if (notificationStore.clear("lowquota:codex-cooldown")) {
+        this.fireRecoveredAlert({
+          service: "codex",
+          label: t(lang, "alertLabel.codexCooldown"),
+          combined,
+          remainingPercent: flags.session.remainingPercent,
+          resetAt: null,
+          lang
+        });
+        notified = true;
+      }
     }
 
     return notified;

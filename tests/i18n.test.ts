@@ -103,6 +103,18 @@ test("the quit-status keys resolve to a non-empty, distinct string in every lang
   }
 });
 
+test("the recovered-notice keys resolve to a non-empty, distinct string in every language", () => {
+  const keys = ["line.tpl.recoveredTitle", "line.tpl.altRecovered", "reason.quotaRecoveredNotify"] as const;
+  for (const key of keys) {
+    const values = langs.map((lang) => t(lang, key));
+    for (const value of values) {
+      assert.ok(value.length > 0, `${key} is empty`);
+      assert.notEqual(value, key, `${key} did not resolve to a translation`);
+    }
+    assert.equal(new Set(values).size, langs.length, `${key} is not distinct across languages`);
+  }
+});
+
 test("localeForLanguage maps each UI language", () => {
   assert.equal(localeForLanguage("zh"), "zh-TW");
   assert.equal(localeForLanguage("en"), "en-US");

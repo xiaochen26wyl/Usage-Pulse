@@ -95,9 +95,23 @@ test("shouldClearLowQuotaLatch clears once the reading is past the hysteresis ma
 test("stabilizeResetTime holds a still-future cached value instead of taking a drifted candidate", () => {
   const nowMs = Date.parse("2026-08-26T10:00:00.000Z");
   const cached = "2026-08-26T15:00:00.000Z";
-  const drifted = "2026-08-26T15:03:00.000Z";
+  const drifted = "2026-08-26T15:00:03.000Z"; // 3s: realistic recompute jitter
   assert.equal(stabilizeResetTime(cached, drifted, nowMs), cached);
   assert.equal(stabilizeResetTime(cached, null, nowMs), cached);
+});
+
+test("stabilizeResetTime holds a candidate exactly at the jitter tolerance boundary", () => {
+  const nowMs = Date.parse("2026-08-26T10:00:00.000Z");
+  const cached = "2026-08-26T15:00:00.000Z";
+  const atBoundary = "2026-08-26T15:01:00.000Z"; // exactly 60_000ms
+  assert.equal(stabilizeResetTime(cached, atBoundary, nowMs), cached);
+});
+
+test("stabilizeResetTime trusts a materially different candidate even though cached hasn't elapsed by the app's clock (genuine early reset)", () => {
+  const nowMs = Date.parse("2026-08-26T10:00:00.000Z");
+  const cached = "2026-08-26T15:00:00.000Z";
+  const genuinelyEarlier = "2026-08-26T14:50:00.000Z"; // 10 min earlier, well past jitter tolerance
+  assert.equal(stabilizeResetTime(cached, genuinelyEarlier, nowMs), genuinelyEarlier);
 });
 
 test("stabilizeResetTime accepts a new candidate once the cached value has elapsed", () => {
@@ -155,6 +169,16 @@ test("stabilizeWindowResets lets a genuinely new cycle through once the cached r
   const stabilized = stabilizeWindowResets(previous, next, nowMs);
 
   assert.equal(stabilized[0].resetsAt, "2026-08-26T21:00:00.000Z");
+});
+
+test("stabilizeWindowResets lets a genuinely early reset through even while the cached value is still in the app's future", () => {
+  const nowMs = Date.parse("2026-08-26T10:00:00.000Z");
+  const previous = [window("session", "2026-08-26T15:00:00.000Z")];
+  const next = [window("session", "2026-08-26T12:00:00.000Z")]; // real server-side reset landed earlier
+
+  const stabilized = stabilizeWindowResets(previous, next, nowMs);
+
+  assert.equal(stabilized[0].resetsAt, "2026-08-26T12:00:00.000Z");
 });
 
 test("stabilizeWindowResets passes windows through untouched when there is no previous poll", () => {

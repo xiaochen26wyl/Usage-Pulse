@@ -8,6 +8,7 @@ import {
   buildLowQuotaFlex,
   buildPlainAlertFlex,
   buildQuitStatusFlex,
+  buildRecoveredFlex,
   type LineFlexMessage,
 } from "../src/shared/line-templates";
 
@@ -90,6 +91,49 @@ test("exhausted bubbles are red for either service", () => {
   }
 });
 
+test("recovered bubbles use the service's own colour, never EXHAUSTED_RED", () => {
+  for (const service of ["cursor", "claude"] as const) {
+    const message = buildRecoveredFlex({
+      service,
+      serviceLabel: service === "cursor" ? "Cursor" : "Claude Code",
+      windowLabel: "Weekly",
+      remainingPercent: 45,
+      resetAt: "2026-09-01T00:00:00Z",
+      lang: "zh",
+      now: fixedNow,
+    });
+    assert.equal(accentOf(message), SERVICE_ACCENT[service]);
+    assert.notEqual(accentOf(message), EXHAUSTED_RED);
+  }
+});
+
+test("recovered altText carries service, label and remaining percent", () => {
+  const message = buildRecoveredFlex({
+    service: "claude",
+    serviceLabel: "Claude Code",
+    windowLabel: "Weekly 消耗度",
+    remainingPercent: 45,
+    lang: "zh",
+    now: fixedNow,
+  });
+  assert.match(message.altText, /Claude Code/);
+  assert.match(message.altText, /Weekly 消耗度/);
+  assert.match(message.altText, /45/);
+});
+
+test("recovered bubble omits the reset row when resetAt is null", () => {
+  const message = buildRecoveredFlex({
+    service: "cursor",
+    serviceLabel: "Cursor",
+    windowLabel: "Cursor 模型",
+    remainingPercent: 80,
+    resetAt: null,
+    lang: "zh",
+    now: fixedNow,
+  });
+  assert.equal(rowsOf(message).length, 1);
+});
+
 test("every template keeps a white bubble background", () => {
   const messages = [
     buildLowQuotaFlex({
@@ -113,6 +157,14 @@ test("every template keeps a white bubble background", () => {
       serviceLabel: "Claude Code",
       title: "Usage-Pulse 配額通知",
       body: "Claude Code 憑證已過期",
+      lang: "zh",
+      now: fixedNow,
+    }),
+    buildRecoveredFlex({
+      service: "codex",
+      serviceLabel: "Codex",
+      windowLabel: "Weekly",
+      remainingPercent: 80,
       lang: "zh",
       now: fixedNow,
     }),

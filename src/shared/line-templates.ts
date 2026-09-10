@@ -213,6 +213,38 @@ export const buildLowQuotaFlex = (
   });
 };
 
+/** 額度已恢復 — the service's own accent, never EXHAUSTED_RED; this is good news. */
+export const buildRecoveredFlex = (
+  options: QuotaTemplateOptions,
+): LineFlexMessage => {
+  const { service, serviceLabel, windowLabel, remainingPercent, resetAt, lang } = options;
+  const remainingText =
+    remainingPercent === null || remainingPercent === undefined
+      ? t(lang, "app.unknown")
+      : `${remainingPercent}%`;
+  const rows: BubbleRow[] = [
+    { label: t(lang, "line.tpl.remaining"), value: remainingText },
+  ];
+  const resetText = formatTime(resetAt, lang);
+  if (resetText) {
+    rows.push({ label: t(lang, "line.tpl.resetAt"), value: resetText });
+  }
+
+  return bubble({
+    accent: SERVICE_ACCENT[service],
+    altText: t(lang, "line.tpl.altRecovered", {
+      service: serviceLabel,
+      label: windowLabel,
+      remaining: remainingText.replace("%", ""),
+    }),
+    title: t(lang, "line.tpl.recoveredTitle"),
+    subtitle: `${serviceLabel} · ${windowLabel}`,
+    rows,
+    lang,
+    now: options.now ?? new Date(),
+  });
+};
+
 /** model 點數用完通知 — red for either service, per the notification spec. */
 export const buildExhaustedFlex = (
   options: QuotaTemplateOptions,

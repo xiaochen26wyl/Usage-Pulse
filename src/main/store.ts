@@ -272,12 +272,17 @@ export const notificationStore = {
       store.set("lastNotificationAt", at);
     }
   },
-  clear(scope: string): void {
+  // Returns whether an entry actually existed and was removed — callers use
+  // this to tell a genuine recovery (something was cleared) from a window
+  // that was already clear (nothing to report).
+  clear(scope: string): boolean {
     const notifications = {
       ...((store.get("notifications") as Record<string, NotificationRecord> | undefined) ?? {})
     };
+    const existed = Boolean(notifications[scope]?.key);
     delete notifications[scope];
     store.set("notifications", notifications);
+    return existed;
   },
   /**
    * One-shot gate: fires the first time `key` is seen for this scope, then

@@ -11,12 +11,12 @@ It only reads credentials you're already logged in with locally and official usa
 ## Installation 安裝指引
 
 ### Download 下載
-- Apple Silicon (M1/M2/M3...): `Usage-Pulse-2.0.2-arm64.dmg`
-- Intel Mac: `Usage-Pulse-2.0.2.dmg` (or the x64-labeled file)
-- Windows x64: `Usage-Pulse.Setup.2.0.2.exe`
-- Apple Silicon（M1/M2/M3...）：`Usage-Pulse-2.0.2-arm64.dmg`
-- Intel Mac：`Usage-Pulse-2.0.2.dmg`（或 x64 標示檔）
-- Windows x64：`Usage-Pulse.Setup.2.0.2.exe`
+- Apple Silicon (M1/M2/M3...): `Usage-Pulse-2.0.3-arm64.dmg`
+- Intel Mac: `Usage-Pulse-2.0.3.dmg` (or the x64-labeled file)
+- Windows x64: `Usage-Pulse.Setup.2.0.3.exe`
+- Apple Silicon（M1/M2/M3...）：`Usage-Pulse-2.0.3-arm64.dmg`
+- Intel Mac：`Usage-Pulse-2.0.3.dmg`（或 x64 標示檔）
+- Windows x64：`Usage-Pulse.Setup.2.0.3.exe`
 
 ### Run from source 從原始碼執行
 

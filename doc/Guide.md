@@ -205,11 +205,24 @@ An alarm is only raised from a reading the app can stand behind.
   threshold, or the window actually resetting, is a new event and will alert
   again; quota recovering above the threshold clears the last record so the next
   drop is treated as fresh.
-- **`resetsAt` is pinned across polls.** Sources that recompute `resetsAt` as
-  `now + secondsLeft` (Codex's `reset_after_seconds`) would otherwise drift by a
-  second or two each poll, which looks like a new occurrence to the one-shot
-  gate. `stabilizeWindowResets` / `stabilizeResetTime` (`src/shared/monitor-utils.ts`)
-  keep the previous value while it is still in the future.
+- **Recovery sends its own one-shot notice.** When `fireWindowAlert` (or the
+  Claude/Codex cooldown-lift branches) clears a low/exhausted/cooldown latch and
+  that latch actually existed, `fireRecoveredAlert` sends one desktop + LINE
+  message (no popup — recovery isn't urgent). A window that was already healthy,
+  or whose latch was never set, never gets a spurious recovered message —
+  `notificationStore.clear`'s own return value (did it find something to remove)
+  is the gate, so no separate dedupe key is needed.
+- **`resetsAt` is pinned across polls, within a jitter tolerance.** Sources that
+  recompute `resetsAt` as `now + secondsLeft` (Codex's `reset_after_seconds`)
+  would otherwise drift by a second or two each poll, which looks like a new
+  occurrence to the one-shot gate. `stabilizeWindowResets` / `stabilizeResetTime`
+  (`src/shared/monitor-utils.ts`) keep the previous value while it is still in
+  the future — but only as long as the fresh candidate stays within a 60-second
+  tolerance of it. A candidate that differs by more than that is trusted
+  immediately even though the cached value hasn't elapsed by the app's own
+  clock, so a genuinely early reset (the underlying window rolling over sooner
+  than the app had predicted) isn't mistaken for recompute noise and blocked
+  from re-arming the one-shot gate.
 - **A recovered credential re-arms the expiry notice.** The credential-expired
   notice is one-shot per occurrence (`notificationStore.shouldFireOnce`). Recovery
   (`credential-monitor.ts` `clearUnusableLatch`) clears that latch, so a later
@@ -461,9 +474,16 @@ Codex 不套用 Claude/Cursor 的正常/低額度雙檔排程，而是走單一�
   跟低額度提醒、憑證失效提醒無關。同一次「事件」由「閾值＋該視窗的重置時間」共同識別（`monitor-engine.ts` 的
   `fireWindowAlert`）：改動閾值設定，或視窗真的重置到下一輪，都算新事件，會重新提醒一次；額度
   真的回升到閾值之上，則會清掉上一次的紀錄，下次再跌破閾值就當作全新事件重新提醒。
-- **`resetsAt` 會在輪詢之間釘住**：會把 `resetsAt` 重算成 `now + secondsLeft` 的來源（Codex 的
-  `reset_after_seconds`）每次輪詢可能差一兩秒，對一次性閘門來說就像新事件。
-  `stabilizeWindowResets`／`stabilizeResetTime`（`src/shared/monitor-utils.ts`）會在舊值仍屬未來時沿用舊值。
+- **額度恢復時會發一則一次性通知**：`fireWindowAlert`（以及 Claude／Codex 的冷卻解除分支）清掉
+  低量/耗盡/冷卻鎖定、且那個鎖定確實存在時，`fireRecoveredAlert` 會發一則桌面＋LINE 通知（不含
+  彈窗——恢復不算緊急）。本來就健康、或鎖定從沒設過的視窗不會誤發——閘門就是
+  `notificationStore.clear` 自己的回傳值（有沒有真的清掉東西），不需要另外的 dedupe key。
+- **`resetsAt` 會在輪詢之間釘住，但有雜訊容忍值**：會把 `resetsAt` 重算成 `now + secondsLeft` 的
+  來源（Codex 的 `reset_after_seconds`）每次輪詢可能差一兩秒，對一次性閘門來說就像新事件。
+  `stabilizeWindowResets`／`stabilizeResetTime`（`src/shared/monitor-utils.ts`）會在舊值仍屬未來
+  時沿用舊值——但僅限新讀到的值跟舊值差距在 60 秒容忍值以內。差距超過容忍值就立即採用新值，
+  即使舊值按程式自己的時鐘還沒到期，這樣視窗真的提早重置時才不會被誤判成雜訊、卡住一次性閘門
+  無法重新觸發。
 - **憑證恢復後會重開失效通知閘門**：憑證失效通知依發生次數一次性發送（`notificationStore.shouldFireOnce`）。
   恢復時（`credential-monitor.ts` 的 `clearUnusableLatch`）會清掉這個閘門，之後真正的新失效——就算
   `state|expiresAt` 碰巧長得一樣——仍能再通知一次。

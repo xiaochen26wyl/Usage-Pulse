@@ -27,21 +27,51 @@ export const shouldClearLowQuotaLatch = (
   hysteresisPercent: number
 ): boolean => remainingPercent !== null && remainingPercent > threshold + hysteresisPercent;
 
+// Real recompute jitter (Codex's now+secondsLeft, the Claude CLI log rescan)
+// is documented as "a second or two" per poll. 60s is generous headroom for
+// a slower tick or a couple of stacked polls, but far short of any
+// legitimate reset-time change (minutes to hours), so a candidate that
+// differs by more than this can't be mistaken for jitter.
+const RESET_DRIFT_TOLERANCE_MS = 60_000;
+
 /**
  * Keeps a re-derived fallback reset time stable across repeated
  * recomputation: the cached value is kept for as long as it's still in the
- * future (proof the cycle it names hasn't ended yet); once it elapses, the
- * newest candidate (even null) becomes the new baseline. Without this, a
- * source that rescans noisy logs on every call — like the Claude CLI's local
- * quota-rejection log — can return a slightly different "latest" reset time
- * from one poll to the next even though the real window hasn't rolled over,
- * which would look like a fresh occurrence to anything keying off the value.
+ * future (proof the cycle it names hasn't ended yet) AND the fresh candidate
+ * is within jitter tolerance of it; once the cached value elapses, or the
+ * candidate diverges from it by more than that tolerance, the newest
+ * candidate (even null) becomes the new baseline. Without the "still in the
+ * future" half, a source that rescans noisy logs on every call — like the
+ * Claude CLI's local quota-rejection log — can return a slightly different
+ * "latest" reset time from one poll to the next even though the real window
+ * hasn't rolled over, which would look like a fresh occurrence to anything
+ * keying off the value. Without the tolerance half, a window that genuinely
+ * resets earlier than the app's own prior prediction (e.g. a 5-hour session
+ * rolling over server-side sooner than expected) would have that real reset
+ * ignored until the stale predicted time itself elapses, silently blocking
+ * the next low-quota occurrence from re-arming.
  */
 export const stabilizeResetTime = (
   cached: string | null,
   candidate: string | null,
   nowMs: number
-): string | null => (cached !== null && Date.parse(cached) > nowMs ? cached : candidate);
+): string | null => {
+  if (cached === null) {
+    return candidate;
+  }
+  const cachedMs = Date.parse(cached);
+  const cachedStillFuture = !Number.isNaN(cachedMs) && cachedMs > nowMs;
+  if (!cachedStillFuture) {
+    return candidate;
+  }
+  if (candidate === null) {
+    return cached;
+  }
+  const candidateMs = Date.parse(candidate);
+  const materiallyDifferent =
+    !Number.isNaN(candidateMs) && Math.abs(candidateMs - cachedMs) > RESET_DRIFT_TOLERANCE_MS;
+  return materiallyDifferent ? candidate : cached;
+};
 
 /**
  * Applies stabilizeResetTime to every window in a fresh scrape, matched by
