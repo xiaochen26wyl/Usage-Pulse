@@ -8,6 +8,23 @@ Usage-Pulse는 Cursor, Claude Code, Codex 사용량을 모니터링하는 크로
 
 로컬에 이미 로그인된 자격 증명과 공식 사용량 데이터만 읽으며, 어떤 IDE의 자격 증명이나 설정 파일에도 다시 쓰지 않습니다.
 
+## 스크린샷
+
+<table>
+  <tr>
+    <td><img src=".github/readme-assets/screenshot-language-switcher.png" width="260"/><br/><sub>앱 내 언어는 언제든 전환 가능</sub></td>
+    <td><img src=".github/readme-assets/screenshot-realtime-quota-en.png" width="260"/><br/><sub>Cursor·Claude Code·Codex 실시간 사용량</sub></td>
+  </tr>
+  <tr>
+    <td><img src=".github/readme-assets/screenshot-realtime-quota-ko.png" width="260"/><br/><sub>같은 화면을 한국어로 표시한 모습</sub></td>
+    <td><img src=".github/readme-assets/screenshot-reminder-settings.png" width="260"/><br/><sub>서비스별로 세밀하게 설정하는 리마인더</sub></td>
+  </tr>
+  <tr>
+    <td><img src=".github/readme-assets/screenshot-line-notify.png" width="260"/><br/><sub>선택적으로 켤 수 있는 LINE 알림</sub></td>
+    <td><img src=".github/readme-assets/screenshot-hydration-reminder.png" width="260"/><br/><sub>보너스 기능: 수분 섭취 알림</sub></td>
+  </tr>
+</table>
+
 ## 설치
 
 ### 다운로드
@@ -21,6 +38,10 @@ Usage-Pulse는 Cursor, Claude Code, Codex 사용량을 모니터링하는 크로
 ### 소스에서 실행하기
 
 Usage-Pulse는 오픈소스입니다 — 저장소를 clone해서 직접 코드를 읽어보고 바로 실행할 수 있습니다.
+
+이 저장소 상단의 **Watch**(Star만이 아니라)를 눌러두면, 새 릴리스가 나올 때마다 GitHub이 알려줍니다:
+
+![GitHub에서 Watch 버튼 위치](.github/readme-assets/github-watch.png)
 
 [Node.js](https://nodejs.org/) 24와 pnpm 9.15.9가 필요합니다 (`corepack enable`을 한 번 실행하면 pnpm이 자동으로 올바른 버전을 사용합니다).
 

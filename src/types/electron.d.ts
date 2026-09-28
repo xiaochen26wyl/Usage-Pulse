@@ -9,6 +9,9 @@ import type {
   ManualQuotaResult,
   SessionStats,
   ServiceType,
+  UpdateCheckResult,
+  UpdateDownloadProgress,
+  UpdateInfo,
   WaterCupSizeMl
 } from "@shared/types";
 
@@ -47,6 +50,12 @@ interface UsagePulseApi {
   onAlarmPayload: (handler: (payload: AlarmPopupPayload) => void) => () => void;
   onAuthUpdated: (handler: (status: AuthStatus) => void) => () => void;
   onSnapshotUpdated: (handler: (snapshot: CombinedSnapshot) => void) => () => void;
+  checkForUpdates: () => Promise<UpdateCheckResult>;
+  startUpdateDownload: () => Promise<void>;
+  quitAndInstallUpdate: () => Promise<void>;
+  onUpdateAvailable: (handler: (info: UpdateInfo) => void) => () => void;
+  onUpdateDownloadProgress: (handler: (progress: UpdateDownloadProgress) => void) => () => void;
+  onUpdateDownloaded: (handler: () => void) => () => void;
 }
 
 declare global {

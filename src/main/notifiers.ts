@@ -54,12 +54,15 @@ const formatQuota = (snapshot: QuotaSnapshot): string => {
  * one) use this directly rather than fabricating a snapshot to satisfy
  * sendDesktopNotification.
  */
-export const sendPlainDesktopNotification = (title: string, body: string): void => {
+export const sendPlainDesktopNotification = (title: string, body: string, onClick?: () => void): void => {
   if (!Notification.isSupported()) {
     return;
   }
 
   const notification = new Notification({ title, body, timeoutType: "default" });
+  if (onClick) {
+    notification.on("click", onClick);
+  }
   notification.show();
   armDesktopNotificationDismissal(notification);
 };

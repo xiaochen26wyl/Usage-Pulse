@@ -20,7 +20,7 @@
   - Codex low-quota: mirrors Claude — 5-hour, weekly, and `enableCodexCooldownAlert`. Extra API windows (per-model, code review) are displayed but not independently alerted
   - Launch: `launchWithIde` and `launchAtStartup` are mutually exclusive
   - Alarms: Cursor period-end; Claude Code 5-hour / weekly / subscription-renewal as three independent switches plus `claudeBillingCadence`; Codex 5-hour / weekly as two independent switches
-  - Other: `trayValueColorMode`, `enableAlarmPopup`, `enableLineNotification`, `claudeUseCliActivityPolling`, `codexUseCliActivityPolling`, water-reminder interval / cup size, UI language (`zh` / `en` / `ja` / `ko`), notification cooldown
+  - Other: `trayValueColorMode`, `enableAlarmPopup`, `enableLineNotification`, `claudeUseCliActivityPolling`, `codexUseCliActivityPolling`, water-reminder interval / cup size, UI language (`zh` / `en` / `ja` / `ko`), notification cooldown, `autoCheckForUpdates` (Windows only — see "Auto-update" below)
 - `SessionStats`: per-launch duration, water logged, and Cursor / Claude Code / Codex usage delta since this process started
 - `CombinedSnapshot`: Cursor, Claude, and Codex quota snapshots
 - `QuotaSnapshot.windows`: multi-window quotas (Cursor billing / cursor models / other models; Claude Code 5-hour / weekly; Codex 5-hour / weekly plus any extra named windows the API reports)
@@ -263,7 +263,10 @@ Two failure modes of the old reset alert are fixed here:
   — there is no `alarmCatchUpMinutes` window and no catch-up marker. `alarmFires` in the store
   records which `fireAt` already rang, so re-arming never double-fires.
 - **Sleep and wake.** `powerMonitor` `resume` / `unlock-screen` rebuild the schedule, because
-  Chromium timers do not advance while the machine is asleep.
+  Chromium timers do not advance while the machine is asleep. The same handlers also call
+  `MonitorEngine.checkIfDue()`, which catches up any Cursor/Claude/Codex quota poll that fell
+  behind for the identical reason (`isPollDue` in `monitor-utils.ts`, mirroring
+  `isCredentialCheckDue`) before re-arming every tick timer from the current moment.
 
 
 ### Security constraints
@@ -299,10 +302,18 @@ Two failure modes of the old reset alert are fixed here:
 
 #### Releasing (tag)
 1. Confirm `package.json`'s `version` matches the intended tag (e.g. `1.0.0` for `v1.0.0`)
-2. Create and push the tag:
+2. Write `release-notes/<version>.json` (all four languages — `zh`/`en`/`ja`/`ko`; see `release-notes/README.md`). This is what the in-app update prompt shows (Windows only for now) and what the GitHub Release body becomes — CI fails the build if it's missing or incomplete.
+3. Create and push the tag:
    - `git tag v1.0.0`
    - `git push origin v1.0.0`
-3. GitHub Actions will automatically build and publish the Release artifacts
+4. GitHub Actions will automatically build and publish the Release artifacts
+
+#### Auto-update
+
+- Windows only (`src/main/updater.ts`, wraps `electron-updater`). macOS builds are unsigned (`build.mac.identity: null`, no notarization) and Squirrel.Mac's silent install cannot be relied on without a signature, so macOS never runs any update-check logic today.
+- Checked on startup, every 6 hours while `autoCheckForUpdates` is on, and any time via the tray menu's "Check for Updates" item. Everything (download, install) is user-triggered — nothing installs itself in the background.
+- Release notes shown in the update prompt are read straight from that tag's `release-notes/<version>.json` on GitHub (not the GitHub Release body, which is auto-generated English only) — see "Releasing (tag)" above.
+- `package.json`'s `build.publish` (provider `github`) is required for two things: electron-builder writes `app-update.yml` into the packaged app (electron-updater's default feed) and `latest.yml` into `release/` at build time. `dist:win`/`dist:mac` still run with `--publish never` — the GitHub Release itself is published by `action-gh-release`, not electron-builder.
 
 ---
 
@@ -322,7 +333,7 @@ Two failure modes of the old reset alert are fixed here:
   - Codex 低額度：與 Claude 相同——5 小時、每週，以及 `enableCodexCooldownAlert`。API 回報的額外視窗（單模型、code review）會顯示，但不獨立告警
   - 啟動：`launchWithIde` 與 `launchAtStartup` 互斥
   - 鬧鐘：Cursor 本期到期；Claude Code 5 小時／每週／訂閱到期三個獨立開關，加上 `claudeBillingCadence`；Codex 5 小時／每週兩個獨立開關
-  - 其他：`trayValueColorMode`、`enableAlarmPopup`、`enableLineNotification`、`claudeUseCliActivityPolling`、`codexUseCliActivityPolling`、喝水提醒間隔／杯量、介面語言（`zh`／`en`／`ja`／`ko`）、通知冷卻時間
+  - 其他：`trayValueColorMode`、`enableAlarmPopup`、`enableLineNotification`、`claudeUseCliActivityPolling`、`codexUseCliActivityPolling`、喝水提醒間隔／杯量、介面語言（`zh`／`en`／`ja`／`ko`）、通知冷卻時間、`autoCheckForUpdates`（僅 Windows，見下方「自動更新」）
 - `SessionStats`：本次啟動的使用時長、已記喝水量，以及 Cursor／Claude Code／Codex 相對啟動時的用量增量
 - `CombinedSnapshot`：Cursor、Claude 與 Codex 配額快照
 - `QuotaSnapshot.windows`：多視窗配額（Cursor 計費週期／Cursor 模型／其他模型；Claude Code 的 5 小時／每週；Codex 的 5 小時／每週，以及 API 回報的其他具名視窗）
@@ -510,7 +521,9 @@ Cursor 是「到期提醒」（本期 `billingCycleEnd`，用量重設與計費�
   **不論多晚**都可以響——沒有 `alarmCatchUpMinutes` 時間窗，也沒有補發標記。store 的 `alarmFires`
   記錄哪個 `fireAt` 已經響過，所以重新排程不會重複觸發。
 - **睡眠與喚醒**：`powerMonitor` 的 `resume` / `unlock-screen` 會重建排程——Chromium 的計時器在系統
-  睡眠期間不會前進。
+  睡眠期間不會前進。同一組 handler 也會呼叫 `MonitorEngine.checkIfDue()`，補跑因為同樣原因落後的
+  Cursor／Claude／Codex 用量輪詢（`monitor-utils.ts` 的 `isPollDue`，比照 `isCredentialCheckDue`
+  的做法），再把每個 tick 計時器從喚醒後的當下時間重新排程。
 
 
 ### 安全約束
@@ -546,7 +559,15 @@ Cursor 是「到期提醒」（本期 `billingCycleEnd`，用量重設與計費�
 
 #### 發版（tag）
 1. 確認 `package.json` 的 `version` 與預計 tag 一致（例如 `1.0.0` 對 `v1.0.0`）
-2. 建立並推送 tag：
+2. 撰寫 `release-notes/<version>.json`（四語言 `zh`/`en`/`ja`/`ko` 都要，格式見 `release-notes/README.md`）。這份內容會用在 app 內的更新提示（目前僅 Windows）以及 GitHub Release 說明——缺漏任一語言會讓 CI 直接失敗。
+3. 建立並推送 tag：
    - `git tag v1.0.0`
    - `git push origin v1.0.0`
-3. GitHub Actions 會自動建置並發佈 Release 檔案
+4. GitHub Actions 會自動建置並發佈 Release 檔案
+
+#### 自動更新
+
+- 僅支援 Windows（`src/main/updater.ts`，封裝 `electron-updater`）。macOS 版目前完全未簽章（`build.mac.identity: null`，也沒有 notarize），electron-updater 在 macOS 上的靜默安裝（Squirrel.Mac）沒有簽章不可靠，所以 macOS 目前完全不會執行任何檢查更新的邏輯。
+- 檢查時機：開機啟動時、`autoCheckForUpdates` 開啟時每 6 小時一次、以及隨時透過選單列右鍵選單的「檢查更新」手動觸發。下載與安裝都需要使用者主動按下按鈕才會發生，不會背景偷跑。
+- 更新提示顯示的版更說明，是直接讀取該 tag 的 `release-notes/<version>.json`（而不是 GitHub Release 本文——那是純英文自動產生的），見上方「發版（tag）」。
+- `package.json` 的 `build.publish`（provider 設為 `github`）是必要設定，用途有兩個：讓 electron-builder 把 `app-update.yml`（electron-updater 預設會讀的 feed）打包進 app 本體，以及在打包時把 `latest.yml` 寫進 `release/` 目錄。`dist:win`／`dist:mac` 仍然是 `--publish never`——真正發佈 GitHub Release 的仍是 `action-gh-release`，不是 electron-builder 自己。

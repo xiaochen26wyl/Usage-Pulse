@@ -8,6 +8,23 @@ Usage-Pulse は、Cursor・Claude Code・Codex の利用枠を監視するクロ
 
 読み取るのはローカルにすでにログイン済みの認証情報と公式の利用状況データのみで、いずれの IDE の認証情報や設定ファイルにも書き戻すことはありません。
 
+## スクリーンショット
+
+<table>
+  <tr>
+    <td><img src=".github/readme-assets/screenshot-language-switcher.png" width="260"/><br/><sub>アプリ内の表示言語はいつでも切り替え可能</sub></td>
+    <td><img src=".github/readme-assets/screenshot-realtime-quota-en.png" width="260"/><br/><sub>Cursor・Claude Code・Codex のリアルタイム利用枠</sub></td>
+  </tr>
+  <tr>
+    <td><img src=".github/readme-assets/screenshot-realtime-quota-ko.png" width="260"/><br/><sub>同じ画面を韓国語表示にした例</sub></td>
+    <td><img src=".github/readme-assets/screenshot-reminder-settings.png" width="260"/><br/><sub>サービスごとに細かく設定できるリマインダー</sub></td>
+  </tr>
+  <tr>
+    <td><img src=".github/readme-assets/screenshot-line-notify.png" width="260"/><br/><sub>任意設定の LINE 通知</sub></td>
+    <td><img src=".github/readme-assets/screenshot-hydration-reminder.png" width="260"/><br/><sub>おまけ機能：水分補給リマインダー</sub></td>
+  </tr>
+</table>
+
 ## インストール
 
 ### ダウンロード
@@ -21,6 +38,10 @@ Usage-Pulse は、Cursor・Claude Code・Codex の利用枠を監視するクロ
 ### ソースから実行
 
 Usage-Pulse はオープンソースです。リポジトリを clone してコードを読み、そのまま実行できます。
+
+このリポジトリの上部にある **Watch**（Star だけでなく）をクリックしておくと、新しいリリースが出るたびに GitHub から通知が届きます。
+
+![GitHub の Watch ボタンの位置](.github/readme-assets/github-watch.png)
 
 [Node.js](https://nodejs.org/) 24 と pnpm 9.15.9 が必要です（`corepack enable` を一度実行すれば、pnpm が自動的に正しいバージョンを使用します）。
 

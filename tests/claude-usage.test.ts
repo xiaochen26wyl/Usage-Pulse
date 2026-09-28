@@ -97,6 +97,48 @@ test("an empty payload yields no windows so validation would refuse it", () => {
   assert.equal(result.remaining, null);
 });
 
+test("the current API shape (kind/group/percent) parses directly, without needing the legacy fallback", () => {
+  // Anthropic restructured /api/oauth/usage: limits[] items are now
+  // { kind, group, percent, resets_at, severity, scope, is_active } instead of
+  // { name, utilization, resets_at }. Confirmed against a live response on
+  // 2026-09-28. Before this fix, parseLimitObject recognized neither `kind`/
+  // `group` nor `percent`, so both entries came back null and extractLimits
+  // only produced correct numbers by accident, via the top-level five_hour/
+  // seven_day fallback (see the next test) — a fallback the API could drop at
+  // any time.
+  const payload = {
+    limits: [
+      { kind: "session", group: "session", percent: 15, severity: "normal", resets_at: 1787221800, scope: null, is_active: false },
+      { kind: "weekly_all", group: "weekly", percent: 25, severity: "normal", scope: null, is_active: true }
+    ]
+  };
+  const limits = extractLimits(payload, "en");
+  const result = buildClaudeScrapeResult(limits, "en");
+
+  assert.equal(result.windows.length, 2);
+  assert.equal(result.windows[0]?.key, "session");
+  assert.equal(result.windows[0]?.percent, 85);
+  assert.equal(result.windows[0]?.resetsAt, "2026-08-20T10:30:00.000Z");
+  assert.equal(result.windows[1]?.key, "weekly_all");
+  assert.equal(result.windows[1]?.percent, 75);
+  assert.equal(result.source, "api");
+});
+
+test("the legacy top-level five_hour/seven_day shape still parses on its own", () => {
+  // Locks in the fallback extractLimits still relies on today whenever a
+  // payload has no (or an unrecognized) limits[] array.
+  const payload = {
+    five_hour: { utilization: 15, resets_at: "2026-09-28T05:29:59.848999+00:00" },
+    seven_day: { utilization: 25, resets_at: "2026-09-28T12:59:59.849018+00:00" }
+  };
+  const limits = extractLimits(payload, "en");
+  const result = buildClaudeScrapeResult(limits, "en");
+
+  assert.equal(result.windows.length, 2);
+  assert.equal(result.windows.find((window) => window.key === "session")?.percent, 85);
+  assert.equal(result.windows.find((window) => window.key === "weekly")?.percent, 75);
+});
+
 test("CLI reset times fill windows the API left blank", () => {
   const limits = extractLimits(
     { limits: [{ name: "five_hour", utilization: 10 }, { name: "seven_day_all", utilization: 20 }] },

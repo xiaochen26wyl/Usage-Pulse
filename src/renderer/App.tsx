@@ -20,6 +20,7 @@ import {
   type SessionStats,
   type ServiceType,
   type TrayValueColorMode,
+  type UpdateInfo,
   type WaterCupSizeMl,
 } from "@shared/types";
 import { CLAUDE_TOKEN_MASK, LINE_TOKEN_MASK } from "@shared/types";
@@ -102,6 +103,7 @@ const defaultSettings: AppSettings = {
   enableWaterReminder: true,
   waterReminderMinutes: 50,
   waterCupSizeMl: 500,
+  autoCheckForUpdates: true,
 };
 
 const emptyCredential = (service: ServiceType): CredentialStatus => ({
@@ -291,6 +293,12 @@ export const App = () => {
   const [alarmMessage, setAlarmMessage] = useState("");
   const [checkingAlarm, setCheckingAlarm] = useState(false);
   const [sessionStats, setSessionStats] = useState<SessionStats | null>(null);
+  const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
+  const [updateDismissed, setUpdateDismissed] = useState(false);
+  const [updateDownloading, setUpdateDownloading] = useState(false);
+  const [updateDownloadPercent, setUpdateDownloadPercent] = useState(0);
+  const [updateDownloaded, setUpdateDownloaded] = useState(false);
+  const canAutoUpdate = window.usagePulse.platform === "win32";
   const lang = settings.language;
   const claudeBillingAt = resolveClaudeBillingAt(
     snapshot?.claude.billingAnchorAt,
@@ -347,12 +355,44 @@ export const App = () => {
       setSessionStats(next);
     });
 
+    const unsubscribeUpdateAvailable = window.usagePulse.onUpdateAvailable((info) => {
+      setUpdateInfo(info);
+      setUpdateDismissed(false);
+    });
+    const unsubscribeUpdateProgress = window.usagePulse.onUpdateDownloadProgress((progress) => {
+      setUpdateDownloadPercent(progress.percent);
+    });
+    const unsubscribeUpdateDownloaded = window.usagePulse.onUpdateDownloaded(() => {
+      setUpdateDownloading(false);
+      setUpdateDownloaded(true);
+    });
+
     return () => {
       unsubscribeSnapshot();
       unsubscribeAuth();
       unsubscribeSession();
+      unsubscribeUpdateAvailable();
+      unsubscribeUpdateProgress();
+      unsubscribeUpdateDownloaded();
     };
   }, []);
+
+  const handleUpdateNow = () => {
+    setUpdateDownloading(true);
+    setUpdateDownloadPercent(0);
+    void window.usagePulse.startUpdateDownload().catch((error) => {
+      console.error(error);
+      setUpdateDownloading(false);
+    });
+  };
+
+  const handleRestartAndInstall = () => {
+    void window.usagePulse.quitAndInstallUpdate();
+  };
+
+  const handleUpdateLater = () => {
+    setUpdateDismissed(true);
+  };
 
   const clampSettings = (value: AppSettings): AppSettings => ({
     ...value,
@@ -1176,6 +1216,19 @@ export const App = () => {
     }
   };
 
+  // Takes effect immediately rather than waiting on the "save settings"
+  // button — the menu-bar icon should reflect the choice as soon as it's
+  // made, same immediacy as changeLanguage above.
+  const changeTrayValueColorMode = async (mode: TrayValueColorMode) => {
+    setSettings((prev) => ({ ...prev, trayValueColorMode: mode }));
+    try {
+      const next = await window.usagePulse.saveSettings({ trayValueColorMode: mode });
+      setSettings(next);
+    } catch (error) {
+      console.error(error);
+    }
+  };
+
   // Lives on the quota card itself (not the batched Settings panel below), so
   // it takes effect immediately rather than waiting on the "save settings"
   // button — same immediacy as changeLanguage above.
@@ -1268,6 +1321,49 @@ export const App = () => {
 
   return (
     <main className="app">
+      {canAutoUpdate && updateInfo && !updateDismissed && (
+        <section className="panel panel-update">
+          <div className="quota-header">
+            <h2>{t(lang, "update.available.title", { version: updateInfo.version })}</h2>
+          </div>
+          {updateInfo.releaseNotes && (
+            <p className="callout-warning update-notes">{updateInfo.releaseNotes}</p>
+          )}
+          {updateDownloading && !updateDownloaded && (
+            <>
+              <div className="progress-track">
+                <div
+                  className="progress-fill"
+                  style={{ width: `${updateDownloadPercent}%` }}
+                />
+              </div>
+              <p className="meta-text">
+                {t(lang, "update.banner.downloading", { percent: updateDownloadPercent })}
+              </p>
+            </>
+          )}
+          {updateDownloaded ? (
+            <button type="button" className="primary-btn" onClick={handleRestartAndInstall}>
+              {t(lang, "update.banner.restartAndInstall")}
+            </button>
+          ) : (
+            <div className="update-banner-actions">
+              <button
+                type="button"
+                className="primary-btn"
+                disabled={updateDownloading}
+                onClick={handleUpdateNow}
+              >
+                {t(lang, "update.banner.updateNow")}
+              </button>
+              <button type="button" className="ghost-btn" onClick={handleUpdateLater}>
+                {t(lang, "update.banner.later")}
+              </button>
+            </div>
+          )}
+        </section>
+      )}
+
       <section className="panel">
         <div className="app-title-row">
           <img src={appLogo} alt="" className="app-logo" />
@@ -1621,15 +1717,34 @@ export const App = () => {
           </p>
         </div>
 
+        {canAutoUpdate && (
+          <div className="field">
+            <label className="field switch-row" style={{ marginBottom: 0 }}>
+              <span>{t(lang, "settings.autoCheckForUpdates")}</span>
+              <input
+                type="checkbox"
+                className="toggle"
+                checked={settings.autoCheckForUpdates}
+                onChange={(event) =>
+                  setSettings((prev) => ({
+                    ...prev,
+                    autoCheckForUpdates: event.target.checked,
+                  }))
+                }
+              />
+            </label>
+            <p className="meta-text" style={{ margin: 0 }}>
+              {t(lang, "settings.autoCheckForUpdates.hint")}
+            </p>
+          </div>
+        )}
+
         <label className="field">
           <span>{t(lang, "settings.trayValueColor")}</span>
           <select
             value={settings.trayValueColorMode}
             onChange={(event) =>
-              setSettings((prev) => ({
-                ...prev,
-                trayValueColorMode: event.target.value as TrayValueColorMode,
-              }))
+              void changeTrayValueColorMode(event.target.value as TrayValueColorMode)
             }
           >
             <option value="system">

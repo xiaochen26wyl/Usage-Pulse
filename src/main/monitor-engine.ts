@@ -9,7 +9,13 @@ import type {
   ScrapeResult,
   ServiceType
 } from "@shared/types";
-import { isDuplicateInCooldown, shouldClearLowQuotaLatch, stabilizeResetTime, stabilizeWindowResets } from "@shared/monitor-utils";
+import {
+  isDuplicateInCooldown,
+  isPollDue,
+  shouldClearLowQuotaLatch,
+  stabilizeResetTime,
+  stabilizeWindowResets
+} from "@shared/monitor-utils";
 import { normalizeCodexSnapshot } from "@shared/codex-usage";
 import { isColdReading, isTrusted } from "@shared/snapshot-trust";
 import { buildExhaustedFlex, buildLowQuotaFlex, buildRecoveredFlex } from "@shared/line-templates";
@@ -371,6 +377,47 @@ export class MonitorEngine extends EventEmitter {
 
     // Reapply alarms based on new settings
     alarmService.rearm("settings");
+  }
+
+  /**
+   * Catches up any service whose poll fell behind a sleep or a locked
+   * screen, then re-arms every timer from the current moment.
+   *
+   * The tick timers are `setTimeout`s that re-arm themselves after each run,
+   * and like any Chromium/Node timer they do not advance while the machine
+   * sleeps — a timer armed just before a long sleep comes back having made
+   * almost no progress, so left alone it would fire far later than its
+   * intended cadence with nothing to notice or correct it. This is called
+   * from the same `resume`/`unlock-screen` handlers that already re-arm
+   * alarmService and re-check credentialMonitor for the identical reason.
+   */
+  async checkIfDue(): Promise<void> {
+    const settings = settingsStore.get();
+    const nowMs = Date.now();
+    const services: ServiceType[] = [];
+    if (settings.enableCursorMonitoring) services.push("cursor");
+    if (settings.enableClaudeMonitoring) services.push("claude");
+    if (settings.enableCodexMonitoring) services.push("codex");
+
+    await Promise.all(
+      services.map(async (service) => {
+        const fetchedAt = snapshotStore.get()?.[service]?.fetchedAt ?? null;
+        const intervalMs = service === "codex" ? CODEX_POLL_INTERVAL_MS : nextPollDelayMs(service);
+        if (!isPollDue(fetchedAt, nowMs, intervalMs)) {
+          return;
+        }
+        try {
+          await this.checkService(service, "scheduled");
+        } catch (error) {
+          this.emit("error", error);
+        }
+      })
+    );
+
+    // Whatever was due just fetched fresh data above; whatever wasn't still
+    // had its remaining delay computed against a clock that was paused
+    // during the sleep, so every timer gets re-armed from now regardless.
+    this.reschedule();
   }
 
   private scheduleCursorTick(delayMs: number): void {

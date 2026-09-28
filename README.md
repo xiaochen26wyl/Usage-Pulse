@@ -8,6 +8,23 @@ Usage-Pulse is a cross-platform desktop menu bar tool that monitors Cursor, Clau
 
 It only reads credentials you're already logged in with locally and official usage data — it never writes back to any IDE's credential or config files.
 
+## Screenshots
+
+<table>
+  <tr>
+    <td><img src=".github/readme-assets/screenshot-language-switcher.png" width="260"/><br/><sub>Switch the in-app language anytime</sub></td>
+    <td><img src=".github/readme-assets/screenshot-realtime-quota-en.png" width="260"/><br/><sub>Real-time quota for Cursor, Claude Code, and Codex</sub></td>
+  </tr>
+  <tr>
+    <td><img src=".github/readme-assets/screenshot-realtime-quota-ko.png" width="260"/><br/><sub>Same quota view, shown here in Korean</sub></td>
+    <td><img src=".github/readme-assets/screenshot-reminder-settings.png" width="260"/><br/><sub>Fine-grained reminder settings per service</sub></td>
+  </tr>
+  <tr>
+    <td><img src=".github/readme-assets/screenshot-line-notify.png" width="260"/><br/><sub>Optional LINE notifications</sub></td>
+    <td><img src=".github/readme-assets/screenshot-hydration-reminder.png" width="260"/><br/><sub>Bonus: a hydration reminder</sub></td>
+  </tr>
+</table>
+
 ## Installation
 
 ### Download
@@ -21,6 +38,10 @@ Grab the latest build from the [Releases page](https://github.com/xiaochen26wyl/
 ### Run from source
 
 Usage-Pulse is open source — you can clone the repository, read the code yourself, and run it directly.
+
+Click **Watch** (not just Star) at the top of this repository so GitHub notifies you about every new release:
+
+![Where to click Watch on GitHub](.github/readme-assets/github-watch.png)
 
 Requires [Node.js](https://nodejs.org/) 24 and pnpm 9.15.9 (run `corepack enable` once and pnpm picks the right version automatically).
 

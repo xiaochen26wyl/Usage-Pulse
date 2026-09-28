@@ -63,6 +63,29 @@ body {
   color: var(--color-water);
 }
 
+.panel-update {
+  border-left: 3px solid var(--color-primary);
+}
+
+.panel-update h2 {
+  color: var(--color-primary);
+  font-size: 15px;
+}
+
+.update-notes {
+  white-space: pre-wrap;
+}
+
+.update-banner-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.update-banner-actions .primary-btn,
+.update-banner-actions .ghost-btn {
+  flex: 1;
+}
+
 .water-cup-row {
   display: flex;
   gap: 8px;

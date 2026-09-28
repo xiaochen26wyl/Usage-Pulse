@@ -25,6 +25,16 @@ jobs:
             exit 1
           fi
 
+      - name: Build release notes body
+        run: node scripts/build-release-notes.mjs > release-notes-body.md
+
+      - name: Upload release notes body
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-notes-body
+          path: release-notes-body.md
+          if-no-files-found: error
+
       - name: Setup PNPM
         uses: pnpm/action-setup@v4
 
@@ -72,6 +82,7 @@ jobs:
             files: |
               release/*.exe
               release/*.exe.blockmap
+              release/latest.yml
 
     steps:
       - name: Checkout
@@ -112,5 +123,7 @@ jobs:
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist-artifacts/**/*
-          generate_release_notes: true
+          files: |
+            dist-artifacts/usage-pulse-mac/**/*
+            dist-artifacts/usage-pulse-win/**/*
+          body_path: dist-artifacts/release-notes-body/release-notes-body.md

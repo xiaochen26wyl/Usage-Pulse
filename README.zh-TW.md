@@ -8,6 +8,23 @@ Usage-Pulse 是跨平台桌面選單列工具，監控 Cursor、Claude Code 與 
 
 它只讀取你本機已登入的憑證與官方用量資料，不會寫回任何 IDE 的憑證或設定檔。
 
+## 畫面截圖
+
+<table>
+  <tr>
+    <td><img src=".github/readme-assets/screenshot-language-switcher.png" width="260"/><br/><sub>可隨時切換 App 內顯示語言</sub></td>
+    <td><img src=".github/readme-assets/screenshot-realtime-quota-en.png" width="260"/><br/><sub>Cursor、Claude Code、Codex 的即時配額</sub></td>
+  </tr>
+  <tr>
+    <td><img src=".github/readme-assets/screenshot-realtime-quota-ko.png" width="260"/><br/><sub>同一畫面切換成韓文顯示</sub></td>
+    <td><img src=".github/readme-assets/screenshot-reminder-settings.png" width="260"/><br/><sub>依服務個別調整提醒設定</sub></td>
+  </tr>
+  <tr>
+    <td><img src=".github/readme-assets/screenshot-line-notify.png" width="260"/><br/><sub>選用的 LINE 通知</sub></td>
+    <td><img src=".github/readme-assets/screenshot-hydration-reminder.png" width="260"/><br/><sub>附加功能：喝水提醒</sub></td>
+  </tr>
+</table>
+
 ## 安裝指引
 
 ### 下載
@@ -21,6 +38,10 @@ Usage-Pulse 是跨平台桌面選單列工具，監控 Cursor、Claude Code 與 
 ### 從原始碼執行
 
 Usage-Pulse 是開源專案——你可以把 repo clone 下來，自己讀過程式碼，再直接執行。
+
+記得點本 repo 上方的 **Watch**（不只是 Star），這樣每次發佈新版本 GitHub 都會通知你：
+
+![GitHub 上 Watch 按鈕的位置](.github/readme-assets/github-watch.png)
 
 需要 [Node.js](https://nodejs.org/) 24 與 pnpm 9.15.9（先執行一次 `corepack enable`，pnpm 就會自動使用正確版本）。
 

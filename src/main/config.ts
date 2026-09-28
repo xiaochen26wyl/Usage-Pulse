@@ -44,5 +44,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   codexUseCliActivityPolling: false,
   enableWaterReminder: true,
   waterReminderMinutes: 50,
-  waterCupSizeMl: 500
+  waterCupSizeMl: 500,
+  autoCheckForUpdates: true
 };

@@ -170,6 +170,9 @@ export interface AppSettings {
   enableWaterReminder: boolean;
   waterReminderMinutes: number;
   waterCupSizeMl: WaterCupSizeMl;
+  // Windows only (see UpdateCheckResult): periodic background check for a
+  // newer GitHub Release, independent of the always-available manual check.
+  autoCheckForUpdates: boolean;
 }
 
 export type ClaudeBillingCadence = "monthly" | "annual";
@@ -360,4 +363,30 @@ export interface ClaudeTokenSaveResult {
   ok: boolean;
   code?: ClaudeTokenRejectCode;
   message: string;
+}
+
+// A newer release, already resolved to the user's current UI language.
+// `releaseNotes` comes from that release's release-notes/<version>.json, not
+// from the (English-only, auto-generated) GitHub Release body.
+export interface UpdateInfo {
+  version: string;
+  releaseNotes: string;
+  releaseUrl: string;
+}
+
+// Auto-update is Windows-only today (see doc/Guide.md): macOS builds are
+// unsigned and Squirrel.Mac's silent install cannot be relied on without a
+// signature, so every other platform's check resolves to "unsupported"
+// without ever touching electron-updater.
+export type UpdateCheckStatus = "checking" | "available" | "not-available" | "error" | "unsupported";
+
+export interface UpdateCheckResult {
+  status: UpdateCheckStatus;
+  info?: UpdateInfo;
+  // Localized, for the "error" status.
+  message?: string;
+}
+
+export interface UpdateDownloadProgress {
+  percent: number;
 }

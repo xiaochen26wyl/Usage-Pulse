@@ -186,6 +186,7 @@ export const settingsStore = {
     merged.enableCodexWeeklyResetAlarm = Boolean(merged.enableCodexWeeklyResetAlarm);
     merged.enableCodexCooldownAlert = Boolean(merged.enableCodexCooldownAlert);
     merged.codexUseCliActivityPolling = Boolean(merged.codexUseCliActivityPolling);
+    merged.autoCheckForUpdates = Boolean(merged.autoCheckForUpdates);
     merged.claudeBillingCadence = merged.claudeBillingCadence === "annual" ? "annual" : "monthly";
     if (merged.launchAtStartup && merged.launchWithIde) {
       if (patch.launchAtStartup === true) {

@@ -113,14 +113,19 @@ const labelForKey = (key: string, lang: Language): string => {
 };
 
 export const parseLimitObject = (rawLimit: Record<string, unknown>, lang: Language): NormalizedLimit | null => {
+  // `kind`/`group` are the current API's field names for the same window
+  // identifier `name` used to carry (`kind` is checked first: it's the more
+  // specific of the two, distinguishing weekly_all from weekly_scoped where
+  // `group` alone would just say "weekly" for both).
   const rawKey =
-    `${rawLimit.name ?? rawLimit.id ?? rawLimit.type ?? rawLimit.window ?? rawLimit.limit ?? rawLimit.key ?? ""}`.trim();
+    `${rawLimit.kind ?? rawLimit.group ?? rawLimit.name ?? rawLimit.id ?? rawLimit.type ?? rawLimit.window ?? rawLimit.limit ?? rawLimit.key ?? ""}`.trim();
   const key = detectLimitKey(rawKey);
   const usedPercent =
     toPercentField(rawLimit.utilization) ??
     toPercentField(rawLimit.percentUsed) ??
     toPercentField(rawLimit.usedPercent) ??
     toPercentField(rawLimit.utilisation) ??
+    toPercentField(rawLimit.percent) ??
     toRatioField(rawLimit.ratio);
 
   let finalUsed = usedPercent;

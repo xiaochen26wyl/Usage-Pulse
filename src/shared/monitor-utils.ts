@@ -3,6 +3,28 @@ import type { CombinedSnapshot, QuotaWindow, ServiceType } from "./types";
 export const getLowQuotaServices = (snapshot: CombinedSnapshot): ServiceType[] =>
   (["cursor", "claude", "codex"] as ServiceType[]).filter((service) => snapshot[service].status === "low");
 
+/**
+ * Whether a service's next poll is overdue, given the wall-clock time its
+ * last snapshot was actually fetched.
+ *
+ * MonitorEngine's poll timers are `setTimeout`s that re-arm themselves after
+ * each tick, and — like any Chromium/Node timer — do not advance while the
+ * machine sleeps. A timer armed shortly before a long sleep comes back to
+ * life having made almost no progress, so the wake handlers in index.ts
+ * consult this against the persisted `fetchedAt` instead of trusting the
+ * timer to have ticked on schedule. A missing or unparseable timestamp means
+ * "never fetched" and is always due. Mirrors isCredentialCheckDue in
+ * credential-utils.ts, which solves the identical problem for the
+ * credential sweep.
+ */
+export const isPollDue = (fetchedAt: string | null, nowMs: number, intervalMs: number): boolean => {
+  const lastMs = fetchedAt ? Date.parse(fetchedAt) : NaN;
+  if (Number.isNaN(lastMs)) {
+    return true;
+  }
+  return nowMs - lastMs >= intervalMs;
+};
+
 export const isDuplicateInCooldown = (
   last: { key: string; at: string },
   key: string,

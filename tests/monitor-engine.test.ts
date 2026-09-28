@@ -4,6 +4,7 @@ import type { CombinedSnapshot, QuotaWindow } from "../src/shared/types";
 import {
   getLowQuotaServices,
   isDuplicateInCooldown,
+  isPollDue,
   shouldClearLowQuotaLatch,
   stabilizeResetTime,
   stabilizeWindowResets
@@ -75,6 +76,32 @@ test("isDuplicateInCooldown checks key and cooldown window", () => {
   assert.equal(isDuplicateInCooldown(last, "low:cursor|10", 5 * 60_000, nowMs), true);
   assert.equal(isDuplicateInCooldown(last, "low:claude|10", 5 * 60_000, nowMs), false);
   assert.equal(isDuplicateInCooldown(last, "low:cursor|10", 60_000, nowMs), false);
+});
+
+test("isPollDue treats a missing fetchedAt as always due", () => {
+  assert.equal(isPollDue(null, Date.now(), 15 * 60_000), true);
+});
+
+test("isPollDue treats an unparseable fetchedAt as always due", () => {
+  assert.equal(isPollDue("not-a-date", Date.now(), 15 * 60_000), true);
+});
+
+test("isPollDue is false while inside the interval", () => {
+  const nowMs = Date.parse("2026-08-26T10:15:00.000Z");
+  const fetchedAt = "2026-08-26T10:10:00.000Z"; // 5 min ago
+  assert.equal(isPollDue(fetchedAt, nowMs, 15 * 60_000), false);
+});
+
+test("isPollDue is true exactly at the interval boundary", () => {
+  const nowMs = Date.parse("2026-08-26T10:15:00.000Z");
+  const fetchedAt = "2026-08-26T10:00:00.000Z"; // exactly 15 min ago
+  assert.equal(isPollDue(fetchedAt, nowMs, 15 * 60_000), true);
+});
+
+test("isPollDue is true once well past the interval (e.g. a long sleep)", () => {
+  const nowMs = Date.parse("2026-08-26T12:00:00.000Z");
+  const fetchedAt = "2026-08-26T10:00:00.000Z"; // 2 hours ago
+  assert.equal(isPollDue(fetchedAt, nowMs, 15 * 60_000), true);
 });
 
 test("shouldClearLowQuotaLatch stays closed on an unknown reading", () => {

@@ -11,6 +11,8 @@ import type {
   ManualQuotaResult,
   SessionStats,
   ServiceType,
+  UpdateCheckResult,
+  UpdateInfo,
   WaterCupSizeMl
 } from "@shared/types";
 import { CLAUDE_TOKEN_MASK, LINE_TOKEN_MASK } from "@shared/types";
@@ -55,8 +57,11 @@ import { sendQuitStatusBroadcast } from "@main/quit-notifier";
 import { installWebContentsHardening } from "@main/window-hardening";
 import { settingsStore, snapshotStore } from "@main/store";
 import { destroyTrayRenderer, renderTrayImage } from "@main/tray-icon-renderer";
+import { updateChecker } from "@main/updater";
+import { sendPlainDesktopNotification } from "@main/notifiers";
 
 const isMac = process.platform === "darwin";
+const isWindows = process.platform === "win32";
 const isDev = Boolean(process.env.ELECTRON_RENDERER_URL);
 
 // This is a tray app whose entire value is staying alive silently for hours —
@@ -412,6 +417,17 @@ const buildTrayMenu = (): Menu =>
       label: t(settingsStore.get().language, "tray.menu.open"),
       click: () => trayApp.showWindow()
     },
+    ...(isWindows
+      ? [
+          {
+            label: t(settingsStore.get().language, "tray.menu.checkForUpdates"),
+            click: () => {
+              trayApp.showWindow();
+              void updateChecker.checkNow();
+            }
+          }
+        ]
+      : []),
     { type: "separator" },
     {
       label: t(settingsStore.get().language, "tray.menu.quit"),
@@ -453,6 +469,7 @@ const setupIpcHandlers = (): void => {
     applyAppLoginItem(next.launchAtStartup);
     monitor.reschedule();
     waterReminder.reschedule();
+    updateChecker.reschedule();
     emitSessionStats();
     const latest = monitor.getLatestSnapshot();
     if (latest) {
@@ -648,6 +665,12 @@ const setupIpcHandlers = (): void => {
     }
     fitAlarmWindowSize(height);
   });
+
+  ipcMain.handle("update:check", (): Promise<UpdateCheckResult> => updateChecker.checkNow());
+  ipcMain.handle("update:download", () => updateChecker.startDownload());
+  ipcMain.handle("update:install", () => {
+    updateChecker.quitAndInstall();
+  });
 };
 
 app.whenReady().then(async () => {
@@ -686,6 +709,28 @@ app.whenReady().then(async () => {
     console.error("[Usage-Pulse] credential check failed", redact(error));
   });
 
+  updateChecker.on("available", (info: UpdateInfo) => {
+    if (trayApp.window && !trayApp.window.isDestroyed()) {
+      trayApp.window.webContents.send("update:available", info);
+    }
+    const lang = settingsStore.get().language;
+    sendPlainDesktopNotification(
+      t(lang, "update.available.title", { version: info.version }),
+      info.releaseNotes || info.version,
+      () => trayApp.showWindow()
+    );
+  });
+  updateChecker.on("download-progress", (progress: { percent: number }) => {
+    if (trayApp.window && !trayApp.window.isDestroyed()) {
+      trayApp.window.webContents.send("update:download-progress", progress);
+    }
+  });
+  updateChecker.on("downloaded", () => {
+    if (trayApp.window && !trayApp.window.isDestroyed()) {
+      trayApp.window.webContents.send("update:downloaded");
+    }
+  });
+
   // A rotated or dead credential gets one immediate quota check before anyone
   // is notified — hitting the API is what normally prompts the IDE to refresh.
   credentialMonitor.setQuotaRefresher((service) => monitor.runServiceCheck(service, "credential"));
@@ -696,10 +741,12 @@ app.whenReady().then(async () => {
   powerMonitor.on("resume", () => {
     alarmService.rearm("resume");
     void credentialMonitor.checkIfDue();
+    void monitor.checkIfDue();
   });
   powerMonitor.on("unlock-screen", () => {
     alarmService.rearm("unlock");
     void credentialMonitor.checkIfDue();
+    void monitor.checkIfDue();
   });
 
   // Menu-bar value colour follows OS appearance when trayValueColorMode is "system".
@@ -754,6 +801,11 @@ app.whenReady().then(async () => {
     });
     monitor.start();
     syncIdePresenceMonitor(settingsStore.get().launchWithIde);
+
+    await updateChecker.checkNow().catch((error) => {
+      console.error("[Usage-Pulse] startup update check failed", redact(error));
+    });
+    updateChecker.start();
   });
 });
 
@@ -774,6 +826,7 @@ app.on("before-quit", (event) => {
       idePresenceMonitor.stop();
       monitor.stop();
       credentialMonitor.stop();
+      updateChecker.stop();
       destroyAlarmWindow();
       destroyTrayRenderer();
       app.quit();

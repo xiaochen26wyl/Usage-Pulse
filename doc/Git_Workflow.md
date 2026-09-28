@@ -14,8 +14,8 @@ Usage-Pulse 功能開發的 Git 節奏：**`main` 保持穩定**。**每次開�
 |------|------------|
 | **每次開工**、**開工** | `git:start-work`（檢查舊分支已推送 → 開分支 → sync main；可帶 `v100_2026_0818` 或後綴 `Li`） |
 | **同步 main**、**開工同步** | 僅 `git:sync-main`（已在功能分支、不開新分支） |
-| **推送** | `detect` → 多選 issue（若同分）→ 代寫 commit 並直接 `git:push-wip`；依本輪變更留言／更新／關閉 issue；**在 `main` 時** → 直接 push `origin/main` |
-| **收工**、**完工** | `detect` → 多選（若同分）→ 代寫 commit 並直接 `git:finish-work`；Agent 自決關／改 issue；**在 `main` 時** → 直接 push `origin/main`、清理預覽（略過 merge） |
+| **推送** | `detect` → 多選 issue（若同分）→ 代寫 commit 並直接 `git:push-wip`；依本輪變更留言／更新／關閉 issue；**在 `main` 時** → 直接 push `origin/main`，成功後接著跑「發版」（見 §4.1） |
+| **收工**、**完工** | `detect` → 多選（若同分）→ 代寫 commit 並直接 `git:finish-work`；Agent 自決關／改 issue；**在 `main` 時** → 直接 push `origin/main`、清理預覽（略過 merge），成功後接著跑「發版」（見 §4.1） |
 | **幫我寫 commit** | 只產生訊息，不 push |
 | **git 狀態** | `git:check-sync` + `git status` |
 | **只合併 main** | `git:merge-to-main`（不含收工前半） |
@@ -113,6 +113,19 @@ pnpm run git:cleanup-branches -- --delete-remote v100_2026_0818
 | **階段備份** | `git:push-wip` | **推送** |
 | **收工** | `git:finish-work` | **收工**、**完工** |
 | **分支清理** | `git:cleanup-branches` | **清理分支** |
+
+---
+
+## 4.1 發版（release）
+
+**在 `main` 分支上**的「推送」或「收工／完工」成功 push 之後，Agent 會接著發版；**功能分支的推送不打 tag**。步驟：
+
+1. Agent 問你這次版本號（可回 `patch`／`minor`／`major` 依語意版本自動遞增，或直接給完整版本號），等你回覆才繼續。
+2. Agent 更新 `package.json` 的 `version`。
+3. Agent 依本輪改動自動撰寫 `release-notes/<version>.json`（`zh`／`en`／`ja`／`ko` 四語言，見 [`release-notes/README.md`](../release-notes/README.md)），不會另外找你確認文字。
+4. Agent 額外開一個 `chore: release v<version>` commit 並 push 到 `origin main`。
+5. Agent `git tag v<version>` 並 `git push origin v<version>`，觸發 `.github/workflows/release.yml` 建置與發布 GitHub Release（細節見 [`Guide.md`](Guide.md#發版tag)）。
+6. Agent 回報 tag 是否推送成功、release workflow 的執行狀態。
 
 ---
 

@@ -10,6 +10,9 @@ import type {
   ManualQuotaResult,
   SessionStats,
   ServiceType,
+  UpdateCheckResult,
+  UpdateDownloadProgress,
+  UpdateInfo,
   WaterCupSizeMl
 } from "@shared/types";
 
@@ -79,6 +82,30 @@ const api = {
     ipcRenderer.on("snapshot:updated", listener);
     return () => {
       ipcRenderer.removeListener("snapshot:updated", listener);
+    };
+  },
+  checkForUpdates: () => ipcRenderer.invoke("update:check") as Promise<UpdateCheckResult>,
+  startUpdateDownload: () => ipcRenderer.invoke("update:download") as Promise<void>,
+  quitAndInstallUpdate: () => ipcRenderer.invoke("update:install") as Promise<void>,
+  onUpdateAvailable: (handler: (info: UpdateInfo) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, info: UpdateInfo) => handler(info);
+    ipcRenderer.on("update:available", listener);
+    return () => {
+      ipcRenderer.removeListener("update:available", listener);
+    };
+  },
+  onUpdateDownloadProgress: (handler: (progress: UpdateDownloadProgress) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, progress: UpdateDownloadProgress) => handler(progress);
+    ipcRenderer.on("update:download-progress", listener);
+    return () => {
+      ipcRenderer.removeListener("update:download-progress", listener);
+    };
+  },
+  onUpdateDownloaded: (handler: () => void) => {
+    const listener = () => handler();
+    ipcRenderer.on("update:downloaded", listener);
+    return () => {
+      ipcRenderer.removeListener("update:downloaded", listener);
     };
   },
 };
