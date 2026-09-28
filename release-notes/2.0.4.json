@@ -1,0 +1,6 @@
+{
+  "zh": "- Windows 版新增自動檢查更新（App 內下載並提示安裝）\n- README 新增功能截圖與 GitHub Watch 說明（中／英／日／韓四語）",
+  "en": "- Windows builds now check for updates automatically (download and install prompt inside the app)\n- README now includes feature screenshots and a GitHub Watch callout (available in Chinese, English, Japanese, Korean)",
+  "ja": "- Windows 版でアプリ内から自動アップデートの確認・ダウンロード・インストール案内に対応\n- README に機能スクリーンショットと GitHub Watch の案内を追加（中国語・英語・日本語・韓国語）",
+  "ko": "- Windows 버전에서 앱 내 자동 업데이트 확인 및 다운로드/설치 안내 지원\n- README에 기능 스크린샷과 GitHub Watch 안내 추가 (중국어/영어/일본어/한국어)"
+}
