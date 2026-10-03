@@ -8,6 +8,23 @@ Language / 語言：[English](#english) | [繁體中文](#繁體中文)
 
 All notable changes to Usage-Pulse are documented in this file.
 
+### [2.1.0] - 2026-10-03
+
+#### Added
+- Popup and LINE are now switched per service (Cursor / Claude Code / Codex); settings from older versions carry over unchanged.
+- "Clear older than 2 weeks" button on the Claude Code and Codex cards. It only acts after you confirm: pinned Codex conversations are kept, Claude Code files go to the Trash, and Codex refuses to run while the app is open.
+
+#### Changed
+- A 5-hour window reset now sends a single "quota recovered" notice (desktop + LINE) instead of one for the low-quota state and another for the cooldown.
+- The 5-hour reset alarms (Claude Code and Codex) no longer send LINE messages; the popup and desktop notification are unchanged. Weekly and period-end / renewal alarms still send LINE.
+- The status sent when the app quits is now one swipeable LINE message with a card per window, instead of up to four separate messages.
+
+#### Fixed
+- A cooldown no longer counts as recovered while the window sits at or just above 0%, or while its reset time is briefly unknown, which could send repeated "recovered" and "cooldown" notices back to back.
+
+#### Removed
+- The hydration reminder and the quit summary window.
+
 ### [2.0.4] - 2026-09-28
 
 #### Added
@@ -74,6 +91,23 @@ All notable changes to Usage-Pulse are documented in this file.
 ## 繁體中文
 
 本檔案記錄 Usage-Pulse 所有重要版本變更。
+
+### [2.1.0] - 2026-10-03
+
+#### 新增
+- 彈窗與 LINE 改為各服務（Cursor／Claude Code／Codex）各自開關；舊版設定升級後維持原本行為。
+- Claude Code 與 Codex 卡片新增「清除 2 週前對話紀錄」按鈕，確認後才會執行：Codex 已釘選的對話會保留，Claude Code 的檔案進垃圾桶，Codex 開著時會拒絕執行。
+
+#### 變更
+- 5 小時視窗重置時，只會收到一則「額度恢復」通知（桌面＋LINE），不再低額度與冷卻各發一則。
+- Claude Code 與 Codex 的 5 小時到點提醒不再發 LINE，彈窗與桌面通知不變；每週與到期／續訂提醒仍會發 LINE。
+- 關閉 App 時送出的現況，改為一則可左右滑動、每個視窗一張卡片的 LINE 訊息，不再最多分成四則。
+
+#### 修復
+- 冷卻中視窗停在 0% 或略高於 0%、或重置時間暫時讀不到時，不再被誤判為已恢復，避免連續收到「恢復」與「冷卻」通知。
+
+#### 移除
+- 喝水提醒與結束統計視窗。
 
 ### [2.0.4] - 2026-09-28
 

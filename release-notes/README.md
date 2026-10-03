@@ -15,7 +15,10 @@ prefix), for example `release-notes/2.0.4.json`:
 
 All four languages are required — `scripts/build-release-notes.mjs` (run by
 `.github/workflows/release.yml`) fails the release build if any is missing or
-empty. Keep each entry short (a few lines): it becomes both the GitHub Release
-body and the in-app update notification's content, read straight from this
-file by the running app in the user's current UI language — not the
+empty. Keep each language short (a few lines): it becomes both the GitHub
+Release body and the in-app update notification's content, read straight from
+this file by the running app in the user's current UI language — not the
 auto-generated GitHub Release text.
+
+Every release also needs its entry in `CHANGELOG.md` (English and Traditional
+Chinese sections). That one is not checked by CI, so add it before tagging.

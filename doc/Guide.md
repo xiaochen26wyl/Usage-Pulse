@@ -325,10 +325,11 @@ Two failure modes of the old reset alert are fixed here:
 #### Releasing (tag)
 1. Confirm `package.json`'s `version` matches the intended tag (e.g. `1.0.0` for `v1.0.0`)
 2. Write `release-notes/<version>.json` (all four languages — `zh`/`en`/`ja`/`ko`; see `release-notes/README.md`). This is what the in-app update prompt shows (Windows only for now) and what the GitHub Release body becomes — CI fails the build if it's missing or incomplete.
-3. Create and push the tag:
+3. Add the version's entry to `CHANGELOG.md` in both the English and the Traditional Chinese sections (heading `### [<version>] - <release date>`, above the previous version; grouped as Added / Changed / Fixed / Removed). CI does not check this, so it has to be done before tagging.
+4. Create and push the tag:
    - `git tag v1.0.0`
    - `git push origin v1.0.0`
-4. GitHub Actions will automatically build and publish the Release artifacts
+5. GitHub Actions will automatically build and publish the Release artifacts
 
 #### Auto-update
 
@@ -597,10 +598,11 @@ Cursor 是「到期提醒」（本期 `billingCycleEnd`，用量重設與計費�
 #### 發版（tag）
 1. 確認 `package.json` 的 `version` 與預計 tag 一致（例如 `1.0.0` 對 `v1.0.0`）
 2. 撰寫 `release-notes/<version>.json`（四語言 `zh`/`en`/`ja`/`ko` 都要，格式見 `release-notes/README.md`）。這份內容會用在 app 內的更新提示（目前僅 Windows）以及 GitHub Release 說明——缺漏任一語言會讓 CI 直接失敗。
-3. 建立並推送 tag：
+3. 在 `CHANGELOG.md` 補上該版本條目，English 與繁體中文兩個段落各一份（標題 `### [<version>] - <發版日期>`，放在上一版之前；依新增／變更／修復／移除分類）。CI 不會檢查這一項，所以要在打 tag 之前完成。
+4. 建立並推送 tag：
    - `git tag v1.0.0`
    - `git push origin v1.0.0`
-4. GitHub Actions 會自動建置並發佈 Release 檔案
+5. GitHub Actions 會自動建置並發佈 Release 檔案
 
 #### 自動更新
 
