@@ -1,0 +1,6 @@
+{
+  "zh": "- 精簡 LINE 通知：5 小時視窗重置只會收到一則「額度恢復」、5 小時到點提醒不再發 LINE、關閉 App 的現況合併成一則可滑動的卡片\n- 彈窗與 LINE 改為各服務（Cursor／Claude Code／Codex）各自開關\n- Claude Code 與 Codex 卡片新增「清除 2 週前對話紀錄」按鈕（需確認）\n- 移除喝水提醒與結束統計視窗",
+  "en": "- Fewer LINE messages: a 5-hour reset now sends a single \"quota recovered\" notice, 5-hour reset alarms no longer go to LINE, and the status sent on quit is merged into one swipeable card message\n- Popup and LINE are now switched per service (Cursor / Claude Code / Codex)\n- New \"Clear older than 2 weeks\" button on the Claude Code and Codex cards (asks for confirmation)\n- Removed the hydration reminder and the quit summary window",
+  "ja": "- LINE 通知を整理：5 時間枠のリセットで届く「クォータ回復」は 1 件のみ、5 時間のリセット時刻アラームは LINE に送らず、終了時のステータスはスワイプできる 1 通にまとめました\n- ポップアップと LINE をサービス（Cursor／Claude Code／Codex）ごとに切り替え可能に\n- Claude Code と Codex のカードに「2 週間より古い会話を削除」ボタンを追加（確認あり）\n- 水分補給リマインダーと終了時サマリーウィンドウを削除",
+  "ko": "- LINE 알림 정리: 5시간 창이 초기화되면 \"할당량 복구\" 알림이 1건만 전송되고, 5시간 초기화 시각 알람은 더 이상 LINE으로 보내지 않으며, 종료 시 상태는 스와이프 가능한 메시지 1건으로 합쳐집니다\n- 팝업과 LINE을 서비스(Cursor／Claude Code／Codex)별로 따로 설정할 수 있습니다\n- Claude Code 및 Codex 카드에 \"2주 지난 대화 삭제\" 버튼 추가(확인 후 실행)\n- 물 마시기 알림과 종료 요약 창 제거"
+}
