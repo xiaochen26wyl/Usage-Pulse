@@ -23,7 +23,7 @@ test("t() interpolates {placeholder} params", () => {
   assert.equal(t("zh", "alarm.popup.nextAvailable", { time: "14:22" }), "下次可用 14:22");
   assert.equal(t("zh", "alarm.popup.nowAvailable"), "現在可用");
   assert.equal(t("zh", "alarm.autoDismiss", { seconds: 30 }), "彈窗 30 秒後自動關閉");
-  assert.equal(t("zh", "water.popup.drink"), "我喝了。");
+  assert.equal(t("zh", "alarm.popupToggle"), "App 彈窗提醒（免權限，一定生效）");
 });
 
 test("t() leaves unknown placeholders untouched", () => {

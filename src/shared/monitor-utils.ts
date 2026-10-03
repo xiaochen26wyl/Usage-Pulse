@@ -49,6 +49,31 @@ export const shouldClearLowQuotaLatch = (
   hysteresisPercent: number
 ): boolean => remainingPercent !== null && remainingPercent > threshold + hysteresisPercent;
 
+/**
+ * Whether a 5-hour cooldown latch should be cleared now that the session is no
+ * longer reported as exhausted. Called only when the cooldown is not active.
+ *
+ * Two readings must not count as "the cooldown lifted": a remaining percent
+ * hovering just above 0 (the same rounding/borderline noise the hysteresis on
+ * the low-quota latch guards against), and a window the payload simply left out.
+ * The latter is the normal state right after a reset, so it only counts once
+ * the reset time the latch recorded has actually passed; before that it is a
+ * data gap, not a recovery. An unparseable recorded time is treated as passed
+ * so a corrupt latch cannot stay stuck forever.
+ */
+export const shouldClearCooldownLatch = (
+  remainingPercent: number | null,
+  latchResetAt: string,
+  nowMs: number,
+  hysteresisPercent: number
+): boolean => {
+  if (remainingPercent !== null) {
+    return remainingPercent > hysteresisPercent;
+  }
+  const resetMs = Date.parse(latchResetAt);
+  return Number.isNaN(resetMs) || resetMs <= nowMs;
+};
+
 // Real recompute jitter (Codex's now+secondsLeft, the Claude CLI log rescan)
 // is documented as "a second or two" per poll. 60s is generous headroom for
 // a slower tick or a couple of stacked polls, but far short of any

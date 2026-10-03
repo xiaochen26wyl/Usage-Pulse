@@ -16,7 +16,7 @@ import type {
 } from "@shared/types";
 import { DEFAULT_SETTINGS } from "@main/config";
 import { normalizeCodexSnapshot } from "@shared/codex-usage";
-import { clampWaterReminderMinutes, normalizeWaterCupSize } from "@shared/water";
+import { resolveChannelFlags } from "@shared/notify-channels";
 import { migrateLaunchWithIde } from "@main/ide-presence";
 import { decryptSecret, encryptSecret } from "@main/secure-store";
 
@@ -92,11 +92,20 @@ const clamp = (value: number, min: number, max: number) => Math.min(max, Math.ma
 
 type StoredSettings = AppSettings & {
   launchAtLogin?: boolean;
+  // Removed launch-at-login switch; dropped on read so it leaves the file on the next save.
+  launchAtStartup?: boolean;
   claudeManualOAuthToken?: string;
   claudeManualOAuthTokenExpiresAt?: string | null;
   enableClaudeWeeklyResetAlarm?: boolean;
   enableClaudeBillingAlarm?: boolean;
   claudeBillingCadence?: ClaudeBillingCadence;
+  // Legacy global popup / LINE switches, now per service (see resolveChannelFlags).
+  enableAlarmPopup?: boolean;
+  enableLineNotification?: boolean;
+  // Removed drink-water reminder; dropped on read so it leaves the file on the next save.
+  enableWaterReminder?: boolean;
+  waterReminderMinutes?: number;
+  waterCupSizeMl?: number;
 };
 
 const migrateClaudeWeeklyResetAlarm = (raw: StoredSettings): boolean =>
@@ -115,14 +124,21 @@ const readSettings = (): AppSettings => {
   const shouldMigrateCodexActivityPolling = !migrations[CODEX_ACTIVITY_POLLING_DEFAULT_OFF_MIGRATION];
   const {
     launchAtLogin: _legacy,
+    launchAtStartup: _legacyLaunchAtStartup,
     claudeManualOAuthToken: _legacyClaudeToken,
     claudeManualOAuthTokenExpiresAt: _legacyClaudeTokenExpiresAt,
+    enableAlarmPopup: _legacyAlarmPopup,
+    enableLineNotification: _legacyLineNotification,
+    enableWaterReminder: _legacyWaterReminder,
+    waterReminderMinutes: _legacyWaterMinutes,
+    waterCupSizeMl: _legacyWaterCup,
     ...rest
   } = raw;
   const settings = decryptSettings({
     ...DEFAULT_SETTINGS,
     ...rest,
     launchWithIde: migrateLaunchWithIde(raw),
+    ...resolveChannelFlags(raw as unknown as Record<string, unknown>),
     enableClaudeWeeklyResetAlarm: migrateClaudeWeeklyResetAlarm(raw),
     enableClaudeBillingAlarm:
       typeof raw.enableClaudeBillingAlarm === "boolean"
@@ -174,9 +190,6 @@ export const settingsStore = {
     if (!LANGUAGES.has(merged.language)) {
       merged.language = DEFAULT_SETTINGS.language;
     }
-    merged.waterReminderMinutes = clampWaterReminderMinutes(merged.waterReminderMinutes);
-    merged.waterCupSizeMl = normalizeWaterCupSize(merged.waterCupSizeMl);
-    merged.enableWaterReminder = Boolean(merged.enableWaterReminder);
     merged.enableCursorMonitoring = Boolean(merged.enableCursorMonitoring);
     merged.enableClaudeMonitoring = Boolean(merged.enableClaudeMonitoring);
     merged.enableCodexMonitoring = Boolean(merged.enableCodexMonitoring);
@@ -188,13 +201,6 @@ export const settingsStore = {
     merged.codexUseCliActivityPolling = Boolean(merged.codexUseCliActivityPolling);
     merged.autoCheckForUpdates = Boolean(merged.autoCheckForUpdates);
     merged.claudeBillingCadence = merged.claudeBillingCadence === "annual" ? "annual" : "monthly";
-    if (merged.launchAtStartup && merged.launchWithIde) {
-      if (patch.launchAtStartup === true) {
-        merged.launchWithIde = false;
-      } else {
-        merged.launchAtStartup = false;
-      }
-    }
     store.set("settings", encryptSettings(merged));
     return merged;
   }

@@ -3,9 +3,9 @@ import assert from "node:assert/strict";
 import {
   asAlarmHeight,
   asClipboardText,
+  asHistoryService,
   asServiceType,
-  asSettingsPatch,
-  asWaterCupSize
+  asSettingsPatch
 } from "../src/main/ipc-validation";
 import { isSupportLink, THREADS_URL } from "../src/shared/support-links";
 
@@ -29,8 +29,18 @@ test("asServiceType rejects values that would become a store write path", () => 
 });
 
 test("asSettingsPatch keeps known keys with the declared type", () => {
-  const patch = asSettingsPatch({ language: "en", enableWaterReminder: false, notifyCooldownMinutes: 30 });
-  assert.deepEqual(patch, { language: "en", enableWaterReminder: false, notifyCooldownMinutes: 30 });
+  const patch = asSettingsPatch({ language: "en", enableClaudeLineNotification: false, notifyCooldownMinutes: 30 });
+  assert.deepEqual(patch, { language: "en", enableClaudeLineNotification: false, notifyCooldownMinutes: 30 });
+});
+
+test("asSettingsPatch drops the removed global popup / LINE switches and the water settings", () => {
+  const patch = asSettingsPatch({ enableAlarmPopup: false, enableLineNotification: false, enableWaterReminder: true });
+  assert.deepEqual(patch, {});
+});
+
+test("asSettingsPatch keeps the per-service popup and LINE switches", () => {
+  const patch = asSettingsPatch({ enableCodexAlarmPopup: false, enableCursorLineNotification: false });
+  assert.deepEqual(patch, { enableCodexAlarmPopup: false, enableCursorLineNotification: false });
 });
 
 test("asSettingsPatch keeps Codex settings keys", () => {
@@ -43,7 +53,7 @@ test("asSettingsPatch drops unknown keys and mistyped values", () => {
     language: "en",
     somethingInvented: "yes",
     __proto__: { polluted: true },
-    enableWaterReminder: "true",
+    enableClaudeLineNotification: "true",
     notifyCooldownMinutes: Number.NaN
   });
   assert.deepEqual(patch, { language: "en" });
@@ -63,13 +73,6 @@ test("asClipboardText allows the CLI command the UI copies, but no control chara
   assert.equal(asClipboardText(42), null);
 });
 
-test("asWaterCupSize normalises to a supported cup and ignores junk", () => {
-  assert.equal(asWaterCupSize(250), 250);
-  assert.equal(asWaterCupSize("500"), 500);
-  assert.equal(asWaterCupSize(undefined), null);
-  assert.equal(asWaterCupSize("not-a-number"), null);
-});
-
 test("asAlarmHeight accepts a finite pixel height inside the popup range", () => {
   assert.equal(asAlarmHeight(176), 176);
   assert.equal(asAlarmHeight(198.4), 198);
@@ -85,4 +88,15 @@ test("isSupportLink admits only the footer links", () => {
   assert.equal(isSupportLink(`${THREADS_URL}?x=1`), false);
   assert.equal(isSupportLink("file:///etc/passwd"), false);
   assert.equal(isSupportLink(undefined), false);
+});
+
+test("asHistoryService accepts only the two services that have clearable history", () => {
+  assert.equal(asHistoryService("claude"), "claude");
+  assert.equal(asHistoryService("codex"), "codex");
+  // Cursor's conversations share a file with its credential: never deletable.
+  assert.equal(asHistoryService("cursor"), null);
+  assert.equal(asHistoryService("__proto__"), null);
+  assert.equal(asHistoryService("Claude"), null);
+  assert.equal(asHistoryService(undefined), null);
+  assert.equal(asHistoryService({ toString: () => "claude" }), null);
 });

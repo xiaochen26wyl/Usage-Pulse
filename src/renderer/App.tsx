@@ -5,7 +5,6 @@ import {
   type KeyboardEvent,
 } from "react";
 import {
-  WATER_CUP_SIZES_ML,
   type AlarmStatusReport,
   type AppSettings,
   type ClaudeBillingCadence,
@@ -14,14 +13,15 @@ import {
   type CredentialState,
   type CredentialStatus,
   type ErrorCode,
+  type HistoryCleanResult,
+  type HistoryService,
+  type HistoryStats,
   type Language,
   type QuotaSnapshot,
   type QuotaWindow,
-  type SessionStats,
   type ServiceType,
   type TrayValueColorMode,
   type UpdateInfo,
-  type WaterCupSizeMl,
 } from "@shared/types";
 import { CLAUDE_TOKEN_MASK, LINE_TOKEN_MASK } from "@shared/types";
 import {
@@ -29,8 +29,14 @@ import {
   formatCountdown,
 } from "@shared/alarm-utils";
 import { resolveClaudeBillingAt } from "@shared/claude-billing";
+import { classifyHistoryFailure, formatBytes, hasHistoryApi } from "@shared/history";
 import { isCodexBackendSlotKey } from "@shared/codex-usage";
 import { localeForLanguage, t, type TranslationKey } from "@shared/i18n";
+import {
+  LINE_SETTING_KEY,
+  POPUP_SETTING_KEY,
+  isLineInUse,
+} from "@shared/notify-channels";
 import {
   INSTAGRAM_URL,
   LINE_URL,
@@ -83,7 +89,6 @@ const defaultSettings: AppSettings = {
   enableCodexWeeklyLowAlert: true,
   enableCodexCooldownAlert: true,
   launchWithIde: false,
-  launchAtStartup: false,
   notifyCooldownMinutes: 15,
   enableCursorResetAlarm: true,
   enableClaudeResetAlarm: true,
@@ -94,15 +99,16 @@ const defaultSettings: AppSettings = {
   enableCodexWeeklyResetAlarm: true,
   language: "zh",
   trayValueColorMode: "system",
-  enableAlarmPopup: true,
-  enableLineNotification: true,
+  enableCursorAlarmPopup: true,
+  enableClaudeAlarmPopup: true,
+  enableCodexAlarmPopup: true,
+  enableCursorLineNotification: true,
+  enableClaudeLineNotification: true,
+  enableCodexLineNotification: true,
   lineChannelAccessToken: "",
   claudeManualToken: "",
   claudeUseCliActivityPolling: true,
   codexUseCliActivityPolling: false,
-  enableWaterReminder: true,
-  waterReminderMinutes: 50,
-  waterCupSizeMl: 500,
   autoCheckForUpdates: true,
 };
 
@@ -291,13 +297,26 @@ export const App = () => {
     null,
   );
   const [alarmMessage, setAlarmMessage] = useState("");
-  const [checkingAlarm, setCheckingAlarm] = useState(false);
-  const [sessionStats, setSessionStats] = useState<SessionStats | null>(null);
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
   const [updateDismissed, setUpdateDismissed] = useState(false);
   const [updateDownloading, setUpdateDownloading] = useState(false);
   const [updateDownloadPercent, setUpdateDownloadPercent] = useState(0);
   const [updateDownloaded, setUpdateDownloaded] = useState(false);
+  const [historyStats, setHistoryStats] = useState<Record<
+    HistoryService,
+    HistoryStats
+  > | null>(null);
+  const [historyFailure, setHistoryFailure] = useState<{
+    key: TranslationKey;
+    detail: string;
+  } | null>(null);
+  const [historyBusy, setHistoryBusy] = useState<Record<HistoryService, boolean>>({
+    claude: false,
+    codex: false,
+  });
+  const [historyMessage, setHistoryMessage] = useState<
+    Record<HistoryService, string>
+  >({ claude: "", codex: "" });
   const canAutoUpdate = window.usagePulse.platform === "win32";
   const lang = settings.language;
   const claudeBillingAt = resolveClaudeBillingAt(
@@ -313,19 +332,17 @@ export const App = () => {
   }, []);
 
   const refreshBaseData = async () => {
-    const [nextSettings, nextAuthStatus, latestSnapshot, nextAlarmStatus, nextSessionStats] =
+    const [nextSettings, nextAuthStatus, latestSnapshot, nextAlarmStatus] =
       await Promise.all([
         window.usagePulse.getSettings(),
         window.usagePulse.getAuthStatus(),
         window.usagePulse.getLatestSnapshot(),
         window.usagePulse.getAlarmStatus(),
-        window.usagePulse.getSessionStats(),
       ]);
     setSettings(nextSettings);
     setAuthStatus(nextAuthStatus);
     setSnapshot(latestSnapshot);
     setAlarmStatus(nextAlarmStatus);
-    setSessionStats(nextSessionStats);
     setLineToken(nextSettings.lineChannelAccessToken);
   };
 
@@ -336,6 +353,30 @@ export const App = () => {
       .catch(() => setSecretStorageOk(true));
   }, []);
 
+  // Counted when the window opens and each time it regains focus — not on every
+  // quota poll, so the disk is only walked when someone is looking.
+  const refreshHistoryStats = async () => {
+    try {
+      // Checked up front: a long-running dev session keeps the old main and
+      // preload while the screen hot-reloads, and says so instead of failing
+      // with no explanation.
+      if (!hasHistoryApi(window.usagePulse)) {
+        throw new Error("history API missing");
+      }
+      setHistoryStats(await window.usagePulse.getHistoryStats());
+      setHistoryFailure(null);
+    } catch (error) {
+      setHistoryFailure(classifyHistoryFailure(window.usagePulse, error));
+    }
+  };
+
+  useEffect(() => {
+    void refreshHistoryStats();
+    const onFocus = () => void refreshHistoryStats();
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, []);
+
   useEffect(() => {
     refreshBaseData().catch((error) => {
       console.error(error);
@@ -344,15 +385,16 @@ export const App = () => {
     const unsubscribeSnapshot = window.usagePulse.onSnapshotUpdated(
       (nextSnapshot) => {
         setSnapshot(nextSnapshot);
+        // main rearms alarms after every poll, so the next-fire target may have moved.
+        window.usagePulse
+          .getAlarmStatus()
+          .then(setAlarmStatus)
+          .catch((error) => console.error(error));
       },
     );
 
     const unsubscribeAuth = window.usagePulse.onAuthUpdated((nextAuth) => {
       setAuthStatus(nextAuth);
-    });
-
-    const unsubscribeSession = window.usagePulse.onSessionStatsUpdated((next) => {
-      setSessionStats(next);
     });
 
     const unsubscribeUpdateAvailable = window.usagePulse.onUpdateAvailable((info) => {
@@ -370,7 +412,6 @@ export const App = () => {
     return () => {
       unsubscribeSnapshot();
       unsubscribeAuth();
-      unsubscribeSession();
       unsubscribeUpdateAvailable();
       unsubscribeUpdateProgress();
       unsubscribeUpdateDownloaded();
@@ -431,13 +472,6 @@ export const App = () => {
       5,
       15,
     ),
-    waterReminderMinutes: roundToStep(
-      value.waterReminderMinutes,
-      5,
-      180,
-      1,
-      50,
-    ),
   });
 
   const handleSaveSettings = async () => {
@@ -448,27 +482,10 @@ export const App = () => {
       );
       setSettings(next);
       setAlarmStatus(await window.usagePulse.getAlarmStatus());
-      setSessionStats(await window.usagePulse.getSessionStats());
     } catch (error) {
       console.error(error);
     } finally {
       setSavingSettings(false);
-    }
-  };
-
-  const refreshAlarmStatus = async () => {
-    setCheckingAlarm(true);
-    try {
-      setAlarmStatus(await window.usagePulse.getAlarmStatus());
-      setAlarmMessage("");
-    } catch (error) {
-      setAlarmMessage(
-        t(lang, "alarm.checkFailed", {
-          message: error instanceof Error ? error.message : String(error),
-        }),
-      );
-    } finally {
-      setCheckingAlarm(false);
     }
   };
 
@@ -650,31 +667,6 @@ export const App = () => {
     }
   };
 
-  const persistWaterSettings = async (patch: Partial<AppSettings>) => {
-    const merged = { ...settings, ...patch };
-    const waterPatch = {
-      enableWaterReminder: merged.enableWaterReminder,
-      waterReminderMinutes: roundToStep(merged.waterReminderMinutes, 5, 180, 1, 50),
-      waterCupSizeMl: merged.waterCupSizeMl,
-    };
-    setSettings({ ...merged, ...waterPatch });
-    try {
-      const next = await window.usagePulse.saveSettings(waterPatch);
-      setSettings(next);
-      setSessionStats(await window.usagePulse.getSessionStats());
-    } catch (error) {
-      console.error(error);
-    }
-  };
-
-  const logWaterCup = async (sizeMl: WaterCupSizeMl) => {
-    try {
-      setSessionStats(await window.usagePulse.logWaterCup(sizeMl));
-    } catch (error) {
-      console.error(error);
-    }
-  };
-
   const clearSystemClipboard = () => {
     window.usagePulse
       .clearClipboard()
@@ -821,6 +813,105 @@ export const App = () => {
       return "progress-fill progress-fill-codex";
     }
     return "progress-fill";
+  };
+
+  // Every outcome is worded from what main actually reported; a refusal says
+  // which state it found, never a guess at what to do about it.
+  const describeHistoryResult = (result: HistoryCleanResult): string => {
+    if (result.status === "cancelled") {
+      return "";
+    }
+    if (result.status === "blocked") {
+      return t(
+        lang,
+        `history.blocked.${result.reason ?? "dbFailed"}` as TranslationKey,
+        { detail: result.detail ?? "" },
+      );
+    }
+    let text = t(lang, "history.result.done", { trashed: result.trashed });
+    if (result.dbRowsDeleted > 0) {
+      text += t(lang, "history.result.dbRows", { rows: result.dbRowsDeleted });
+    }
+    if (result.failed > 0) {
+      text += t(lang, "history.result.failed", { failed: result.failed });
+    }
+    return text;
+  };
+
+  const cleanHistory = async (service: HistoryService) => {
+    setHistoryBusy((prev) => ({ ...prev, [service]: true }));
+    setHistoryMessage((prev) => ({ ...prev, [service]: "" }));
+    try {
+      const result = await window.usagePulse.cleanHistory(service);
+      setHistoryMessage((prev) => ({
+        ...prev,
+        [service]: describeHistoryResult(result),
+      }));
+    } catch (error) {
+      const failure = classifyHistoryFailure(window.usagePulse, error);
+      setHistoryMessage((prev) => ({
+        ...prev,
+        [service]: t(lang, failure.key, { detail: failure.detail }),
+      }));
+    } finally {
+      setHistoryBusy((prev) => ({ ...prev, [service]: false }));
+      await refreshHistoryStats();
+    }
+  };
+
+  // Sits at the bottom of the Claude Code and Codex cards. Cursor has none: its
+  // conversations share a file with its login credential.
+  const renderHistoryRow = (service: HistoryService) => {
+    const stats = historyStats?.[service];
+    const busy = historyBusy[service];
+    const statusText = stats
+      ? t(
+          lang,
+          stats.staleFileCount > 0 ? "history.status" : "history.status.noStale",
+          {
+            count: stats.fileCount,
+            size: formatBytes(stats.totalBytes),
+            stale: stats.staleFileCount,
+            staleSize: formatBytes(stats.staleBytes),
+          },
+        )
+      : historyFailure
+        ? t(lang, historyFailure.key, { detail: historyFailure.detail })
+        : t(lang, "history.statusLoading");
+    return (
+      <div className="history-row">
+        <p className="meta-text" style={{ margin: 0, color: "var(--color-text)" }}>
+          {statusText}
+        </p>
+        <button
+          type="button"
+          className="danger-btn"
+          style={{ marginTop: "8px" }}
+          disabled={busy || !stats || stats.staleFileCount === 0}
+          title={t(
+            lang,
+            service === "claude" ? "history.tooltip.claude" : "history.tooltip.codex",
+          )}
+          onClick={() => void cleanHistory(service)}
+        >
+          {busy ? t(lang, "history.cleaning") : t(lang, "history.clean")}
+        </button>
+        <p
+          className="meta-text"
+          style={{ marginTop: "6px", marginBottom: 0, color: "var(--color-danger)" }}
+        >
+          {t(lang, "history.warning")}
+        </p>
+        {historyMessage[service] ? (
+          <p
+            className="meta-text"
+            style={{ marginTop: "6px", marginBottom: 0, color: "var(--color-text)" }}
+          >
+            {historyMessage[service]}
+          </p>
+        ) : null}
+      </div>
+    );
   };
 
   // Lives inside each quota card rather than in a section of its own: a card
@@ -1295,6 +1386,59 @@ export const App = () => {
     </div>
   );
 
+  // Per-service "how to remind me": two checkboxes on one wrapping row, so the
+  // choice sits inside the service's own block without costing a row each.
+  const renderNotifyChannels = (service: ServiceType) => {
+    const popupKey = POPUP_SETTING_KEY[service];
+    const lineKey = LINE_SETTING_KEY[service];
+    return (
+      <div className="notify-channels">
+        <p className="notify-channels-title">{t(lang, "alarm.how.title")}</p>
+        <div className="check-row">
+          <label className="check-item">
+            <input
+              type="checkbox"
+              checked={settings[popupKey]}
+              onChange={(event) =>
+                setSettings((prev) => ({
+                  ...prev,
+                  [popupKey]: event.target.checked,
+                }))
+              }
+            />
+            <span>{t(lang, "alarm.popupToggle")}</span>
+          </label>
+          <label className="check-item">
+            <input
+              type="checkbox"
+              className="check-line"
+              checked={settings[lineKey]}
+              onChange={(event) =>
+                setSettings((prev) => ({
+                  ...prev,
+                  [lineKey]: event.target.checked,
+                }))
+              }
+            />
+            <span>{t(lang, "alarm.lineToggle")}</span>
+          </label>
+        </div>
+        {settings[popupKey] ? (
+          <p className="meta-text" style={{ margin: "6px 0 0" }}>
+            {t(lang, "alarm.autoDismiss", {
+              seconds: ALARM_POPUP_AUTO_DISMISS_SECONDS,
+            })}
+          </p>
+        ) : null}
+        {settings[lineKey] && !lineToken.trim() ? (
+          <p className="meta-text" style={{ margin: "6px 0 0" }}>
+            {t(lang, "alarm.lineNeedToken")}
+          </p>
+        ) : null}
+      </div>
+    );
+  };
+
   const renderToggleOnlyRow = (
     labelKey: TranslationKey,
     toggleKey: "enableClaudeCooldownAlert" | "enableCodexCooldownAlert",
@@ -1468,6 +1612,7 @@ export const App = () => {
                       {item?.message || t(lang, "app.notFetchedYet")}
                     </p>
                   )}
+                  {renderHistoryRow("claude")}
                     </>
                   )}
                 </div>
@@ -1550,6 +1695,7 @@ export const App = () => {
                       {item?.message || t(lang, "app.notFetchedYet")}
                     </p>
                   )}
+                  {renderHistoryRow("codex")}
                     </>
                   )}
                 </div>
@@ -1682,38 +1828,12 @@ export const App = () => {
                 setSettings((prev) => ({
                   ...prev,
                   launchWithIde: event.target.checked,
-                  launchAtStartup: event.target.checked
-                    ? false
-                    : prev.launchAtStartup,
                 }))
               }
             />
           </label>
           <p className="meta-text" style={{ margin: 0 }}>
             {t(lang, "settings.launchWithIde.hint")}
-          </p>
-        </div>
-
-        <div className="field">
-          <label className="field switch-row" style={{ marginBottom: 0 }}>
-            <span>{t(lang, "settings.launchAtStartup")}</span>
-            <input
-              type="checkbox"
-              className="toggle"
-              checked={settings.launchAtStartup}
-              onChange={(event) =>
-                setSettings((prev) => ({
-                  ...prev,
-                  launchAtStartup: event.target.checked,
-                  launchWithIde: event.target.checked
-                    ? false
-                    : prev.launchWithIde,
-                }))
-              }
-            />
-          </label>
-          <p className="meta-text" style={{ margin: 0 }}>
-            {t(lang, "settings.launchAtStartup.hint")}
           </p>
         </div>
 
@@ -1801,6 +1921,8 @@ export const App = () => {
               })}
             </p>
           )}
+
+          {renderNotifyChannels("cursor")}
         </div>
         )}
 
@@ -1952,6 +2074,8 @@ export const App = () => {
               })}
             </p>
           )}
+
+          {renderNotifyChannels("claude")}
         </div>
         )}
 
@@ -2053,6 +2177,8 @@ export const App = () => {
               })}
             </p>
           )}
+
+          {renderNotifyChannels("codex")}
         </div>
         )}
 
@@ -2073,61 +2199,7 @@ export const App = () => {
               : t(lang, "alarm.noTarget")}
           </p>
 
-          <p className="subsection-title">{t(lang, "alarm.how.title")}</p>
-
-          <label className="field switch-row">
-            <span>{t(lang, "alarm.popupToggle")}</span>
-            <input
-              type="checkbox"
-              className="toggle"
-              checked={settings.enableAlarmPopup}
-              onChange={(event) =>
-                setSettings((prev) => ({
-                  ...prev,
-                  enableAlarmPopup: event.target.checked,
-                }))
-              }
-            />
-          </label>
-          {settings.enableAlarmPopup ? (
-            <p className="meta-text" style={{ margin: "0 0 8px" }}>
-              {t(lang, "alarm.autoDismiss", {
-                seconds: ALARM_POPUP_AUTO_DISMISS_SECONDS,
-              })}
-            </p>
-          ) : null}
-
-          <label className="field switch-row">
-            <span>{t(lang, "alarm.lineToggle")}</span>
-            <input
-              type="checkbox"
-              className="toggle toggle-line"
-              checked={settings.enableLineNotification}
-              onChange={(event) =>
-                setSettings((prev) => ({
-                  ...prev,
-                  enableLineNotification: event.target.checked,
-                }))
-              }
-            />
-          </label>
-          {settings.enableLineNotification && !lineToken.trim() ? (
-            <p className="meta-text" style={{ margin: "0 0 8px" }}>
-              {t(lang, "alarm.lineNeedToken")}
-            </p>
-          ) : null}
-
           <div className="alarm-actions-row" style={{ marginTop: "12px" }}>
-            <button
-              type="button"
-              className="warning-btn"
-              onClick={refreshAlarmStatus}
-              disabled={checkingAlarm}
-            >
-              {checkingAlarm
-                ? t(lang, "alarm.checking")
-                : t(lang, "alarm.check")}
-            </button>
             <button
               type="button"
               className="warning-btn"
@@ -2151,101 +2223,13 @@ export const App = () => {
         </button>
       </section>
 
-      <section className="panel panel-water">
-        <h2>{t(lang, "water.title")}</h2>
-        <p className="meta-text" style={{ marginBottom: "10px" }}>
-          {t(lang, "water.desc")}
-        </p>
-
-        <label className="field switch-row">
-          <span>{t(lang, "water.enable")}</span>
-          <input
-            type="checkbox"
-            className="toggle toggle-water"
-            checked={settings.enableWaterReminder}
-            onChange={(event) =>
-              void persistWaterSettings({ enableWaterReminder: event.target.checked })
-            }
-          />
-        </label>
-
-        <label className="field">
-          <span>{t(lang, "water.interval")}</span>
-          <input
-            type="number"
-            min={5}
-            max={180}
-            step={1}
-            value={settings.waterReminderMinutes}
-            disabled={!settings.enableWaterReminder}
-            onChange={(event) =>
-              setSettings((prev) => ({
-                ...prev,
-                waterReminderMinutes: Number(event.target.value),
-              }))
-            }
-            onBlur={() =>
-              void persistWaterSettings({
-                waterReminderMinutes: roundToStep(
-                  settings.waterReminderMinutes,
-                  5,
-                  180,
-                  1,
-                  50,
-                ),
-              })
-            }
-          />
-        </label>
-
-        <div className="field">
-          <span>{t(lang, "water.cupSize")}</span>
-          <div className="water-cup-row">
-            {WATER_CUP_SIZES_ML.map((size) => (
-              <button
-                key={size}
-                type="button"
-                className={
-                  settings.waterCupSizeMl === size ? "primary-btn" : "ghost-btn"
-                }
-                onClick={() => void persistWaterSettings({ waterCupSizeMl: size })}
-              >
-                {t(lang, size === 250 ? "water.cup.250" : size === 500 ? "water.cup.500" : "water.cup.1000")}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <p className="meta-text">
-          {t(lang, "water.sessionTotal", {
-            ml: sessionStats?.waterMl ?? 0,
-            cups: sessionStats?.waterCups ?? 0,
-          })}
-        </p>
-        <p className="meta-text">
-          {settings.enableWaterReminder && sessionStats?.nextWaterAt
-            ? t(lang, "water.nextAt", {
-                countdown: formatCountdown(sessionStats.nextWaterAt, now, lang),
-              })
-            : t(lang, "water.nextAtNone")}
-        </p>
-
-        <button
-          type="button"
-          className="primary-btn"
-          onClick={() => void logWaterCup(settings.waterCupSizeMl)}
-        >
-          {t(lang, "water.logCup")}
-        </button>
-      </section>
-
       <section className="panel panel-line">
         <h2>{t(lang, "line.title")}</h2>
         <p className="meta-text" style={{ marginBottom: "10px" }}>
           {t(lang, "line.desc")}
         </p>
 
-        {!settings.enableLineNotification ? (
+        {!isLineInUse(settings) ? (
           <p className="meta-text">{t(lang, "line.notInUseHint")}</p>
         ) : hasLineToken && !showLineTokenInput ? (
           <>

@@ -8,6 +8,7 @@ import type {
 } from "@shared/types";
 import {
   MAX_TIMEOUT_MS,
+  alarmSendsLine,
   clampTimeoutMs,
   collectAlarmTargets,
   decideAlarmAction,
@@ -17,6 +18,7 @@ import { isTrusted } from "@shared/snapshot-trust";
 import { t } from "@shared/i18n";
 import { SERVICE_LABELS } from "@main/config";
 import { buildPlainAlertFlex } from "@shared/line-templates";
+import { isPopupEnabled } from "@shared/notify-channels";
 import { showAlarmPopup } from "@main/alarm-window";
 import { sendLineBroadcast } from "@main/line-notifier";
 import { sendDesktopNotification } from "@main/notifiers";
@@ -149,7 +151,6 @@ export class AlarmService {
       service: "codex",
       label: t(settings.language, "alertLabel.codexCooldown"),
       fireAt: nowIso(),
-      soundEnabled: false,
       language: settings.language,
       countdownTarget: new Date(Date.now() + 11 * 60_000).toISOString(),
       resetAlarmEnabled: settings.enableCodexResetAlarm
@@ -185,31 +186,35 @@ export class AlarmService {
       sendDesktopNotification({ snapshot, reason });
     }
 
-    void sendLineBroadcast(
-      buildPlainAlertFlex({
-        service: target.service,
-        serviceLabel: SERVICE_LABELS[target.service],
-        title: t(
-          lang,
-          target.id === "cursor-billing"
-            ? "alarm.popup.title.cursorPeriod"
-            : target.id === "claude-billing"
-              ? "alarm.popup.title.claudePeriod"
-              : "alarm.popup.title",
-          { service: SERVICE_LABELS[target.service] }
-        ),
-        body: reason,
-        lang
-      })
-    );
+    // The 5-hour windows reset too often for a LINE message each time; they
+    // reach LINE through the "recovered" notice instead (see alarmSendsLine).
+    if (alarmSendsLine(target.id)) {
+      void sendLineBroadcast(
+        buildPlainAlertFlex({
+          service: target.service,
+          serviceLabel: SERVICE_LABELS[target.service],
+          title: t(
+            lang,
+            target.id === "cursor-billing"
+              ? "alarm.popup.title.cursorPeriod"
+              : target.id === "claude-billing"
+                ? "alarm.popup.title.claudePeriod"
+                : "alarm.popup.title",
+            { service: SERVICE_LABELS[target.service] }
+          ),
+          body: reason,
+          lang
+        }),
+        { service: target.service }
+      );
+    }
 
-    if (settings.enableAlarmPopup) {
+    if (isPopupEnabled(settings, target.service)) {
       const payload: AlarmPopupPayload = {
         id: target.id,
         service: target.service,
         label: target.label,
         fireAt: target.fireAt,
-        soundEnabled: false,
         language: lang
       };
       showAlarmPopup(payload);

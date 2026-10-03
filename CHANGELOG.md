@@ -8,6 +8,13 @@ Language / 語言：[English](#english) | [繁體中文](#繁體中文)
 
 All notable changes to Usage-Pulse are documented in this file.
 
+### [2.0.4] - 2026-09-28
+
+#### Added
+- Windows auto-update: the app checks GitHub for a newer release on startup and every 6 hours (toggle in Settings), and on demand from the tray menu's "Check for Updates". An in-app banner shows the release notes in your language, and nothing is downloaded or installed until you click. macOS builds are unsigned, so they never self-update — download new versions from the Releases page.
+- Per-release notes are now written in all four languages (`release-notes/<version>.json`) and reused for both the GitHub Release body and the in-app update banner.
+- README now ships feature screenshots, a GitHub Watch callout, and full Traditional Chinese, Japanese, and Korean versions.
+
 ### [2.0.3] - 2026-09-10
 
 #### Added
@@ -67,6 +74,13 @@ All notable changes to Usage-Pulse are documented in this file.
 ## 繁體中文
 
 本檔案記錄 Usage-Pulse 所有重要版本變更。
+
+### [2.0.4] - 2026-09-28
+
+#### 新增
+- Windows 自動更新：App 會在啟動時與每 6 小時向 GitHub 檢查是否有新版（可在設定中關閉），也能隨時從選單列右鍵選單的「檢查更新」手動觸發。App 內橫幅會以你的語言顯示版更說明，按下按鈕之前不會下載或安裝任何東西。macOS 版未簽章，不會自動更新——請至 Releases 頁面下載新版。
+- 每個版本的版更說明改以四語言撰寫（`release-notes/<version>.json`），同時用於 GitHub Release 說明與 App 內更新橫幅。
+- README 新增功能截圖、GitHub Watch 說明，並提供完整的繁體中文、日文、韓文版本。
 
 ### [2.0.3] - 2026-09-10
 

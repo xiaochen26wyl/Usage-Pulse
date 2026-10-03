@@ -308,6 +308,30 @@ export const buildQuitStatusFlex = (options: {
   });
 };
 
+// LINE rejects a Flex message whose altText is longer than this.
+const MAX_ALT_TEXT_LENGTH = 400;
+
+/**
+ * Packs several bubbles into one message, so a burst of related bubbles is a
+ * single LINE push instead of one notification each. Each bubble keeps its own
+ * look (the swipeable cards are exactly the standalone bubbles); a lone bubble
+ * is returned untouched rather than wrapped in a one-card carousel. The push
+ * banner only shows altText, so it lists every bubble's own line.
+ */
+export const buildCarouselFlex = (bubbles: LineFlexMessage[]): LineFlexMessage => {
+  if (bubbles.length === 1) {
+    return bubbles[0];
+  }
+  return {
+    type: "flex",
+    altText: bubbles
+      .map((entry) => entry.altText)
+      .join("\n")
+      .slice(0, MAX_ALT_TEXT_LENGTH),
+    contents: { type: "carousel", contents: bubbles.map((entry) => entry.contents) },
+  };
+};
+
 /**
  * Everything that isn't a quota threshold — credential expiry, reset alarms.
  * Same white bubble, same service accent, just a free-form body line.

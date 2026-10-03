@@ -3,13 +3,14 @@ import assert from "node:assert/strict";
 import {
   DUE_GRACE_MS,
   MAX_TIMEOUT_MS,
+  alarmSendsLine,
   clampTimeoutMs,
   classifyFire,
   collectAlarmTargets,
   decideAlarmAction,
   nextTarget
 } from "../src/shared/alarm-utils";
-import type { AppSettings, CombinedSnapshot, QuotaSnapshot } from "../src/shared/types";
+import type { AlarmSource, AppSettings, CombinedSnapshot, QuotaSnapshot } from "../src/shared/types";
 
 const NOW = Date.parse("2026-08-20T12:00:00.000Z");
 const at = (offsetMs: number) => new Date(NOW + offsetMs).toISOString();
@@ -38,8 +39,12 @@ const settings = (patch: Partial<AppSettings> = {}): AppSettings =>
     claudeBillingCadence: "monthly",
     language: "zh",
     trayValueColorMode: "system",
-    enableAlarmPopup: true,
-    enableLineNotification: true,
+    enableCursorAlarmPopup: true,
+    enableClaudeAlarmPopup: true,
+    enableCodexAlarmPopup: true,
+    enableCursorLineNotification: true,
+    enableClaudeLineNotification: true,
+    enableCodexLineNotification: true,
     lineChannelAccessToken: "",
     ...patch
   }) as AppSettings;
@@ -246,4 +251,16 @@ test("clampTimeoutMs keeps delays inside the setTimeout ceiling", () => {
   assert.equal(clampTimeoutMs(1_000), 1_000);
   assert.equal(clampTimeoutMs(MAX_TIMEOUT_MS + 10_000), MAX_TIMEOUT_MS);
   assert.equal(clampTimeoutMs(Number.NaN), 0);
+});
+
+test("alarmSendsLine keeps the frequent 5-hour reset alarms off LINE", () => {
+  assert.equal(alarmSendsLine("claude-session"), false);
+  assert.equal(alarmSendsLine("codex-session"), false);
+});
+
+test("alarmSendsLine keeps the weekly and billing reminders on LINE", () => {
+  const sources: AlarmSource[] = ["claude-weekly", "codex-weekly", "cursor-billing", "claude-billing"];
+  for (const source of sources) {
+    assert.equal(alarmSendsLine(source), true, source);
+  }
 });

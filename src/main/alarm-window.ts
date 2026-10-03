@@ -29,15 +29,6 @@ let snoozeTimer: NodeJS.Timeout | null = null;
 // rather than clobbering whichever one is already on screen — anything that
 // arrives while a popup is showing waits here and is shown once it closes.
 const queue: AlarmPopupPayload[] = [];
-const closeListeners = new Set<(payload: AlarmPopupPayload) => void>();
-
-export const onAlarmPopupClosed = (listener: (payload: AlarmPopupPayload) => void): (() => void) => {
-  closeListeners.add(listener);
-  return () => {
-    closeListeners.delete(listener);
-  };
-};
-
 const alarmUrl = (): string =>
   isDev
     ? `${process.env.ELECTRON_RENDERER_URL}/alarm.html`
@@ -92,10 +83,7 @@ const createPopup = (): BrowserWindow => {
       preload: join(__dirname, "../preload/index.js"),
       contextIsolation: true,
       sandbox: true,
-      nodeIntegration: false,
-      // The alarm chime is synthesised on load with no click to authorise it,
-      // so the default autoplay gate has to be lifted for this window.
-      autoplayPolicy: "no-user-gesture-required"
+      nodeIntegration: false
     }
   });
 
@@ -128,7 +116,7 @@ const displayPopup = (payload: AlarmPopupPayload): void => {
 
   raisePopup(popup);
   // showInactive, not show: appear without stealing the keystroke the user is
-  // in the middle of typing. Water's "我喝了。" still needs the first click.
+  // in the middle of typing.
   popup.showInactive();
   armAutoDismiss();
 };
@@ -163,16 +151,9 @@ const destroyPopupWindow = (): void => {
 };
 
 export const closeAlarmPopup = (): void => {
-  const closed = currentPayload;
   clearAutoDismiss();
   currentPayload = null;
   destroyPopupWindow();
-
-  if (closed) {
-    for (const listener of closeListeners) {
-      listener(closed);
-    }
-  }
 
   const next = queue.shift();
   if (next) {

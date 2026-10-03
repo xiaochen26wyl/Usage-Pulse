@@ -6,10 +6,22 @@ import { EXHAUSTED_RED, SERVICE_ACCENT, type LineFlexMessage } from "../src/shar
 
 const NOW = new Date("2026-08-24T12:00:00.000Z");
 
-const accentOf = (message: LineFlexMessage): string => {
-  const body = (message.contents as { body: { contents: Array<Record<string, unknown>> } }).body.contents;
-  return body[0].backgroundColor as string;
+type FlexCard = { body: { contents: Array<Record<string, unknown>> } };
+
+// The quit status is one message: a carousel of cards, or a lone card when only
+// one window qualifies. Either way these flatten it back to the cards.
+const cardsOf = (messages: LineFlexMessage[]): FlexCard[] => {
+  assert.ok(messages.length <= 1, "quit status must be a single LINE message");
+  const contents = messages[0]?.contents as { type: string; contents?: FlexCard[] } | undefined;
+  if (!contents) {
+    return [];
+  }
+  return contents.type === "carousel" ? (contents.contents ?? []) : [contents as unknown as FlexCard];
 };
+
+const accentOfCard = (card: FlexCard): string => card.body.contents[0].backgroundColor as string;
+
+const accentsOf = (messages: LineFlexMessage[]): string[] => cardsOf(messages).map(accentOfCard);
 
 const quotaSnapshot = (
   service: ServiceType,
@@ -61,11 +73,25 @@ const combinedOf = (
 });
 
 const settingsOf = (
-  patch: Partial<Pick<AppSettings, "enableCursorMonitoring" | "enableClaudeMonitoring" | "enableCodexMonitoring" | "language">> = {}
+  patch: Partial<
+    Pick<
+      AppSettings,
+      | "enableCursorMonitoring"
+      | "enableClaudeMonitoring"
+      | "enableCodexMonitoring"
+      | "enableCursorLineNotification"
+      | "enableClaudeLineNotification"
+      | "enableCodexLineNotification"
+      | "language"
+    >
+  > = {}
 ) => ({
   enableCursorMonitoring: true,
   enableClaudeMonitoring: true,
   enableCodexMonitoring: false,
+  enableCursorLineNotification: true,
+  enableClaudeLineNotification: true,
+  enableCodexLineNotification: true,
   language: "zh" as const,
   ...patch
 });
@@ -87,6 +113,29 @@ test("returns [] when both services' monitoring is disabled", () => {
   assert.deepEqual(messages, []);
 });
 
+test("skips a service whose LINE checkbox is off but keeps the others", () => {
+  const messages = buildQuitStatusMessages({
+    settings: settingsOf({ enableClaudeLineNotification: false }),
+    snapshot: combinedOf(workingCursorSnapshot(), workingClaudeSnapshot()),
+    serviceLabels,
+    now: NOW
+  });
+  // Only Cursor's window is left, so it is sent as a plain card, not a carousel.
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0]?.contents.type, "bubble");
+  assert.deepEqual(accentsOf(messages), [SERVICE_ACCENT.cursor]);
+});
+
+test("returns [] when every monitored service has LINE unchecked", () => {
+  const messages = buildQuitStatusMessages({
+    settings: settingsOf({ enableCursorLineNotification: false, enableClaudeLineNotification: false }),
+    snapshot: combinedOf(workingCursorSnapshot(), workingClaudeSnapshot()),
+    serviceLabels,
+    now: NOW
+  });
+  assert.deepEqual(messages, []);
+});
+
 test("skips a service whose monitoring is off even with a populated snapshot", () => {
   const messages = buildQuitStatusMessages({
     settings: settingsOf({ enableCursorMonitoring: false }),
@@ -94,13 +143,12 @@ test("skips a service whose monitoring is off even with a populated snapshot", (
     serviceLabels,
     now: NOW
   });
-  assert.equal(messages.length, 2);
-  for (const message of messages) {
-    assert.notEqual(accentOf(message), SERVICE_ACCENT.cursor);
-  }
+  const accents = accentsOf(messages);
+  assert.equal(accents.length, 2);
+  assert.ok(!accents.includes(SERVICE_ACCENT.cursor));
 });
 
-test("skips Cursor's message when it has never been successfully polled", () => {
+test("skips Cursor's card when it has never been successfully polled", () => {
   const neverPolled = quotaSnapshot("cursor", []);
   const messages = buildQuitStatusMessages({
     settings: settingsOf(),
@@ -108,14 +156,11 @@ test("skips Cursor's message when it has never been successfully polled", () => 
     serviceLabels,
     now: NOW
   });
-  // Only the two Claude messages (session + weekly) should be present.
-  assert.equal(messages.length, 2);
-  for (const message of messages) {
-    assert.equal(accentOf(message), SERVICE_ACCENT.claude);
-  }
+  // Only the two Claude cards (session + weekly) should be present.
+  assert.deepEqual(accentsOf(messages), [SERVICE_ACCENT.claude, SERVICE_ACCENT.claude]);
 });
 
-test("skips the weekly message when only the session window exists, without leaking the session's number", () => {
+test("skips the weekly card when only the session window exists, without leaking the session's number", () => {
   const sessionOnly = quotaSnapshot("claude", [{ key: "session", label: "5 小時視窗", remaining: 63, percent: 63 }], {
     remaining: 63,
     percent: 63
@@ -128,19 +173,21 @@ test("skips the weekly message when only the session window exists, without leak
   });
   // Cursor + Claude session only — weekly must not appear, and must not
   // silently reuse the session's percentage via the shared fallback text.
-  assert.equal(messages.length, 2);
+  assert.deepEqual(accentsOf(messages), [SERVICE_ACCENT.cursor, SERVICE_ACCENT.claude]);
 });
 
-test("happy path: all 3 messages present, weekly label comes from the window's own label", () => {
+test("happy path: one message carrying all 3 cards, weekly label comes from the window's own label", () => {
   const messages = buildQuitStatusMessages({
     settings: settingsOf(),
     snapshot: combinedOf(workingCursorSnapshot(), workingClaudeSnapshot()),
     serviceLabels,
     now: NOW
   });
-  assert.equal(messages.length, 3);
-  assert.match(messages[1]?.altText ?? "", /5 小時視窗/);
-  assert.match(messages[2]?.altText ?? "", /每週總配額/);
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0]?.contents.type, "carousel");
+  assert.deepEqual(accentsOf(messages), [SERVICE_ACCENT.cursor, SERVICE_ACCENT.claude, SERVICE_ACCENT.claude]);
+  assert.match(messages[0]?.altText ?? "", /5 小時視窗/);
+  assert.match(messages[0]?.altText ?? "", /每週總配額/);
 });
 
 test("exhausted-but-not-red: a session at 0% still uses the service's own accent", () => {
@@ -155,13 +202,12 @@ test("exhausted-but-not-red: a session at 0% still uses the service's own accent
     serviceLabels,
     now: NOW
   });
-  assert.equal(messages.length, 1);
-  assert.equal(accentOf(messages[0]!), SERVICE_ACCENT.claude);
-  assert.notEqual(accentOf(messages[0]!), EXHAUSTED_RED);
+  assert.deepEqual(accentsOf(messages), [SERVICE_ACCENT.claude]);
+  assert.notEqual(accentsOf(messages)[0], EXHAUSTED_RED);
 });
 
-test("happy path includes Codex 5-hour and weekly when monitoring is on", () => {
-  const workingCodex = quotaSnapshot(
+const workingCodexSnapshot = (): QuotaSnapshot =>
+  quotaSnapshot(
     "codex",
     [
       { key: "session", label: "5 小時視窗", remaining: 55, percent: 55 },
@@ -169,16 +215,46 @@ test("happy path includes Codex 5-hour and weekly when monitoring is on", () => 
     ],
     { remaining: 55, percent: 55 }
   );
+
+test("happy path includes Codex 5-hour and weekly when monitoring is on", () => {
   const messages = buildQuitStatusMessages({
     settings: settingsOf({ enableCursorMonitoring: false, enableClaudeMonitoring: false, enableCodexMonitoring: true }),
-    snapshot: combinedOf(workingCursorSnapshot(), workingClaudeSnapshot(), workingCodex),
+    snapshot: combinedOf(workingCursorSnapshot(), workingClaudeSnapshot(), workingCodexSnapshot()),
     serviceLabels,
     now: NOW
   });
-  assert.equal(messages.length, 2);
-  for (const message of messages) {
-    assert.equal(accentOf(message), SERVICE_ACCENT.codex);
-  }
+  assert.deepEqual(accentsOf(messages), [SERVICE_ACCENT.codex, SERVICE_ACCENT.codex]);
   assert.match(messages[0]?.altText ?? "", /5 小時視窗/);
-  assert.match(messages[1]?.altText ?? "", /每週配額/);
+  assert.match(messages[0]?.altText ?? "", /每週配額/);
+});
+
+test("every monitored window travels in a single message, in service order", () => {
+  const messages = buildQuitStatusMessages({
+    settings: settingsOf({ enableCodexMonitoring: true }),
+    snapshot: combinedOf(workingCursorSnapshot(), workingClaudeSnapshot(), workingCodexSnapshot()),
+    serviceLabels,
+    now: NOW
+  });
+  assert.equal(messages.length, 1);
+  assert.deepEqual(accentsOf(messages), [
+    SERVICE_ACCENT.cursor,
+    SERVICE_ACCENT.claude,
+    SERVICE_ACCENT.claude,
+    SERVICE_ACCENT.codex,
+    SERVICE_ACCENT.codex
+  ]);
+});
+
+test("the push-banner text lists every window and stays within LINE's altText limit", () => {
+  const messages = buildQuitStatusMessages({
+    settings: settingsOf({ enableCodexMonitoring: true }),
+    snapshot: combinedOf(workingCursorSnapshot(), workingClaudeSnapshot(), workingCodexSnapshot()),
+    serviceLabels,
+    now: NOW
+  });
+  const altText = messages[0]?.altText ?? "";
+  assert.ok(altText.length <= 400);
+  assert.match(altText, /Cursor/);
+  assert.match(altText, /Claude Code/);
+  assert.match(altText, /Codex/);
 });

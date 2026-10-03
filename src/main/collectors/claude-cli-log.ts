@@ -47,7 +47,7 @@ export interface ClaudeCliActivity {
   fileCount: number;
 }
 
-const resolveClaudeProjectsDir = (): string => {
+export const resolveClaudeProjectsDir = (): string => {
   const customDir = process.env.CLAUDE_CONFIG_DIR?.trim();
   if (customDir) {
     return join(customDir, "projects");

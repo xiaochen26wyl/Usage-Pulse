@@ -287,7 +287,8 @@ export class CredentialMonitor extends EventEmitter {
         title,
         body,
         lang: settings.language
-      })
+      }),
+      { service }
     );
   }
 

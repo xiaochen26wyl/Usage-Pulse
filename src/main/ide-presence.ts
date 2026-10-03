@@ -76,6 +76,23 @@ export const commandLineLooksLikeCodex = (commandLine: string): boolean => {
   return CODEX_COMMAND_NEEDLES.some((needle) => lower.includes(needle)) || /(^|[\\/\s])codex(\.exe)?(\s|$)/i.test(commandLine);
 };
 
+// The Codex desktop app runs inside ChatGPT.app: its helpers live under
+// "Codex Framework.framework" and the process that holds the SQLite files is a
+// bare lowercase `codex … app-server` binary. Case matters on purpose — the
+// background "Codex Computer Use" helper is a different process that does not
+// touch those databases and may outlive the app.
+const CODEX_DESKTOP_NEEDLES = ["codex framework.framework", "codex-code-mode-host"] as const;
+const BARE_CODEX_BINARY = /^(?:\S*[\\/])?codex(?:\.exe)?(?:\s|$)/;
+
+export const commandLineLooksLikeCodexProcess = (commandLine: string): boolean => {
+  const lower = commandLine.toLowerCase();
+  return (
+    CODEX_DESKTOP_NEEDLES.some((needle) => lower.includes(needle)) ||
+    CODEX_COMMAND_NEEDLES.some((needle) => lower.includes(needle)) ||
+    BARE_CODEX_BINARY.test(commandLine.trim())
+  );
+};
+
 export const processLooksLikeIde = (input: {
   name: string;
   commandLine?: string;
@@ -236,6 +253,38 @@ export const probeIdeRunning = async (platform: NodeJS.Platform = process.platfo
     return probeDarwin();
   }
   return false;
+};
+
+/**
+ * Is Codex (desktop app or CLI) running right now?
+ *
+ * Unlike probeIdeRunning, a failed probe throws instead of answering "no": the
+ * caller uses this to decide whether it is safe to edit Codex's databases, and
+ * "could not tell" must not read as "safe".
+ */
+export const probeCodexRunning = async (platform: NodeJS.Platform = process.platform): Promise<boolean> => {
+  if (platform === "win32") {
+    const { stdout } = await execFileAsync(
+      "powershell.exe",
+      [
+        "-NoProfile",
+        "-Command",
+        [
+          "$hit = Get-CimInstance Win32_Process -ErrorAction Stop |",
+          "  Where-Object { ($_.Name -ieq 'codex.exe') -or",
+          "    ($_.CommandLine -and ($_.CommandLine -match 'codex-code-mode-host|@openai/codex|openai-codex')) };",
+          "if ($hit) { Write-Output '1' }"
+        ].join(" ")
+      ],
+      { timeout: 8_000, windowsHide: true }
+    );
+    return stdout.includes("1");
+  }
+  const { stdout } = await execFileAsync("ps", ["-ax", "-o", "command="], {
+    timeout: 5_000,
+    maxBuffer: 16 * 1024 * 1024
+  });
+  return stdout.split("\n").some((line) => commandLineLooksLikeCodexProcess(line));
 };
 
 export type IdeQuitAnswer = "quit" | "stay" | "cancelled";

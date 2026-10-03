@@ -9,8 +9,6 @@
   --color-danger: #ff7d7d;
   --color-line: #06c755;
   --color-line-strong: #05b34c;
-  --color-water: #38bdf8;
-  --color-water-strong: #0ea5e9;
   --color-claude: #e8945a;
   --color-cursor: #c084fc;
   --color-codex: #60a5fa;
@@ -55,14 +53,6 @@ body {
   color: var(--color-line);
 }
 
-.panel-water {
-  border-left: 3px solid var(--color-water);
-}
-
-.panel-water h2 {
-  color: var(--color-water);
-}
-
 .panel-update {
   border-left: 3px solid var(--color-primary);
 }
@@ -84,22 +74,6 @@ body {
 .update-banner-actions .primary-btn,
 .update-banner-actions .ghost-btn {
   flex: 1;
-}
-
-.water-cup-row {
-  display: flex;
-  gap: 8px;
-}
-
-.water-cup-row button {
-  flex: 1;
-  width: auto;
-  margin: 0;
-}
-
-.toggle.toggle-water:checked {
-  background: var(--color-water-strong);
-  border-color: var(--color-water-strong);
 }
 
 h1,
@@ -158,47 +132,33 @@ h2 {
 }
 
 .quota-card-claude,
-.service-block-claude,
-.session-summary-block-claude {
+.service-block-claude {
   border-left: 3px solid var(--color-claude);
 }
 
 .quota-card-claude strong,
-.service-block-claude strong,
-.session-summary-block-claude h2 {
+.service-block-claude strong {
   color: var(--color-claude);
 }
 
 .quota-card-cursor,
-.service-block-cursor,
-.session-summary-block-cursor {
+.service-block-cursor {
   border-left: 3px solid var(--color-cursor);
 }
 
 .quota-card-cursor strong,
-.service-block-cursor strong,
-.session-summary-block-cursor h2 {
+.service-block-cursor strong {
   color: var(--color-cursor);
 }
 
 .quota-card-codex,
-.service-block-codex,
-.session-summary-block-codex {
+.service-block-codex {
   border-left: 3px solid var(--color-codex);
 }
 
 .quota-card-codex strong,
-.service-block-codex strong,
-.session-summary-block-codex h2 {
+.service-block-codex strong {
   color: var(--color-codex);
-}
-
-.session-summary-block-water {
-  border-left: 3px solid var(--color-water);
-}
-
-.session-summary-block-water h2 {
-  color: var(--color-water);
 }
 
 .window-list {
@@ -291,6 +251,12 @@ h2 {
 /* Per-service credential status, shown inside its own quota card. */
 .credential-row {
   margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--color-border);
+}
+
+.history-row {
+  margin-top: 12px;
   padding-top: 10px;
   border-top: 1px solid var(--color-border);
 }
@@ -403,6 +369,46 @@ input[type="range"] {
 .toggle:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+/* Per-service "how to remind me": plain checkboxes sharing one wrapping row. */
+.notify-channels {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--color-border);
+}
+
+.notify-channels-title {
+  margin: 0 0 6px;
+  color: #f5f6f8;
+  font-size: 14px;
+}
+
+.check-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+}
+
+.check-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #f5f6f8;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.check-item input[type="checkbox"] {
+  margin: 0;
+  width: 15px;
+  height: 15px;
+  accent-color: var(--color-primary-strong);
+  cursor: pointer;
+}
+
+.check-item input[type="checkbox"].check-line {
+  accent-color: var(--color-line);
 }
 
 button {
@@ -636,68 +642,4 @@ body:has(.alarm) {
   border: 1px solid var(--color-border);
   border-radius: 10px;
   text-align: center;
-}
-
-.alarm-actions {
-  margin-top: 12px;
-  padding-top: 0;
-  display: flex;
-  gap: 8px;
-  -webkit-app-region: no-drag;
-}
-
-.alarm-actions button {
-  flex: 1;
-  margin: 0;
-}
-
-/* --- Session summary (session.html) --- */
-.session-summary {
-  min-height: 100vh;
-  padding: 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  background: #181d25;
-}
-
-.session-summary-title {
-  margin: 0;
-  font-size: 18px;
-  font-weight: 700;
-}
-
-.session-summary-duration {
-  margin: 0;
-  font-size: 14px;
-  color: var(--color-text);
-}
-
-.session-summary-block {
-  border: 1px solid var(--color-border);
-  border-radius: 10px;
-  padding: 10px 12px;
-}
-
-.session-summary-block h2 {
-  margin: 0 0 6px;
-  font-size: 14px;
-}
-
-.session-summary-block p {
-  margin: 0 0 4px;
-  font-size: 13px;
-  color: var(--color-text-muted);
-}
-
-.session-summary-actions {
-  margin-top: auto;
-  display: flex;
-  gap: 8px;
-}
-
-.session-summary-actions button {
-  flex: 1;
-  width: auto;
-  margin: 0;
 }

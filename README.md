@@ -21,7 +21,6 @@ It only reads credentials you're already logged in with locally and official usa
   </tr>
   <tr>
     <td><img src=".github/readme-assets/screenshot-line-notify.png" width="260"/><br/><sub>Optional LINE notifications</sub></td>
-    <td><img src=".github/readme-assets/screenshot-hydration-reminder.png" width="260"/><br/><sub>Bonus: a hydration reminder</sub></td>
   </tr>
 </table>
 
@@ -82,14 +81,16 @@ A pasted token is tried against your real usage before it is kept: if it can't r
 
 1. Checks Cursor / Claude Code / Codex quota periodically in the background and alerts you on changes.
 2. Low-quota and quota-reset alerts can each be toggled independently, per service and per window, in Settings.
-3. Two notification channels, each toggled independently in Settings: an in-app popup (no OS permission needed, always works — top-right, auto-closes after 30 seconds) and LINE notifications (needs a Channel Access Token).
+3. Two notification channels, chosen separately for each of Cursor, Claude Code, and Codex in Settings: an in-app popup (no OS permission needed, always works — top-right, auto-closes after 30 seconds) and LINE notifications (needs a Channel Access Token).
 4. Available in Traditional Chinese, English, Japanese, and Korean from the in-app language menu.
 5. Quit anytime from the UI or the tray menu; if LINE is on, quitting sends a final status from the last cached reading.
+6. Windows builds check for new releases automatically (toggle in Settings, or use **Check for Updates** in the tray menu) and only download or install after you confirm. macOS builds don't self-update — grab new versions from the Releases page.
 
 ## Security notes
 
 - What's read, all read-only: Cursor's local session file, the official Claude Code CLI's saved login, and Codex's local auth file.
 - Usage-Pulse never writes to or modifies any of these files or credentials.
+- The one exception is the Clear older than 2 weeks button on the Claude Code and Codex cards. It acts only when you click it and confirm: only conversations not updated in over 2 weeks are removed (pinned Codex conversations are kept), their files go to the Trash, and Codex's database records for them are deleted permanently, so quit Codex first.
 - General settings (notification toggles, language, and the rest of Settings) are stored locally only — there's no cloud sync.
 
 If anything appears incorrect — such as a reading that seems wrong, a notification that should not have been triggered, or any other unexpected behavior — please open a question in [Discussions Q&A](https://github.com/xiaochen26wyl/Usage-Pulse/discussions/categories/q-a-%E8%A7%A3%E6%B1%BA%E5%95%8F%E9%A1%8C) instead of making assumptions.

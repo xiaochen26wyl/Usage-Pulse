@@ -122,7 +122,7 @@ pnpm run git:cleanup-branches -- --delete-remote v100_2026_0818
 
 1. Agent 問你這次版本號（可回 `patch`／`minor`／`major` 依語意版本自動遞增，或直接給完整版本號），等你回覆才繼續。
 2. Agent 更新 `package.json` 的 `version`。
-3. Agent 依本輪改動自動撰寫 `release-notes/<version>.json`（`zh`／`en`／`ja`／`ko` 四語言，見 [`release-notes/README.md`](../release-notes/README.md)），不會另外找你確認文字。
+3. Agent 依本輪改動自動撰寫 `release-notes/<version>.json`（`zh`／`en`／`ja`／`ko` 四語言，見 [`release-notes/README.md`](../release-notes/README.md)；缺任何一個語言，release workflow 會直接失敗），不會另外找你確認文字。
 4. Agent 額外開一個 `chore: release v<version>` commit 並 push 到 `origin main`。
 5. Agent `git tag v<version>` 並 `git push origin v<version>`，觸發 `.github/workflows/release.yml` 建置與發布 GitHub Release（細節見 [`Guide.md`](Guide.md#發版tag)）。
 6. Agent 回報 tag 是否推送成功、release workflow 的執行狀態。

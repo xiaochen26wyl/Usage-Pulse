@@ -7,13 +7,14 @@ import type {
   ClaudeTokenSaveResult,
   CombinedSnapshot,
   CredentialStatus,
+  HistoryCleanResult,
+  HistoryService,
+  HistoryStats,
   ManualQuotaResult,
-  SessionStats,
   ServiceType,
   UpdateCheckResult,
   UpdateDownloadProgress,
-  UpdateInfo,
-  WaterCupSizeMl
+  UpdateInfo
 } from "@shared/types";
 
 const api = {
@@ -36,21 +37,11 @@ const api = {
   sendLineTest: () => ipcRenderer.invoke("line:send-test") as Promise<boolean>,
   sendLineStatus: () => ipcRenderer.invoke("line:send-status") as Promise<boolean>,
   quitApp: () => ipcRenderer.invoke("app:quit") as Promise<void>,
-  getSessionStats: () => ipcRenderer.invoke("session:get-stats") as Promise<SessionStats>,
-  logWaterCup: (sizeMl?: WaterCupSizeMl) =>
-    ipcRenderer.invoke("session:log-cup", sizeMl) as Promise<SessionStats>,
-  drinkWater: () => ipcRenderer.invoke("water:drink") as Promise<SessionStats>,
-  skipWater: () => ipcRenderer.invoke("water:skip") as Promise<void>,
-  continueSession: () => ipcRenderer.invoke("session:continue") as Promise<void>,
-  confirmQuit: () => ipcRenderer.invoke("session:confirm-quit") as Promise<void>,
-  requestSessionStats: () => ipcRenderer.invoke("session:request-stats") as Promise<SessionStats | null>,
-  onSessionStatsUpdated: (handler: (stats: SessionStats) => void) => {
-    const listener = (_event: Electron.IpcRendererEvent, stats: SessionStats) => handler(stats);
-    ipcRenderer.on("session:stats", listener);
-    return () => {
-      ipcRenderer.removeListener("session:stats", listener);
-    };
-  },
+  getHistoryStats: () =>
+    ipcRenderer.invoke("history:get-stats") as Promise<Record<HistoryService, HistoryStats>>,
+  // The confirmation dialog is shown by main; the renderer cannot skip it.
+  cleanHistory: (service: HistoryService) =>
+    ipcRenderer.invoke("history:clean", service) as Promise<HistoryCleanResult>,
   openExternal: (url: string) => ipcRenderer.invoke("app:open-external", url) as Promise<void>,
   clearClipboard: () => ipcRenderer.invoke("app:clear-clipboard") as Promise<void>,
   isSecretStorageAvailable: () =>

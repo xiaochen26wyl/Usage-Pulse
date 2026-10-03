@@ -98,7 +98,7 @@ store.set(`credentials.${service}`, record)
 
 electron-store 會把樣板字串當作**dot path** 解讀，因此一個非預期的 `service` 字串等於一個可指向設定檔任意位置的寫入原語。此外 `settings:save` 接受任意物件並直接合併進持久化設定，`session:log-cup` 與 `app:copy-to-clipboard` 也未做任何檢查。
 
-**修補**：新增 `src/main/ipc-validation.ts`，全部 fail-closed（無法識別就回 `null`，handler 拒絕動作）：`asServiceType`（白名單）、`asSettingsPatch`（以 `DEFAULT_SETTINGS` 的 key 與型別過濾）、`asToken`（長度上限）、`asClipboardText`（長度上限＋拒絕控制字元）、`asWaterCupSize`（沿用既有 `normalizeWaterCupSize`）。
+**修補**：新增 `src/main/ipc-validation.ts`，全部 fail-closed（無法識別就回 `null`，handler 拒絕動作）：`asServiceType`（白名單）、`asSettingsPatch`（以 `DEFAULT_SETTINGS` 的 key 與型別過濾）、`asToken`（長度上限）、`asClipboardText`（長度上限＋拒絕控制字元）、`asWaterCupSize`（沿用既有 `normalizeWaterCupSize`；喝水提醒移除後已一併刪除）。
 
 實機驗證：以 `"settings.lineChannelAccessToken"`、`"__proto__"` 呼叫 `auth:check` 均回 `null`，設定檔沒有多出任何鍵；`settings:save` 送入未知鍵會被丟棄。
 
@@ -220,3 +220,53 @@ pnpm typecheck && pnpm check:readonly && pnpm test:unit && pnpm build && pnpm sm
 - `node-pty` 繼承完整 `process.env`；`package.json` 以 `asarUnpack` 帶出 native helper；`postinstall` 的 `scripts/fix-node-pty-permissions.mjs` 對 `spawn-helper` `chmod` 755（開發機／建置鏈）。
 - IPC：`claude-login:input`／`resize`（renderer→main）、`claude-login:data`／`exit`（main→renderer）。`claude-login:input` 只檢查 `typeof string`，無長度上限、無 sender 視窗限制（preload 為各視窗共用）。`resize` 有 `asPtySize`（1–500）。
 - 憑證寫入仍只經 `credential-provider.ts` 的 `add-generic-password` 例外；`check-readonly.mjs` 清單無需為 PTY 檔新增例外。
+
+---
+
+## 現況更新（2026-10-01）
+
+> 以下對照 `2.0.4` 工作區現況，**取代 2026-08-28 現況中已過期的敘述**；2026-08-25 的發現與修補紀錄、以及 2026-08-28 那一節本身都不改寫。本次**沒有重跑完整檢測**，只核對程式碼與設定檔；唯一重跑的是 `pnpm test:unit`（228 筆全數通過，驗證表裡的 160 筆是 2026-08-25 當時數字）。
+
+### M1 — 自動更新已加入，但只涵蓋 Windows
+
+- 相依已加入 `electron-updater`（`^6.3.9`），由 `src/main/updater.ts` 封裝；Electron 為 `^43.4.1`。`electron-builder` 仍是 `^25.1.8`。
+- **只在 Windows 啟用**（`process.platform === "win32"`）；macOS 版未簽章，Squirrel.Mac 的靜默安裝在沒有簽章下不可靠，因此 macOS 完全不執行檢查更新邏輯，已安裝的 macOS 使用者仍拿不到 Chromium 修補，只能手動重新下載。
+- 檢查時機：啟動時、`autoCheckForUpdates` 開啟時每 6 小時一次、以及選單列的「檢查更新」。`autoDownload` 與 `autoInstallOnAppQuit` 皆為 `false`——下載與安裝都要使用者在 App 內按鈕確認，不會背景偷裝。
+- 新增 IPC：`update:check`／`update:download`／`update:install`，三者都不接收 renderer 傳入的任何參數，沒有新的注入面。版更說明由 main 以 `axios` 取自固定的 `raw.githubusercontent.com/.../v<version>/release-notes/<version>.json`（10 秒逾時），失敗時回空字串，不影響更新流程。
+- Release workflow 現在會替 Windows 附上 `latest.yml`（`electron-updater` 用其中的雜湊驗證下載）；macOS 只有 `.dmg` 與 `.blockmap`，仍沒有 checksum。
+
+### Renderer 進入點
+
+現有三個進入點：`index.html`、`alarm.html`、`session.html`，三者都有嚴格 CSP，對應的三個 `BrowserWindow` 皆為 `sandbox: true`。2026-08-28 那節提到的 `claude-login.html` 已不存在。
+
+### H1／L1／L3 與 in-app PTY 登入——程式碼已整段移除
+
+in-app `claude setup-token` 登入流程（`node-pty`、`claude-login:*` IPC、`claude-setup-token.ts`、xterm 視窗）已全數刪除，`package.json` 也不再相依 `node-pty`。這帶來的結果：
+
+- H1 的 `add-generic-password` 寫入路徑已不存在——`src/main` 內不再有任何 `add-generic-password` 呼叫，只剩 `credential-provider.ts` 啟動時一次性、盡力刪除舊流程遺留的 `Usage-Pulse-Claude-setup-token` Keychain 項目（`delete-generic-password`）。`scripts/check-readonly.mjs` 的 `allowedWrites` 例外清單因此只剩這一筆。
+- L1（登入網址比對）、L3（setup-token 暫存檔／PTY 捲動緩衝）所針對的程式碼已不存在，相關風險不再適用。`log-redaction.ts` 保留，仍是「error 物件不直接交給 console」的守則。
+- 2026-08-28 那節「新增表面」列的 `node-pty` 環境變數繼承、`asarUnpack`、`fix-node-pty-permissions.mjs` 與 `claude-login:*` IPC 也隨之消失。
+
+### 目前的憑證表面
+
+- Claude Code：完全唯讀使用官方 CLI 的 `Claude Code-credentials`；備援是使用者貼進卡片的 token。`claude:save-token` 先經 `asClaudeToken`／`preflightClaudeToken` 檢查，再實際打一次 usage API，**通過才儲存**；存於 `electron-store`、以 `safeStorage` 加密，`settings:get` 只回傳 `CLAUDE_TOKEN_MASK`，不寫成 Keychain 項目。
+- Codex（2026-08-28 時尚未涵蓋）：唯讀讀取 `~/.codex/auth.json` 或其 Keychain 項目；access token 接近過期時，以官方 Codex CLI 的公開 OAuth client 在行程記憶體內刷新，新 token 不寫回來源。這是一個新的對外請求面，本次未做完整重測。
+
+### 仍待處理
+
+1. **macOS 簽章與公證**（L6）：沒有簽章就沒有 macOS 自動更新，也沒有 macOS 的 checksum。
+2. **Windows 安裝檔同樣未簽章**（`package.json` 的 `build.win` 沒有任何簽章設定，README 已提示 SmartScreen）。`latest.yml` 的雜湊與安裝檔出自同一個 GitHub Release，無法獨立於該帳號／Release 被竄改的情境驗證真偽，簽章才能補上這一層。
+3. **`electron-builder` 升到 26.15.0+**（M1 原本的後半）：Electron 大版本升級與 Windows 自動更新都已完成，這是 M1 剩下的部分。
+
+## 現況更新（2026-10-03）
+
+### 新增表面：使用者觸發的對話紀錄清除（`history:clean`，只清超過 2 週的）
+
+這是第一個會刪除 IDE／CLI 檔案的程式碼，也是 Sidecar Observer 唯讀原則的第一個產品層級例外，風險評估如下。
+
+- **範圍**：`src/main/history-cleaner.ts` 是唯一寫入點，`scripts/check-readonly.mjs` 以逐檔、逐 hint 的方式列為例外（`delete from`、`trashitem(`、`truncate(`）；collectors 與 credential 相關程式碼仍無任何例外。守衛同時新增 `trashitem(`、`truncate(` 兩個 hint，原本這兩種寫入它看不見。
+- **觸發**：只有 renderer 的按鈕可以觸發；`service` 經 `asHistoryService` 限定為 `claude`／`codex`（`cursor` 會被擋下）；確認對話框由 main 顯示且預設取消，renderer 無法略過；清理期間重複呼叫回報 `busy`。
+- **資料外流**：renderer 只收到檔案數、位元組數與結果摘要，不傳路徑內容或對話內容；`detail` 只含檔名與資料表名。
+- **Claude Code**：只動修改時間超過 2 週的 `.jsonl`，跳過 `memory` 資料夾，檔案進系統垃圾桶，不跟隨 symlink。超過 2 週的檔案不可能是開著的 session，原本「10 分鐘內有寫入就略過」的規則因此移除。
+- **Codex（風險最高）**：刪除的 SQL 依實際資料表結構與外鍵推導，不是 Codex 官方流程，無法保證 Codex 內部沒有其他不變條件。緩解：Codex 執行中或無法確認就拒絕；檔名版本與資料表集合必須完全吻合已驗證的版本，未知或缺少的表、指向被清除表的未列入表、`quick_check` 失敗都拒絕；全部驗證通過（含比對用欄位都存在）才動第一列；只刪超過 2 週且未置頂對話串的列，依 `thread_id` 逐表刪除；每個資料庫一個交易；全部資料庫成功才動檔案，且仍被未過期對話串引用的 rollout 檔絕不動；`session_index.jsonl` 以暫存檔加 rename 只移除被刪對話串的行，其餘行（含無法解析的）原樣保留。殘留風險：跨資料庫不是原子的；資料庫列永久刪除；Windows 的行程偵測未驗證。
+- **後續**：Codex 改版時需重新驗證 `state_5`／`thread_history_1`／`logs_2` 的結構，並更新 `CODEX_DB_PLANS`；否則功能會以 `unsupportedSchema` 拒絕而不是猜測。

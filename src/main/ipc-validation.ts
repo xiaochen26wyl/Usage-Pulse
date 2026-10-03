@@ -1,5 +1,4 @@
-import type { AppSettings, ServiceType, WaterCupSizeMl } from "@shared/types";
-import { normalizeWaterCupSize } from "@shared/water";
+import type { AppSettings, HistoryService, ServiceType } from "@shared/types";
 import { DEFAULT_SETTINGS } from "@main/config";
 
 /**
@@ -18,13 +17,12 @@ const SERVICE_TYPES: ReadonlySet<string> = new Set<ServiceType>(["cursor", "clau
 export const asServiceType = (value: unknown): ServiceType | null =>
   typeof value === "string" && SERVICE_TYPES.has(value) ? (value as ServiceType) : null;
 
-export const asWaterCupSize = (value: unknown): WaterCupSizeMl | null => {
-  if (value === undefined || value === null) {
-    return null;
-  }
-  const numeric = Number(value);
-  return Number.isFinite(numeric) ? normalizeWaterCupSize(numeric) : null;
-};
+const HISTORY_SERVICES: ReadonlySet<string> = new Set<HistoryService>(["claude", "codex"]);
+
+// Narrower than ServiceType: Cursor has no clearable history, so "cursor" must
+// not get through to the code that deletes files.
+export const asHistoryService = (value: unknown): HistoryService | null =>
+  typeof value === "string" && HISTORY_SERVICES.has(value) ? (value as HistoryService) : null;
 
 // Longest string value a settings patch may carry, so a runaway renderer
 // cannot push an unbounded string through validation and into the settings file.

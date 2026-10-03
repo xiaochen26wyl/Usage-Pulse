@@ -1,5 +1,5 @@
 import type { AppSettings, CombinedSnapshot, ServiceType } from "./types";
-import { buildQuitStatusFlex, type LineFlexMessage } from "./line-templates";
+import { buildCarouselFlex, buildQuitStatusFlex, type LineFlexMessage } from "./line-templates";
 import {
   UNKNOWN_TRAY_VALUE,
   claudeTrayValueText,
@@ -11,9 +11,19 @@ import {
   findCodexWeeklyWindow
 } from "./tray-display";
 import { t } from "./i18n";
+import { isLineEnabled } from "./notify-channels";
 
 export interface QuitStatusOptions {
-  settings: Pick<AppSettings, "enableCursorMonitoring" | "enableClaudeMonitoring" | "enableCodexMonitoring" | "language">;
+  settings: Pick<
+    AppSettings,
+    | "enableCursorMonitoring"
+    | "enableClaudeMonitoring"
+    | "enableCodexMonitoring"
+    | "enableCursorLineNotification"
+    | "enableClaudeLineNotification"
+    | "enableCodexLineNotification"
+    | "language"
+  >;
   snapshot: CombinedSnapshot | null;
   // Passed in rather than imported: SERVICE_LABELS lives in the main process
   // (see line-templates.ts's own note on why shared/ never reaches into it).
@@ -22,14 +32,18 @@ export interface QuitStatusOptions {
 }
 
 /**
- * Builds the up-to-3 "final status" Flex bubbles sent on quit — Cursor,
- * Claude's 5-hour session, Claude's weekly window — from the already-cached
- * snapshot only (never fetches). Reuses the same tray display helpers the
- * menu bar itself uses, so the numbers (and the countdown fallback once a
- * window is spent) match exactly what the user already saw. A window whose
- * internal display value is unknown (monitoring off, or never successfully
- * polled) is skipped rather than sending noise. No dedupe/cooldown: every quit is its
- * own occurrence, unlike the recurring low-quota alerts elsewhere.
+ * Builds the "final status" Flex message sent on quit — one card each for
+ * Cursor, Claude's 5-hour session and weekly windows, and Codex's 5-hour
+ * session and weekly windows — from the already-cached snapshot only (never
+ * fetches). The cards travel as a single swipeable message, so quitting is one
+ * LINE notification however many windows are monitored. Reuses the same tray
+ * display helpers the menu bar itself uses, so the numbers (and the countdown
+ * fallback once a window is spent) match exactly what the user already saw. A
+ * window whose internal display value is unknown (monitoring off, or never
+ * successfully polled) is skipped rather than sending noise, and so is every
+ * window of a service whose LINE checkbox is off; when nothing is left the
+ * result is empty. No dedupe/cooldown: every quit is its own occurrence,
+ * unlike the recurring low-quota alerts elsewhere.
  */
 export const buildQuitStatusMessages = (options: QuitStatusOptions): LineFlexMessage[] => {
   const { settings, snapshot, serviceLabels, now = new Date() } = options;
@@ -38,12 +52,12 @@ export const buildQuitStatusMessages = (options: QuitStatusOptions): LineFlexMes
   }
   const lang = settings.language;
   const nowMs = now.getTime();
-  const messages: LineFlexMessage[] = [];
+  const cards: LineFlexMessage[] = [];
 
-  if (settings.enableCursorMonitoring) {
+  if (settings.enableCursorMonitoring && isLineEnabled(settings, "cursor")) {
     const valueText = cursorTrayValueText(snapshot.cursor, nowMs);
     if (valueText !== UNKNOWN_TRAY_VALUE) {
-      messages.push(
+      cards.push(
         buildQuitStatusFlex({
           service: "cursor",
           serviceLabel: serviceLabels.cursor,
@@ -57,7 +71,7 @@ export const buildQuitStatusMessages = (options: QuitStatusOptions): LineFlexMes
     }
   }
 
-  if (settings.enableClaudeMonitoring) {
+  if (settings.enableClaudeMonitoring && isLineEnabled(settings, "claude")) {
     // Gated on the window actually existing (not on the tray helper's unknown
     // output): both claudeTrayValueText and claudeWeeklyTrayValueText fall
     // back to the same generic top-level snapshotValueText when their own
@@ -65,7 +79,7 @@ export const buildQuitStatusMessages = (options: QuitStatusOptions): LineFlexMes
     // leak into the other's message when only one of the two exists.
     const session = snapshot.claude.windows.find((window) => window.key === "session") ?? null;
     if (session && session.remaining !== null) {
-      messages.push(
+      cards.push(
         buildQuitStatusFlex({
           service: "claude",
           serviceLabel: serviceLabels.claude,
@@ -80,7 +94,7 @@ export const buildQuitStatusMessages = (options: QuitStatusOptions): LineFlexMes
 
     const weekly = findClaudeWeeklyWindow(snapshot.claude);
     if (weekly && weekly.remaining !== null) {
-      messages.push(
+      cards.push(
         buildQuitStatusFlex({
           service: "claude",
           serviceLabel: serviceLabels.claude,
@@ -94,10 +108,10 @@ export const buildQuitStatusMessages = (options: QuitStatusOptions): LineFlexMes
     }
   }
 
-  if (settings.enableCodexMonitoring) {
+  if (settings.enableCodexMonitoring && isLineEnabled(settings, "codex")) {
     const session = snapshot.codex.windows.find((window) => window.key === "session") ?? null;
     if (session && session.remaining !== null) {
-      messages.push(
+      cards.push(
         buildQuitStatusFlex({
           service: "codex",
           serviceLabel: serviceLabels.codex,
@@ -112,7 +126,7 @@ export const buildQuitStatusMessages = (options: QuitStatusOptions): LineFlexMes
 
     const weekly = findCodexWeeklyWindow(snapshot.codex);
     if (weekly && weekly.remaining !== null) {
-      messages.push(
+      cards.push(
         buildQuitStatusFlex({
           service: "codex",
           serviceLabel: serviceLabels.codex,
@@ -126,5 +140,5 @@ export const buildQuitStatusMessages = (options: QuitStatusOptions): LineFlexMes
     }
   }
 
-  return messages;
+  return cards.length > 0 ? [buildCarouselFlex(cards)] : [];
 };

@@ -9,12 +9,12 @@ import type {
   CombinedSnapshot,
   CredentialStatus,
   ManualQuotaResult,
-  SessionStats,
   ServiceType,
   UpdateCheckResult,
-  UpdateInfo,
-  WaterCupSizeMl
+  UpdateInfo
 } from "@shared/types";
+import type { HistoryCleanResult, HistoryService, HistoryStats } from "@shared/types";
+import { formatBytes } from "@shared/history";
 import { CLAUDE_TOKEN_MASK, LINE_TOKEN_MASK } from "@shared/types";
 import { localeForLanguage, t } from "@shared/i18n";
 import { isSupportLink } from "@shared/support-links";
@@ -31,21 +31,18 @@ import {
 } from "@shared/tray-display";
 import { alarmService } from "@main/alarm-service";
 import { destroyAlarmWindow, closeAlarmPopup, fitAlarmWindowSize, getAlarmPayload, snoozeAlarmPopup } from "@main/alarm-window";
-import { closeSessionSummary, destroySessionWindow, showSessionSummary } from "@main/session-window";
-import { sessionTracker } from "@main/session-tracker";
-import { waterReminder } from "@main/water-reminder";
 import { credentialMonitor } from "@main/credential-monitor";
 import { removeLegacySetupTokenKeychainItem } from "@main/credential-provider";
-import { applyAppLoginItem } from "@main/app-login-item";
 import { applyIdeLaunchHelper } from "@main/ide-launch-helper";
-import { IdePresenceMonitor, probeIdeRunning } from "@main/ide-presence";
+import { IdePresenceMonitor, probeCodexRunning, probeIdeRunning } from "@main/ide-presence";
+import { cleanHistory, createNodeSqliteOpener, getHistoryStats, type HistoryCleanerDeps } from "@main/history-cleaner";
 import {
   asAlarmHeight,
   asClaudeToken,
   asClipboardText,
+  asHistoryService,
   asServiceType,
-  asSettingsPatch,
-  asWaterCupSize
+  asSettingsPatch
 } from "@main/ipc-validation";
 import { classifyClaudeTokenProbe, preflightClaudeToken } from "@main/claude-manual-token";
 import { collectClaudeCodeQuotaFromToken } from "@main/collectors/claude-code";
@@ -95,29 +92,6 @@ if (!app.requestSingleInstanceLock()) {
 installWebContentsHardening();
 
 const monitor = new MonitorEngine();
-
-let sessionReady = false;
-let quitConfirmed = false;
-
-const collectSessionStats = (): SessionStats =>
-  sessionTracker.getStats(monitor.getLatestSnapshot() ?? snapshotStore.get(), Date.now(), waterReminder.getNextAt());
-
-const emitSessionStats = (): void => {
-  const stats = collectSessionStats();
-  if (trayApp.window && !trayApp.window.isDestroyed()) {
-    trayApp.window.webContents.send("session:stats", stats);
-  }
-};
-
-const confirmQuit = (): void => {
-  quitConfirmed = true;
-  closeSessionSummary();
-  app.quit();
-};
-
-const cancelQuit = (): void => {
-  closeSessionSummary();
-};
 
 // Explicit icon path: menubar's own default-icon fallback resolves via a
 // __dirname-relative lookup that breaks once menubar is bundled into
@@ -458,6 +432,31 @@ const stripMaskedSecrets = (patch: Partial<AppSettings>): Partial<AppSettings> =
   return result;
 };
 
+const historyCleanerDeps: HistoryCleanerDeps = {
+  trashItem: (path) => shell.trashItem(path),
+  isCodexRunning: () => probeCodexRunning(),
+  openDatabase: createNodeSqliteOpener()
+};
+let historyCleaning = false;
+
+// The confirmation lives here, not in the renderer, so no caller can skip it.
+// Cancel is the default button: Enter or Escape never deletes anything.
+const confirmHistoryClean = async (service: HistoryService, stats: HistoryStats): Promise<boolean> => {
+  const lang = settingsStore.get().language;
+  const { response } = await dialog.showMessageBox({
+    type: "warning",
+    buttons: [t(lang, "history.confirm.cancel"), t(lang, "history.confirm.ok")],
+    defaultId: 0,
+    cancelId: 0,
+    title: t(lang, "history.confirm.title"),
+    message: t(lang, service === "claude" ? "history.confirm.claude" : "history.confirm.codex", {
+      count: stats.staleFileCount,
+      size: formatBytes(stats.staleBytes)
+    })
+  });
+  return response === 1;
+};
+
 const setupIpcHandlers = (): void => {
   ipcMain.handle("settings:get", () => maskSecrets(settingsStore.get()));
   ipcMain.handle("settings:save", (_event, patch: unknown) => {
@@ -466,11 +465,8 @@ const setupIpcHandlers = (): void => {
       console.error("[Usage-Pulse] failed to apply IDE launch helper", redact(error));
     });
     syncIdePresenceMonitor(next.launchWithIde);
-    applyAppLoginItem(next.launchAtStartup);
     monitor.reschedule();
-    waterReminder.reschedule();
     updateChecker.reschedule();
-    emitSessionStats();
     const latest = monitor.getLatestSnapshot();
     if (latest) {
       updateTrayText(latest);
@@ -479,8 +475,8 @@ const setupIpcHandlers = (): void => {
   });
 
   // Lets the settings panel confirm a freshly pasted token actually works,
-  // independent of enableLineNotification (a disabled toggle must not make
-  // the test button lie about a broken token).
+  // independent of the per-service LINE checkboxes (an unchecked box must not
+  // make the test button lie about a broken token).
   ipcMain.handle("line:send-test", async (): Promise<boolean> => {
     const settings = settingsStore.get();
     const accessToken = settings.lineChannelAccessToken.trim();
@@ -494,7 +490,7 @@ const setupIpcHandlers = (): void => {
     );
   });
 
-  // Lets Settings send the same "final status" bubbles quit sends, on demand —
+  // Lets Settings send the same "final status" message quit sends, on demand —
   // from the already-cached snapshot, so the user can check the real Cursor/
   // Claude numbers on LINE right now instead of waiting to quit the app.
   ipcMain.handle("line:send-status", (): Promise<boolean> => sendQuitStatusBroadcast());
@@ -599,30 +595,33 @@ const setupIpcHandlers = (): void => {
   ipcMain.handle("app:quit", () => {
     app.quit();
   });
-  ipcMain.handle("session:get-stats", (): SessionStats => collectSessionStats());
-  ipcMain.handle("session:log-cup", (_event, sizeMl?: unknown): SessionStats => {
-    const cup = asWaterCupSize(sizeMl) ?? settingsStore.get().waterCupSizeMl;
-    sessionTracker.logCup(cup);
-    const stats = collectSessionStats();
-    emitSessionStats();
-    return stats;
-  });
-  ipcMain.handle("session:request-stats", (): SessionStats => collectSessionStats());
-  ipcMain.handle("session:continue", () => {
-    cancelQuit();
-  });
-  ipcMain.handle("session:confirm-quit", () => {
-    confirmQuit();
-  });
-  ipcMain.handle("water:drink", (): SessionStats => {
-    sessionTracker.logCup(settingsStore.get().waterCupSizeMl);
-    closeAlarmPopup();
-    const stats = collectSessionStats();
-    emitSessionStats();
-    return stats;
-  });
-  ipcMain.handle("water:skip", () => {
-    closeAlarmPopup();
+  ipcMain.handle("history:get-stats", async (): Promise<Record<HistoryService, HistoryStats>> => ({
+    claude: await getHistoryStats("claude"),
+    codex: await getHistoryStats("codex")
+  }));
+  ipcMain.handle("history:clean", async (_event, serviceRaw: unknown): Promise<HistoryCleanResult> => {
+    const service = asHistoryService(serviceRaw);
+    if (!service) {
+      throw new Error("history:clean received an unknown service");
+    }
+    const none = { trashed: 0, failed: 0, dbRowsDeleted: 0 };
+    if (historyCleaning) {
+      return { service, status: "blocked", reason: "busy", ...none };
+    }
+    historyCleaning = true;
+    try {
+      const stats = await getHistoryStats(service);
+      if (stats.staleFileCount === 0) {
+        // Nothing older than the retention period: no dialog for a no-op.
+        return { service, status: "done", ...none };
+      }
+      if (!(await confirmHistoryClean(service, stats))) {
+        return { service, status: "cancelled", ...none };
+      }
+      return await cleanHistory(service, historyCleanerDeps);
+    } finally {
+      historyCleaning = false;
+    }
   });
   // Allowlist, not a protocol check: the renderer only ever needs the handful
   // of support links it renders in the footer, so anything else is refused
@@ -678,15 +677,10 @@ app.whenReady().then(async () => {
   await applyIdeLaunchHelper(settings.launchWithIde).catch((error) => {
     console.error("[Usage-Pulse] failed to apply IDE launch helper", redact(error));
   });
-  applyAppLoginItem(settings.launchAtStartup);
   void removeLegacySetupTokenKeychainItem();
-  sessionTracker.start(Date.now(), snapshotStore.get());
-  sessionReady = true;
-  waterReminder.start();
   setupIpcHandlers();
 
   monitor.on("snapshot", (snapshot: CombinedSnapshot) => {
-    sessionTracker.observeSnapshot(snapshot);
     updateTrayText(snapshot);
     if (trayApp.window && !trayApp.window.isDestroyed()) {
       trayApp.window.webContents.send("snapshot:updated", snapshot);

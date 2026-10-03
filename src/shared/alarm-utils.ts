@@ -40,6 +40,22 @@ const resetToggleMap: Record<AlarmSource, ResetToggleKey> = {
   "codex-weekly": "enableCodexWeeklyResetAlarm"
 };
 
+// Which reset alarms also go out as a LINE message. The 5-hour windows reset
+// several times a day and ring whether or not the window was ever low, so on
+// LINE they are only ever heard through the one-shot "recovered" notice that
+// follows a low/cooldown spell; the popup and desktop notification still ring.
+// A Record keyed by every source makes a newly added alarm choose explicitly.
+const alarmLineMap: Record<AlarmSource, boolean> = {
+  "cursor-billing": true,
+  "claude-session": false,
+  "claude-weekly": true,
+  "claude-billing": true,
+  "codex-session": false,
+  "codex-weekly": true
+};
+
+export const alarmSendsLine = (id: AlarmSource): boolean => alarmLineMap[id];
+
 export const clampTimeoutMs = (ms: number): number => {
   if (!Number.isFinite(ms)) {
     return 0;

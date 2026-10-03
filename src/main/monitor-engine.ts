@@ -12,6 +12,7 @@ import type {
 import {
   isDuplicateInCooldown,
   isPollDue,
+  shouldClearCooldownLatch,
   shouldClearLowQuotaLatch,
   stabilizeResetTime,
   stabilizeWindowResets
@@ -19,7 +20,8 @@ import {
 import { normalizeCodexSnapshot } from "@shared/codex-usage";
 import { isColdReading, isTrusted } from "@shared/snapshot-trust";
 import { buildExhaustedFlex, buildLowQuotaFlex, buildRecoveredFlex } from "@shared/line-templates";
-import { localeForLanguage, t } from "@shared/i18n";
+import { isPopupEnabled } from "@shared/notify-channels";
+import { localeForLanguage, t, type TranslationKey } from "@shared/i18n";
 import { alarmService } from "@main/alarm-service";
 import { showAlarmPopup } from "@main/alarm-window";
 import { sendLineBroadcast } from "@main/line-notifier";
@@ -591,16 +593,16 @@ export class MonitorEngine extends EventEmitter {
       lang: settings.language
     };
     void sendLineBroadcast(
-      kind === "exhausted" ? buildExhaustedFlex(templateOptions) : buildLowQuotaFlex(templateOptions)
+      kind === "exhausted" ? buildExhaustedFlex(templateOptions) : buildLowQuotaFlex(templateOptions),
+      { service }
     );
 
-    if (settings.enableAlarmPopup) {
+    if (isPopupEnabled(settings, service)) {
       showAlarmPopup({
         id,
         service,
         label,
         fireAt: nowIso(),
-        soundEnabled: false,
         language: settings.language,
         countdownTarget: countdownTarget ?? null,
         resetAlarmEnabled:
@@ -637,7 +639,8 @@ export class MonitorEngine extends EventEmitter {
       reason: t(lang, "reason.quotaRecoveredNotify", { service: serviceLabel, label })
     });
     void sendLineBroadcast(
-      buildRecoveredFlex({ service, serviceLabel, windowLabel: label, remainingPercent, resetAt, lang })
+      buildRecoveredFlex({ service, serviceLabel, windowLabel: label, remainingPercent, resetAt, lang }),
+      { service }
     );
   }
 
@@ -654,6 +657,11 @@ export class MonitorEngine extends EventEmitter {
    * next time it dips back under the threshold — even under the same
    * threshold and reset time — earns its own fresh notification instead of
    * being mistaken for the occurrence that already rang.
+   *
+   * `onRecovered` hands the "recovered" notice to the caller instead of firing
+   * it here (and the call then reports no notification). The 5-hour session
+   * window uses it so that the low-quota latch and the cooldown latch, which
+   * clear together on a reset, still produce one recovered message, not two.
    */
   private fireWindowAlert(options: {
     service: ServiceType;
@@ -666,6 +674,7 @@ export class MonitorEngine extends EventEmitter {
     combined: CombinedSnapshot;
     lang: AppSettings["language"];
     fallbackResetAt: string | null;
+    onRecovered?: () => void;
   }): boolean {
     const { service, state, lowId, exhaustedId, label, threshold, settings, combined, lang } = options;
     const resetAt = state.resetsAt ?? options.fallbackResetAt;
@@ -705,6 +714,10 @@ export class MonitorEngine extends EventEmitter {
         const hadLow = notificationStore.clear(`lowquota:${lowId}`);
         const hadExhausted = exhaustedId ? notificationStore.clear(`lowquota:${exhaustedId}`) : false;
         if (hadLow || hadExhausted) {
+          if (options.onRecovered) {
+            options.onRecovered();
+            return false;
+          }
           this.fireRecoveredAlert({ service, label, combined, remainingPercent: state.remainingPercent, resetAt, lang });
           return true;
         }
@@ -775,29 +788,135 @@ export class MonitorEngine extends EventEmitter {
     return notified;
   }
 
+  /**
+   * The 5-hour session window's alerts, shared by Claude Code and Codex: the
+   * low-quota alert, the cooldown alert at 0%, and the one recovered notice
+   * when the window comes back.
+   *
+   * A reset clears the low-quota latch and the cooldown latch in the same poll.
+   * Both used to fire their own recovered message; they now feed one, so a
+   * single reset is a single piece of news.
+   */
+  private handleSessionWindowAlerts(options: {
+    service: ServiceType;
+    snapshot: QuotaSnapshot;
+    flags: ClaudeLowFlags;
+    settings: AppSettings;
+    combined: CombinedSnapshot;
+    lang: AppSettings["language"];
+    lowEnabled: boolean;
+    cooldownEnabled: boolean;
+    threshold: number;
+    lowId: LowQuotaAlertSource;
+    cooldownId: LowQuotaAlertSource;
+    sessionLabelKey: TranslationKey;
+    cooldownLabelKey: TranslationKey;
+    cooldownReasonKey: TranslationKey;
+  }): boolean {
+    const { service, snapshot, flags, settings, combined, lang, cooldownId } = options;
+    const sessionLabel = t(lang, options.sessionLabelKey);
+    let notified = false;
+    let recovered = false;
+
+    if (options.lowEnabled) {
+      notified =
+        this.fireWindowAlert({
+          service,
+          state: flags.session,
+          lowId: options.lowId,
+          label: sessionLabel,
+          threshold: options.threshold,
+          settings,
+          combined,
+          lang,
+          fallbackResetAt: snapshot.resetsAt,
+          onRecovered: () => {
+            recovered = true;
+          }
+        }) || notified;
+    }
+
+    if (flags.cooldownActive) {
+      // One-shot per resetsAt: a fresh cooldown period always gets its own
+      // popup even if the previous one just fired, but re-polling during the
+      // *same* cooldown period stays silent no matter how long it drags on.
+      // A cooldown whose reset time is momentarily unknown can neither be
+      // announced nor judged over, so it stays silent and keeps its latch.
+      if (options.cooldownEnabled && snapshot.resetsAt) {
+        notified =
+          this.fireLowQuotaAlert({
+            id: cooldownId,
+            service,
+            // Service colour, not the red "used up" template: the 5-hour window
+            // refills on its own at resetsAt, nothing is spent for good.
+            kind: "low",
+            dedupeKey: snapshot.resetsAt,
+            remainingPercent: 0,
+            resetAt: snapshot.resetsAt,
+            label: t(lang, options.cooldownLabelKey),
+            reason: t(lang, options.cooldownReasonKey, {
+              resetTime: new Date(snapshot.resetsAt).toLocaleString(localeForLanguage(lang))
+            }),
+            settings,
+            combined,
+            countdownTarget: snapshot.resetsAt
+          }) || notified;
+      }
+    } else {
+      // Cooldown lifted: clear the latch so the next cooldown window — even
+      // one that lands on the same resetsAt by coincidence — rings fresh. The
+      // latch holds the reset time it was raised for, which is what tells a
+      // vanished window (reset, nothing started yet) from a missing reading.
+      const latchScope = `lowquota:${cooldownId}`;
+      const latch = notificationStore.get(latchScope);
+      if (
+        latch.key &&
+        shouldClearCooldownLatch(flags.session.remainingPercent, latch.key, Date.now(), RECOVERY_HYSTERESIS_PERCENT)
+      ) {
+        notificationStore.clear(latchScope);
+        recovered = true;
+      }
+    }
+
+    if (recovered) {
+      this.fireRecoveredAlert({
+        service,
+        label: sessionLabel,
+        combined,
+        remainingPercent: flags.session.remainingPercent,
+        resetAt: null,
+        lang
+      });
+      notified = true;
+    }
+
+    return notified;
+  }
+
   private handleClaudeLowAlerts(
     flags: ClaudeLowFlags,
     settings: AppSettings,
     combined: CombinedSnapshot,
     lang: AppSettings["language"]
   ): boolean {
-    let notified = false;
     const claudeSnapshot = combined.claude;
 
-    if (settings.enableClaudeSessionLowAlert) {
-      notified =
-        this.fireWindowAlert({
-          service: "claude",
-          state: flags.session,
-          lowId: "claude-session-low",
-          label: t(lang, "alertLabel.claudeSession"),
-          threshold: settings.claudeSessionLowThresholdPercent,
-          settings,
-          combined,
-          lang,
-          fallbackResetAt: claudeSnapshot.resetsAt
-        }) || notified;
-    }
+    let notified = this.handleSessionWindowAlerts({
+      service: "claude",
+      snapshot: claudeSnapshot,
+      flags,
+      settings,
+      combined,
+      lang,
+      lowEnabled: settings.enableClaudeSessionLowAlert,
+      cooldownEnabled: settings.enableClaudeCooldownAlert,
+      threshold: settings.claudeSessionLowThresholdPercent,
+      lowId: "claude-session-low",
+      cooldownId: "claude-cooldown",
+      sessionLabelKey: "alertLabel.claudeSession",
+      cooldownLabelKey: "alertLabel.claudeCooldown",
+      cooldownReasonKey: "reason.claudeCooldownNotify"
+    });
 
     if (settings.enableClaudeWeeklyLowAlert) {
       notified =
@@ -815,49 +934,6 @@ export class MonitorEngine extends EventEmitter {
         }) || notified;
     }
 
-    // One-shot per resetsAt: a fresh cooldown period always gets its own
-    // popup even if the previous one just fired, but re-polling during the
-    // *same* cooldown period stays silent no matter how long it drags on.
-    if (flags.cooldownActive && claudeSnapshot.resetsAt) {
-      if (settings.enableClaudeCooldownAlert) {
-        const label = t(lang, "alertLabel.claudeCooldown");
-        notified =
-          this.fireLowQuotaAlert({
-            id: "claude-cooldown",
-            service: "claude",
-            // Service colour, not the red "used up" template: the 5-hour window
-            // refills on its own at resetsAt, nothing is spent for good.
-            kind: "low",
-            dedupeKey: claudeSnapshot.resetsAt,
-            remainingPercent: 0,
-            resetAt: claudeSnapshot.resetsAt,
-            label,
-            reason: t(lang, "reason.claudeCooldownNotify", {
-              resetTime: new Date(claudeSnapshot.resetsAt).toLocaleString(
-                localeForLanguage(lang)
-              )
-            }),
-            settings,
-            combined,
-            countdownTarget: claudeSnapshot.resetsAt
-          }) || notified;
-      }
-    } else {
-      // Cooldown lifted: clear the latch so the next cooldown window — even
-      // one that lands on the same resetsAt by coincidence — rings fresh.
-      if (notificationStore.clear("lowquota:claude-cooldown")) {
-        this.fireRecoveredAlert({
-          service: "claude",
-          label: t(lang, "alertLabel.claudeCooldown"),
-          combined,
-          remainingPercent: flags.session.remainingPercent,
-          resetAt: null,
-          lang
-        });
-        notified = true;
-      }
-    }
-
     return notified;
   }
 
@@ -867,23 +943,24 @@ export class MonitorEngine extends EventEmitter {
     combined: CombinedSnapshot,
     lang: AppSettings["language"]
   ): boolean {
-    let notified = false;
     const codexSnapshot = combined.codex;
 
-    if (settings.enableCodexSessionLowAlert) {
-      notified =
-        this.fireWindowAlert({
-          service: "codex",
-          state: flags.session,
-          lowId: "codex-session-low",
-          label: t(lang, "alertLabel.codexSession"),
-          threshold: settings.codexSessionLowThresholdPercent,
-          settings,
-          combined,
-          lang,
-          fallbackResetAt: codexSnapshot.resetsAt
-        }) || notified;
-    }
+    let notified = this.handleSessionWindowAlerts({
+      service: "codex",
+      snapshot: codexSnapshot,
+      flags,
+      settings,
+      combined,
+      lang,
+      lowEnabled: settings.enableCodexSessionLowAlert,
+      cooldownEnabled: settings.enableCodexCooldownAlert,
+      threshold: settings.codexSessionLowThresholdPercent,
+      lowId: "codex-session-low",
+      cooldownId: "codex-cooldown",
+      sessionLabelKey: "alertLabel.codexSession",
+      cooldownLabelKey: "alertLabel.codexCooldown",
+      cooldownReasonKey: "reason.codexCooldownNotify"
+    });
 
     if (settings.enableCodexWeeklyLowAlert) {
       notified =
@@ -899,40 +976,6 @@ export class MonitorEngine extends EventEmitter {
           lang,
           fallbackResetAt: codexSnapshot.weeklyResetAt ?? null
         }) || notified;
-    }
-
-    if (flags.cooldownActive && codexSnapshot.resetsAt) {
-      if (settings.enableCodexCooldownAlert) {
-        const label = t(lang, "alertLabel.codexCooldown");
-        notified =
-          this.fireLowQuotaAlert({
-            id: "codex-cooldown",
-            service: "codex",
-            kind: "low",
-            dedupeKey: codexSnapshot.resetsAt,
-            remainingPercent: 0,
-            resetAt: codexSnapshot.resetsAt,
-            label,
-            reason: t(lang, "reason.codexCooldownNotify", {
-              resetTime: new Date(codexSnapshot.resetsAt).toLocaleString(localeForLanguage(lang))
-            }),
-            settings,
-            combined,
-            countdownTarget: codexSnapshot.resetsAt
-          }) || notified;
-      }
-    } else {
-      if (notificationStore.clear("lowquota:codex-cooldown")) {
-        this.fireRecoveredAlert({
-          service: "codex",
-          label: t(lang, "alertLabel.codexCooldown"),
-          combined,
-          remainingPercent: flags.session.remainingPercent,
-          resetAt: null,
-          lang
-        });
-        notified = true;
-      }
     }
 
     return notified;

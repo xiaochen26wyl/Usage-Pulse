@@ -6,13 +6,14 @@ import type {
   ClaudeTokenSaveResult,
   CombinedSnapshot,
   CredentialStatus,
+  HistoryCleanResult,
+  HistoryService,
+  HistoryStats,
   ManualQuotaResult,
-  SessionStats,
   ServiceType,
   UpdateCheckResult,
   UpdateDownloadProgress,
-  UpdateInfo,
-  WaterCupSizeMl
+  UpdateInfo
 } from "@shared/types";
 
 interface UsagePulseApi {
@@ -28,14 +29,8 @@ interface UsagePulseApi {
   sendLineTest: () => Promise<boolean>;
   sendLineStatus: () => Promise<boolean>;
   quitApp: () => Promise<void>;
-  getSessionStats: () => Promise<SessionStats>;
-  logWaterCup: (sizeMl?: WaterCupSizeMl) => Promise<SessionStats>;
-  drinkWater: () => Promise<SessionStats>;
-  skipWater: () => Promise<void>;
-  continueSession: () => Promise<void>;
-  confirmQuit: () => Promise<void>;
-  requestSessionStats: () => Promise<SessionStats | null>;
-  onSessionStatsUpdated: (handler: (stats: SessionStats) => void) => () => void;
+  getHistoryStats: () => Promise<Record<HistoryService, HistoryStats>>;
+  cleanHistory: (service: HistoryService) => Promise<HistoryCleanResult>;
   openExternal: (url: string) => Promise<void>;
   isSecretStorageAvailable: () => Promise<boolean>;
   clearClipboard: () => Promise<void>;

@@ -59,13 +59,16 @@ export default defineConfig({
   renderer: {
     root: ".",
     plugins: [react(), devCspPlugin()],
+    server: {
+      port: 5176,
+      strictPort: true
+    },
     build: {
       outDir: "dist/renderer",
       rollupOptions: {
         input: {
           index: resolve("index.html"),
-          alarm: resolve("alarm.html"),
-          session: resolve("session.html")
+          alarm: resolve("alarm.html")
         }
       }
     },

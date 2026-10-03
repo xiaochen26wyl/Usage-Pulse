@@ -129,11 +129,6 @@ export interface AppSettings {
   // When on, a tiny login helper starts Usage-Pulse only after Cursor or
   // Claude Code is running. The menu-bar app itself is not a login item.
   launchWithIde: boolean;
-  // When on, Usage-Pulse itself is registered as a normal OS login item and
-  // starts on every boot. Mutually exclusive with launchWithIde — settingsStore
-  // enforces this, since "always launch at boot" and "only launch once the IDE
-  // is running" are contradictory goals.
-  launchAtStartup: boolean;
   notifyCooldownMinutes: number;
   enableCursorResetAlarm: boolean;
   // 5-hour session reset only. Weekly used to share this switch; existing
@@ -147,9 +142,16 @@ export interface AppSettings {
   language: Language;
   // Menu-bar numeric text: follow OS appearance, or force white / near-black.
   trayValueColorMode: TrayValueColorMode;
-  enableAlarmPopup: boolean;
+  // How each service's alerts reach the user. The in-app popup and LINE are
+  // chosen per service, and each choice covers every alert about that service
+  // (low quota, cooldown, reset, billing, recovered, credential expired).
+  enableCursorAlarmPopup: boolean;
+  enableClaudeAlarmPopup: boolean;
+  enableCodexAlarmPopup: boolean;
   // Independent of the token: off skips LINE even when a token is stored.
-  enableLineNotification: boolean;
+  enableCursorLineNotification: boolean;
+  enableClaudeLineNotification: boolean;
+  enableCodexLineNotification: boolean;
   // Stored encrypted and never handed back to a renderer in cleartext — see
   // LINE_TOKEN_MASK.
   lineChannelAccessToken: string;
@@ -165,50 +167,12 @@ export interface AppSettings {
   // Optional Codex traffic saver: skip the usage API while the CLI session dir
   // has been idle since the last successful fetch.
   codexUseCliActivityPolling: boolean;
-  // Drink-water reminder: interval from launch (or last response) and the cup
-  // size recorded when the user confirms they drank.
-  enableWaterReminder: boolean;
-  waterReminderMinutes: number;
-  waterCupSizeMl: WaterCupSizeMl;
   // Windows only (see UpdateCheckResult): periodic background check for a
   // newer GitHub Release, independent of the always-available manual check.
   autoCheckForUpdates: boolean;
 }
 
 export type ClaudeBillingCadence = "monthly" | "annual";
-
-export const WATER_CUP_SIZES_ML = [250, 500, 1000] as const;
-export type WaterCupSizeMl = (typeof WATER_CUP_SIZES_ML)[number];
-
-export type SessionDeltaKind = "consumed" | "reset" | "unknown";
-
-export interface SessionMetricDelta {
-  key: "billing" | "cursorModels" | "advancedModels" | "claudeSession" | "claudeWeekly" | "codexSession" | "codexWeekly";
-  kind: SessionDeltaKind;
-  // Consumed amount when kind is "consumed"; otherwise null.
-  used: number | null;
-  unit: "usd" | "percent";
-}
-
-export interface SessionUsageDeltas {
-  billing: SessionMetricDelta;
-  cursorModels: SessionMetricDelta;
-  advancedModels: SessionMetricDelta;
-  claudeSession: SessionMetricDelta;
-  claudeWeekly: SessionMetricDelta;
-  codexSession: SessionMetricDelta;
-  codexWeekly: SessionMetricDelta;
-}
-
-// Per-launch session: duration, water, and quota consumed since this process started.
-export interface SessionStats {
-  startedAt: string;
-  durationMs: number;
-  waterMl: number;
-  waterCups: number;
-  nextWaterAt: string | null;
-  usage: SessionUsageDeltas;
-}
 
 // Same contract for the LINE channel access token. It is a live credential —
 // anyone holding it can broadcast to the user's official account — so the
@@ -318,11 +282,10 @@ export type LowQuotaAlertSource =
   | "codex-weekly-exhausted";
 
 export interface AlarmPopupPayload {
-  id: AlarmSource | LowQuotaAlertSource | "test" | "water";
+  id: AlarmSource | LowQuotaAlertSource | "test";
   service: ServiceType | null;
   label: string;
   fireAt: string;
-  soundEnabled: boolean;
   language: Language;
   // Set only for the cooldown popup: when present, the popup shows a live
   // countdown to this ISO time (the session window's resetsAt) instead of a
@@ -363,6 +326,45 @@ export interface ClaudeTokenSaveResult {
   ok: boolean;
   code?: ClaudeTokenRejectCode;
   message: string;
+}
+
+// Local conversation history the user can clear from a quota card. Cursor is
+// absent on purpose: its conversations live in the same SQLite file as its
+// login credential, so they cannot be removed on their own.
+export type HistoryService = "claude" | "codex";
+
+export interface HistoryStats {
+  // Conversation log files (.jsonl) found for the service.
+  fileCount: number;
+  // Everything the service keeps, in bytes. For Codex this includes the SQLite
+  // files, which hold most of the history.
+  totalBytes: number;
+  // The part a clean would remove: conversation files older than two weeks.
+  // Codex's database rows cannot be sized by age, so only files are counted.
+  staleFileCount: number;
+  staleBytes: number;
+}
+
+// Why a clean did nothing. Each value names a state main actually detected, so
+// the renderer can say what is true instead of guessing at a fix.
+export type HistoryBlockedReason =
+  | "busy"
+  | "codexRunning"
+  | "probeFailed"
+  | "unsupportedSchema"
+  | "noSqlEngine"
+  | "dbFailed";
+
+export interface HistoryCleanResult {
+  service: HistoryService;
+  // "cancelled" is the user declining the confirmation dialog.
+  status: "done" | "cancelled" | "blocked";
+  reason?: HistoryBlockedReason;
+  // File or table names only, never conversation content.
+  detail?: string;
+  trashed: number;
+  failed: number;
+  dbRowsDeleted: number;
 }
 
 // A newer release, already resolved to the user's current UI language.

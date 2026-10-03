@@ -21,7 +21,6 @@ Usage-Pulse 是跨平台桌面選單列工具，監控 Cursor、Claude Code 與 
   </tr>
   <tr>
     <td><img src=".github/readme-assets/screenshot-line-notify.png" width="260"/><br/><sub>選用的 LINE 通知</sub></td>
-    <td><img src=".github/readme-assets/screenshot-hydration-reminder.png" width="260"/><br/><sub>附加功能：喝水提醒</sub></td>
   </tr>
 </table>
 
@@ -82,14 +81,16 @@ Clone 下來後預設就會追蹤 `main` 分支。由於每次 release 都是從
 
 1. 背景會定期檢查 Cursor / Claude Code / Codex 配額，並在變化時提醒你。
 2. 低額度與配額重置提醒都可以在設定中依服務、依視窗個別開關。
-3. 兩種通知管道，可在設定中個別開關：App 彈窗提醒（免權限、一定生效——顯示於右上角、30 秒後自動關閉）與 LINE 通知（需要 Channel Access Token）。
+3. 兩種通知管道，可在設定中依 Cursor、Claude Code、Codex 分別勾選：App 彈窗提醒（免權限、一定生效——顯示於右上角、30 秒後自動關閉）與 LINE 通知（需要 Channel Access Token）。
 4. 支援繁體中文、英文、日文、韓文介面，可在 App 語言選單切換。
 5. 可隨時從 UI 或選單列離開；若 LINE 開啟，離開時會用最後一次快取用量送出現況。
+6. Windows 版會自動檢查新版本（可在設定中開關，或用選單列的「檢查更新」手動檢查），要等你確認後才會下載與安裝；macOS 版不會自動更新，請到 Releases 頁面下載新版。
 
 ## 安全性說明
 
 - 讀取項目皆為唯讀：Cursor 本機工作階段資料、官方 Claude Code CLI 已存的登入資訊、Codex 本機憑證檔。
 - Usage-Pulse 不會寫入或修改這些檔案或憑證。
+- 唯一的例外是 Claude Code 與 Codex 卡片上的「清除 2 週前的紀錄」按鈕：只有你按下並確認後才會動作，且只清除超過 2 週沒有更新的對話（Codex 置頂的對話會保留）。對話檔案會移到垃圾桶；Codex 資料庫內這些對話的紀錄會永久刪除，請先完全結束 Codex。
 - 一般設定（通知開關、語言等）只存在本機，沒有雲端同步。
 
 如果有任何行為看起來不正確——例如數值異常、理應不會觸發的通知，或其他任何預期外的狀況——請不要自行推測，並請至 [Discussions Q&A](https://github.com/xiaochen26wyl/Usage-Pulse/discussions/categories/q-a-%E8%A7%A3%E6%B1%BA%E5%95%8F%E9%A1%8C) 提出問題。

@@ -1,5 +1,7 @@
 import axios from "axios";
 import type { LineMessage } from "@shared/line-templates";
+import { isLineEnabled } from "@shared/notify-channels";
+import type { ServiceType } from "@shared/types";
 import { redact } from "@main/log-redaction";
 import { settingsStore } from "@main/store";
 
@@ -25,17 +27,19 @@ const clampMessage = (message: LineMessage): LineMessage =>
  * blip must not take down the credential sweep or the quota monitor that called
  * this.
  *
- * `force` skips the enableLineNotification check — used by the settings
- * panel's "send test message" button, where a disabled toggle must not mask
- * whether the pasted token itself actually works.
+ * `target` says whose alert this is. `{ service }` honours that service's own
+ * LINE checkbox. `{ force: true }` skips the check — used by the settings
+ * panel's "send test message" button, where an unchecked box must not mask
+ * whether the pasted token itself actually works, and by the quit status
+ * broadcast, which has already filtered its messages per service.
  */
 export const sendLineBroadcast = async (
   message: LineMessage,
-  options?: { force?: boolean }
+  target: { service: ServiceType } | { force: true }
 ): Promise<boolean> => {
   try {
     const settings = settingsStore.get();
-    if (!settings.enableLineNotification && !options?.force) {
+    if ("service" in target && !isLineEnabled(settings, target.service)) {
       return false;
     }
     const accessToken = settings.lineChannelAccessToken.trim();
