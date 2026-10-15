@@ -1,0 +1,6 @@
+{
+  "zh": "- 移除 5 小時冷卻通知：額度用盡到 0% 時只算低額度，恢復時只收到一則「額度恢復」通知（桌面＋LINE）\n- 重置後若視窗暫時不在用量資料中，改依記錄的重置時間判定已恢復\n- 同一次重置只會發一則恢復通知",
+  "en": "- The 5-hour cooldown alert is removed: a window spent to 0% counts as low, and recovery sends one \"quota recovered\" notice (desktop + LINE)\n- If a window briefly drops out of the usage data right after its reset, it is now judged recovered from the recorded reset time\n- A single reset sends only one recovered notice",
+  "ja": "- 5 時間のクールダウン通知を削除：残量が 0% になった場合は「低残量」として扱い、回復時は「クォータ回復」の通知を 1 件（デスクトップ＋LINE）のみ送信します\n- リセット直後に使用量データから一時的にウィンドウが消えた場合、記録されたリセット時刻で回復と判定します\n- 1 回のリセットで回復通知は 1 件だけ送信されます",
+  "ko": "- 5시간 쿨다운 알림 제거: 잔여량이 0%까지 떨어지면 '낮은 할당량'으로 보고, 복구 시 '할당량 복구' 알림 1건(데스크톱 + LINE)만 보냅니다\n- 초기화 직후 사용량 데이터에서 창이 잠시 빠지는 경우, 기록된 초기화 시각을 기준으로 복구로 판정합니다\n- 한 번의 초기화에는 복구 알림이 1건만 전송됩니다"
+}

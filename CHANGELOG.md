@@ -8,6 +8,16 @@ Language / 語言：[English](#english) | [繁體中文](#繁體中文)
 
 All notable changes to Usage-Pulse are documented in this file.
 
+### [2.1.1] - 2026-10-15
+
+#### Changed
+- The 5-hour cooldown alert is removed. A window spent down to 0% is treated as "low", and recovery sends one "quota recovered" notice (desktop + LINE) with no reset time.
+- The Codex 5-hour window's alert label now reads as a session instead of a cooldown.
+
+#### Fixed
+- A window that briefly drops out of the usage data right after its reset is now judged recovered from the reset time recorded for its low-quota alert, instead of staying stuck.
+- One reset now sends one recovered notice, never two.
+
 ### [2.1.0] - 2026-10-03
 
 #### Added
@@ -91,6 +101,16 @@ All notable changes to Usage-Pulse are documented in this file.
 ## 繁體中文
 
 本檔案記錄 Usage-Pulse 所有重要版本變更。
+
+### [2.1.1] - 2026-10-15
+
+#### 變更
+- 移除 5 小時冷卻通知：額度用盡到 0% 時只算低額度，恢復時只收到一則「額度恢復」通知（桌面＋LINE），不附重置時間。
+- Codex 5 小時視窗的警示標籤改為「工作階段」，不再顯示「冷卻」。
+
+#### 修復
+- 重置後視窗若暫時不在用量資料中，會依低額度提醒記錄的重置時間判定已恢復，不再卡住。
+- 同一次重置只會發一則恢復通知，不會重複。
 
 ### [2.1.0] - 2026-10-03
 
