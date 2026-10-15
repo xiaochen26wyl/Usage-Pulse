@@ -43,7 +43,7 @@ const resetToggleMap: Record<AlarmSource, ResetToggleKey> = {
 // Which reset alarms also go out as a LINE message. The 5-hour windows reset
 // several times a day and ring whether or not the window was ever low, so on
 // LINE they are only ever heard through the one-shot "recovered" notice that
-// follows a low/cooldown spell; the popup and desktop notification still ring.
+// follows a low-quota spell; the popup and desktop notification still ring.
 // A Record keyed by every source makes a newly added alarm choose explicitly.
 const alarmLineMap: Record<AlarmSource, boolean> = {
   "cursor-billing": true,
@@ -86,7 +86,7 @@ export const classifyFire = (fireAt: string, nowMs: number): FireClass => {
 };
 
 // Shared by the main window (settings countdowns) and the alarm popup
-// (cooldown countdown) so both render the same "Dd HH:MM:SS" format.
+// (reset countdown) so both render the same "Dd HH:MM:SS" format.
 export const formatCountdown = (iso: string | null, nowMs: number, lang: Language): string => {
   if (!iso) return t(lang, "app.unknown");
   const date = new Date(iso);

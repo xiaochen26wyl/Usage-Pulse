@@ -5,8 +5,8 @@ import {
   getLowQuotaServices,
   isDuplicateInCooldown,
   isPollDue,
-  shouldClearCooldownLatch,
   shouldClearLowQuotaLatch,
+  shouldClearVanishedWindowLatch,
   stabilizeResetTime,
   stabilizeWindowResets
 } from "../src/shared/monitor-utils";
@@ -120,35 +120,24 @@ test("shouldClearLowQuotaLatch clears once the reading is past the hysteresis ma
   assert.equal(shouldClearLowQuotaLatch(100, 20, 5), true);
 });
 
-const COOLDOWN_NOW = Date.parse("2026-10-03T12:00:00.000Z");
-const COOLDOWN_FUTURE = "2026-10-03T14:00:00.000Z";
-const COOLDOWN_PAST = "2026-10-03T10:00:00.000Z";
+const VANISHED_NOW = Date.parse("2026-10-03T12:00:00.000Z");
 
-test("shouldClearCooldownLatch stays closed while the session is still at 0%", () => {
-  assert.equal(shouldClearCooldownLatch(0, COOLDOWN_PAST, COOLDOWN_NOW, 5), false);
+test("shouldClearVanishedWindowLatch stays closed while the recorded reset is still ahead", () => {
+  assert.equal(shouldClearVanishedWindowLatch("20|2026-10-03T14:00:00.000Z", VANISHED_NOW), false);
 });
 
-test("shouldClearCooldownLatch stays closed inside the hysteresis band, edge included", () => {
-  assert.equal(shouldClearCooldownLatch(1, COOLDOWN_PAST, COOLDOWN_NOW, 5), false);
-  assert.equal(shouldClearCooldownLatch(5, COOLDOWN_PAST, COOLDOWN_NOW, 5), false);
+test("shouldClearVanishedWindowLatch clears once the recorded reset has passed, boundary included", () => {
+  assert.equal(shouldClearVanishedWindowLatch("20|2026-10-03T10:00:00.000Z", VANISHED_NOW), true);
+  assert.equal(shouldClearVanishedWindowLatch("20|2026-10-03T12:00:00.000Z", VANISHED_NOW), true);
 });
 
-test("shouldClearCooldownLatch clears once the reading is past the hysteresis margin", () => {
-  assert.equal(shouldClearCooldownLatch(6, COOLDOWN_FUTURE, COOLDOWN_NOW, 5), true);
-  assert.equal(shouldClearCooldownLatch(100, COOLDOWN_FUTURE, COOLDOWN_NOW, 5), true);
+test("shouldClearVanishedWindowLatch leaves a latch with no recorded reset alone", () => {
+  assert.equal(shouldClearVanishedWindowLatch("20|none", VANISHED_NOW), false);
 });
 
-test("shouldClearCooldownLatch treats a vanished window as a data gap until the recorded reset has passed", () => {
-  assert.equal(shouldClearCooldownLatch(null, COOLDOWN_FUTURE, COOLDOWN_NOW, 5), false);
-});
-
-test("shouldClearCooldownLatch treats a vanished window as recovered once the recorded reset has passed", () => {
-  assert.equal(shouldClearCooldownLatch(null, COOLDOWN_PAST, COOLDOWN_NOW, 5), true);
-  assert.equal(shouldClearCooldownLatch(null, new Date(COOLDOWN_NOW).toISOString(), COOLDOWN_NOW, 5), true);
-});
-
-test("shouldClearCooldownLatch does not let an unparseable recorded reset keep the latch stuck", () => {
-  assert.equal(shouldClearCooldownLatch(null, "not-a-date", COOLDOWN_NOW, 5), true);
+test("shouldClearVanishedWindowLatch does not let a corrupt latch key stay stuck", () => {
+  assert.equal(shouldClearVanishedWindowLatch("20|not-a-date", VANISHED_NOW), true);
+  assert.equal(shouldClearVanishedWindowLatch("garbage", VANISHED_NOW), true);
 });
 
 test("stabilizeResetTime holds a still-future cached value instead of taking a drifted candidate", () => {

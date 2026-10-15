@@ -106,6 +106,9 @@ type StoredSettings = AppSettings & {
   enableWaterReminder?: boolean;
   waterReminderMinutes?: number;
   waterCupSizeMl?: number;
+  // Removed 5-hour cooldown alerts; dropped on read so they leave the file on the next save.
+  enableClaudeCooldownAlert?: boolean;
+  enableCodexCooldownAlert?: boolean;
 };
 
 const migrateClaudeWeeklyResetAlarm = (raw: StoredSettings): boolean =>
@@ -132,6 +135,8 @@ const readSettings = (): AppSettings => {
     enableWaterReminder: _legacyWaterReminder,
     waterReminderMinutes: _legacyWaterMinutes,
     waterCupSizeMl: _legacyWaterCup,
+    enableClaudeCooldownAlert: _legacyClaudeCooldown,
+    enableCodexCooldownAlert: _legacyCodexCooldown,
     ...rest
   } = raw;
   const settings = decryptSettings({
@@ -197,7 +202,6 @@ export const settingsStore = {
     merged.enableClaudeBillingAlarm = Boolean(merged.enableClaudeBillingAlarm);
     merged.enableCodexResetAlarm = Boolean(merged.enableCodexResetAlarm);
     merged.enableCodexWeeklyResetAlarm = Boolean(merged.enableCodexWeeklyResetAlarm);
-    merged.enableCodexCooldownAlert = Boolean(merged.enableCodexCooldownAlert);
     merged.codexUseCliActivityPolling = Boolean(merged.codexUseCliActivityPolling);
     merged.autoCheckForUpdates = Boolean(merged.autoCheckForUpdates);
     merged.claudeBillingCadence = merged.claudeBillingCadence === "annual" ? "annual" : "monthly";

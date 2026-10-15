@@ -105,27 +105,20 @@ export interface AppSettings {
   enableCursorAdvancedModelsLowAlert: boolean;
   cursorModelsLowThresholdPercent: number;
   enableCursorModelsLowAlert: boolean;
-  // Claude Code's low-quota warning is split three ways: the 5-hour session
-  // window's consumption, its weekly window's consumption, and a separate
-  // cooldown alert (see enableClaudeCooldownAlert below).
+  // Claude Code's low-quota warning is split two ways: the 5-hour session
+  // window's consumption and its weekly window's consumption. The session
+  // alert also covers the lockout at 0% (a spent window is necessarily low).
   claudeSessionLowThresholdPercent: number;
   enableClaudeSessionLowAlert: boolean;
   claudeWeeklyLowThresholdPercent: number;
   enableClaudeWeeklyLowAlert: boolean;
-  // Not a percent threshold: the Claude Code 5-hour window starts counting the
-  // moment the first message is sent (not when the quota runs out), so once the
-  // session quota hits 0% the user is locked out until that window's resetsAt,
-  // regardless of how much of the 5 hours has actually elapsed. This toggle
-  // alerts on that lockout state itself, distinct from the consumption warning.
-  enableClaudeCooldownAlert: boolean;
-  // Codex mirrors Claude Code's three-way split: 5-hour session, weekly, and
-  // the lockout that starts when the session window hits 0%. Extra API windows
-  // (per-model, code review) are displayed but not independently alerted.
+  // Codex mirrors Claude Code's split: 5-hour session and weekly. Extra API
+  // windows (per-model, code review) are displayed but not independently
+  // alerted.
   codexSessionLowThresholdPercent: number;
   enableCodexSessionLowAlert: boolean;
   codexWeeklyLowThresholdPercent: number;
   enableCodexWeeklyLowAlert: boolean;
-  enableCodexCooldownAlert: boolean;
   // When on, a tiny login helper starts Usage-Pulse only after Cursor or
   // Claude Code is running. The menu-bar app itself is not a login item.
   launchWithIde: boolean;
@@ -144,7 +137,7 @@ export interface AppSettings {
   trayValueColorMode: TrayValueColorMode;
   // How each service's alerts reach the user. The in-app popup and LINE are
   // chosen per service, and each choice covers every alert about that service
-  // (low quota, cooldown, reset, billing, recovered, credential expired).
+  // (low quota, reset, billing, recovered, credential expired).
   enableCursorAlarmPopup: boolean;
   enableClaudeAlarmPopup: boolean;
   enableCodexAlarmPopup: boolean;
@@ -262,20 +255,17 @@ export interface AlarmLastGoodRecord {
 }
 
 // Ids for the independent low-quota-style popups, one per alert configured in
-// settings — distinct from AlarmSource (the scheduled reset-time alarms) even
-// though "claude-cooldown" describes the same underlying session window.
+// settings — distinct from AlarmSource (the scheduled reset-time alarms).
 export type LowQuotaAlertSource =
   | "cursor-advanced-models-low"
   | "cursor-models-low"
   | "claude-session-low"
   | "claude-weekly-low"
-  | "claude-cooldown"
   | "codex-session-low"
   | "codex-weekly-low"
-  | "codex-cooldown"
   // Quota fully spent on that window. Cursor has one per model window; Claude
   // Code and Codex only count the weekly window (the 5-hour window going to
-  // zero is the cooldown alert above, which recovers on its own).
+  // zero stays a "low" alert, since it refills on its own).
   | "cursor-advanced-models-exhausted"
   | "cursor-models-exhausted"
   | "claude-weekly-exhausted"
@@ -287,13 +277,9 @@ export interface AlarmPopupPayload {
   label: string;
   fireAt: string;
   language: Language;
-  // Set only for the cooldown popup: when present, the popup shows a live
-  // countdown to this ISO time (the session window's resetsAt) instead of a
-  // static "fired at" timestamp.
+  // When present, the popup shows a live countdown to this ISO time (the
+  // window's resetsAt) instead of a static "fired at" timestamp.
   countdownTarget?: string | null;
-  // True when the matching 5-hour reset alarm (到點提醒) is on, so the
-  // cooldown popup can note that a recovery reminder is already armed.
-  resetAlarmEnabled?: boolean;
 }
 
 export interface AlarmStatusReport {

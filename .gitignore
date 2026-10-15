@@ -33,3 +33,6 @@ CLAUDE.md
 
 # 開發／資安本機文件（不上傳 GitHub）
 doc/
+
+# Push Watch 專案啟動頁寫入的實際 port（每次啟動都會變）
+.dev/

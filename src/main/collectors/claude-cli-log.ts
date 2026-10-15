@@ -247,7 +247,7 @@ export const hasRecentRejection = (
  * The newest still-in-the-future reset time the CLI recorded for a window.
  *
  * The usage API does not always carry a reset time, and without one the reset
- * alarm cannot be armed and the cooldown countdown has nothing to count to.
+ * alarm cannot be armed and the popup countdown has nothing to count to.
  * The CLI writes the real `resetsAt` alongside every rejection, so when the API
  * leaves the field out the local log can supply it — no request, no credential.
  * Past reset times are ignored: a rejection from a spent cycle says nothing

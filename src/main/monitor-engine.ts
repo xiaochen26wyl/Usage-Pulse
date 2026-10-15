@@ -12,8 +12,8 @@ import type {
 import {
   isDuplicateInCooldown,
   isPollDue,
-  shouldClearCooldownLatch,
   shouldClearLowQuotaLatch,
+  shouldClearVanishedWindowLatch,
   stabilizeResetTime,
   stabilizeWindowResets
 } from "@shared/monitor-utils";
@@ -159,12 +159,6 @@ interface CursorLowFlags {
 interface ClaudeLowFlags {
   session: WindowState;
   weekly: WindowState;
-  // The 5-hour window starts counting from first use (not from exhaustion), so
-  // hitting 0% remaining means the user is locked out until resetsAt — a
-  // distinct state from "getting low", surfaced as its own alert. It recovers
-  // on its own, so it is *not* treated as "quota used up"; only the weekly
-  // window earns that.
-  cooldownActive: boolean;
 }
 
 const evaluateCursorLowFlags = (windows: QuotaWindow[], settings: AppSettings): CursorLowFlags => ({
@@ -173,20 +167,16 @@ const evaluateCursorLowFlags = (windows: QuotaWindow[], settings: AppSettings): 
 });
 
 const evaluateClaudeLowFlags = (windows: QuotaWindow[], settings: AppSettings): ClaudeLowFlags => {
-  const session = claudeWindowState(findWindow(windows, "session"), settings.claudeSessionLowThresholdPercent);
   return {
-    session,
-    weekly: claudeWindowState(findClaudeWeeklyWindow(windows), settings.claudeWeeklyLowThresholdPercent),
-    cooldownActive: session.exhausted
+    session: claudeWindowState(findWindow(windows, "session"), settings.claudeSessionLowThresholdPercent),
+    weekly: claudeWindowState(findClaudeWeeklyWindow(windows), settings.claudeWeeklyLowThresholdPercent)
   };
 };
 
 const evaluateCodexLowFlags = (windows: QuotaWindow[], settings: AppSettings): ClaudeLowFlags => {
-  const session = claudeWindowState(findWindow(windows, "session"), settings.codexSessionLowThresholdPercent);
   return {
-    session,
-    weekly: claudeWindowState(findWindow(windows, "weekly"), settings.codexWeeklyLowThresholdPercent),
-    cooldownActive: session.exhausted
+    session: claudeWindowState(findWindow(windows, "session"), settings.codexSessionLowThresholdPercent),
+    weekly: claudeWindowState(findWindow(windows, "weekly"), settings.codexWeeklyLowThresholdPercent)
   };
 };
 
@@ -604,13 +594,7 @@ export class MonitorEngine extends EventEmitter {
         label,
         fireAt: nowIso(),
         language: settings.language,
-        countdownTarget: countdownTarget ?? null,
-        resetAlarmEnabled:
-          id === "claude-cooldown"
-            ? settings.enableClaudeResetAlarm
-            : id === "codex-cooldown"
-              ? settings.enableCodexResetAlarm
-              : undefined
+        countdownTarget: countdownTarget ?? null
       });
     }
 
@@ -621,7 +605,7 @@ export class MonitorEngine extends EventEmitter {
    * Fires the one-shot "quota recovered" notice: desktop + LINE, no alarm
    * popup — good news isn't urgent enough to interrupt. Callers only invoke
    * this after notificationStore.clear() actually found a previously-fired
-   * low/exhausted/cooldown latch to remove; that success is itself the
+   * low/exhausted latch to remove; that success is itself the
    * one-shot gate, so this needs no dedupe key of its own.
    */
   private fireRecoveredAlert(options: {
@@ -649,8 +633,8 @@ export class MonitorEngine extends EventEmitter {
    *
    * "Used up" supersedes "running low" for the same window: a spent window is
    * necessarily under its threshold too, and sending both is the same news
-   * twice. A window with no exhausted id of its own (Claude Code's 5-hour
-   * session, which has the cooldown alert instead) only ever fires the low one.
+   * twice. A window with no exhausted id of its own (the 5-hour session
+   * windows, which refill on their own) only ever fires the low one.
    *
    * Both alerts are one-shot per occurrence (see shouldNotifyOnce): once the
    * window is neither low nor exhausted, this clears both ids' latches so the
@@ -660,8 +644,7 @@ export class MonitorEngine extends EventEmitter {
    *
    * `onRecovered` hands the "recovered" notice to the caller instead of firing
    * it here (and the call then reports no notification). The 5-hour session
-   * window uses it so that the low-quota latch and the cooldown latch, which
-   * clear together on a reset, still produce one recovered message, not two.
+   * windows use it to send their recovered notice without a reset time.
    */
   private fireWindowAlert(options: {
     service: ServiceType;
@@ -790,12 +773,18 @@ export class MonitorEngine extends EventEmitter {
 
   /**
    * The 5-hour session window's alerts, shared by Claude Code and Codex: the
-   * low-quota alert, the cooldown alert at 0%, and the one recovered notice
-   * when the window comes back.
+   * low-quota alert (a window spent down to 0% is still "low", so it needs no
+   * alert of its own) and the one recovered notice when the window comes back.
    *
-   * A reset clears the low-quota latch and the cooldown latch in the same poll.
-   * Both used to fire their own recovered message; they now feed one, so a
-   * single reset is a single piece of news.
+   * The recovered notice is handed back by fireWindowAlert (`onRecovered`) so it
+   * can go out without a reset time: the next 5-hour window hasn't started yet,
+   * so there is nothing true to say about when it ends.
+   *
+   * Right after a reset the payload may leave the window out entirely, so no
+   * reading ever clears the low-quota latch. In that case the latch's own
+   * recorded reset time decides: once it has passed, the window is recovered.
+   * Whichever path clears the latch, notificationStore.clear reports it only
+   * once, so a reset is one recovered notice and never two.
    */
   private handleSessionWindowAlerts(options: {
     service: ServiceType;
@@ -805,76 +794,38 @@ export class MonitorEngine extends EventEmitter {
     combined: CombinedSnapshot;
     lang: AppSettings["language"];
     lowEnabled: boolean;
-    cooldownEnabled: boolean;
     threshold: number;
     lowId: LowQuotaAlertSource;
-    cooldownId: LowQuotaAlertSource;
     sessionLabelKey: TranslationKey;
-    cooldownLabelKey: TranslationKey;
-    cooldownReasonKey: TranslationKey;
   }): boolean {
-    const { service, snapshot, flags, settings, combined, lang, cooldownId } = options;
-    const sessionLabel = t(lang, options.sessionLabelKey);
-    let notified = false;
-    let recovered = false;
-
-    if (options.lowEnabled) {
-      notified =
-        this.fireWindowAlert({
-          service,
-          state: flags.session,
-          lowId: options.lowId,
-          label: sessionLabel,
-          threshold: options.threshold,
-          settings,
-          combined,
-          lang,
-          fallbackResetAt: snapshot.resetsAt,
-          onRecovered: () => {
-            recovered = true;
-          }
-        }) || notified;
+    if (!options.lowEnabled) {
+      return false;
     }
 
-    if (flags.cooldownActive) {
-      // One-shot per resetsAt: a fresh cooldown period always gets its own
-      // popup even if the previous one just fired, but re-polling during the
-      // *same* cooldown period stays silent no matter how long it drags on.
-      // A cooldown whose reset time is momentarily unknown can neither be
-      // announced nor judged over, so it stays silent and keeps its latch.
-      if (options.cooldownEnabled && snapshot.resetsAt) {
-        notified =
-          this.fireLowQuotaAlert({
-            id: cooldownId,
-            service,
-            // Service colour, not the red "used up" template: the 5-hour window
-            // refills on its own at resetsAt, nothing is spent for good.
-            kind: "low",
-            dedupeKey: snapshot.resetsAt,
-            remainingPercent: 0,
-            resetAt: snapshot.resetsAt,
-            label: t(lang, options.cooldownLabelKey),
-            reason: t(lang, options.cooldownReasonKey, {
-              resetTime: new Date(snapshot.resetsAt).toLocaleString(localeForLanguage(lang))
-            }),
-            settings,
-            combined,
-            countdownTarget: snapshot.resetsAt
-          }) || notified;
-      }
-    } else {
-      // Cooldown lifted: clear the latch so the next cooldown window — even
-      // one that lands on the same resetsAt by coincidence — rings fresh. The
-      // latch holds the reset time it was raised for, which is what tells a
-      // vanished window (reset, nothing started yet) from a missing reading.
-      const latchScope = `lowquota:${cooldownId}`;
-      const latch = notificationStore.get(latchScope);
-      if (
-        latch.key &&
-        shouldClearCooldownLatch(flags.session.remainingPercent, latch.key, Date.now(), RECOVERY_HYSTERESIS_PERCENT)
-      ) {
-        notificationStore.clear(latchScope);
+    const { service, snapshot, flags, settings, combined, lang } = options;
+    const sessionLabel = t(lang, options.sessionLabelKey);
+    let recovered = false;
+
+    const notified = this.fireWindowAlert({
+      service,
+      state: flags.session,
+      lowId: options.lowId,
+      label: sessionLabel,
+      threshold: options.threshold,
+      settings,
+      combined,
+      lang,
+      fallbackResetAt: snapshot.resetsAt,
+      onRecovered: () => {
         recovered = true;
+      }
+    });
+
+    if (!recovered && flags.session.remainingPercent === null) {
+      const latchScope = `lowquota:${options.lowId}`;
+      const latch = notificationStore.get(latchScope);
+      if (latch.key && shouldClearVanishedWindowLatch(latch.key, Date.now())) {
+        recovered = notificationStore.clear(latchScope);
       }
     }
 
@@ -887,7 +838,7 @@ export class MonitorEngine extends EventEmitter {
         resetAt: null,
         lang
       });
-      notified = true;
+      return true;
     }
 
     return notified;
@@ -909,13 +860,9 @@ export class MonitorEngine extends EventEmitter {
       combined,
       lang,
       lowEnabled: settings.enableClaudeSessionLowAlert,
-      cooldownEnabled: settings.enableClaudeCooldownAlert,
       threshold: settings.claudeSessionLowThresholdPercent,
       lowId: "claude-session-low",
-      cooldownId: "claude-cooldown",
-      sessionLabelKey: "alertLabel.claudeSession",
-      cooldownLabelKey: "alertLabel.claudeCooldown",
-      cooldownReasonKey: "reason.claudeCooldownNotify"
+      sessionLabelKey: "alertLabel.claudeSession"
     });
 
     if (settings.enableClaudeWeeklyLowAlert) {
@@ -953,13 +900,9 @@ export class MonitorEngine extends EventEmitter {
       combined,
       lang,
       lowEnabled: settings.enableCodexSessionLowAlert,
-      cooldownEnabled: settings.enableCodexCooldownAlert,
       threshold: settings.codexSessionLowThresholdPercent,
       lowId: "codex-session-low",
-      cooldownId: "codex-cooldown",
-      sessionLabelKey: "alertLabel.codexSession",
-      cooldownLabelKey: "alertLabel.codexCooldown",
-      cooldownReasonKey: "reason.codexCooldownNotify"
+      sessionLabelKey: "alertLabel.codexSession"
     });
 
     if (settings.enableCodexWeeklyLowAlert) {
@@ -1021,15 +964,13 @@ export class MonitorEngine extends EventEmitter {
     if (service === "claude" && claudeFlags) {
       return (
         (settings.enableClaudeSessionLowAlert && claudeFlags.session.low) ||
-        (settings.enableClaudeWeeklyLowAlert && (claudeFlags.weekly.low || claudeFlags.weekly.exhausted)) ||
-        (settings.enableClaudeCooldownAlert && claudeFlags.cooldownActive)
+        (settings.enableClaudeWeeklyLowAlert && (claudeFlags.weekly.low || claudeFlags.weekly.exhausted))
       );
     }
     if (service === "codex" && claudeFlags) {
       return (
         (settings.enableCodexSessionLowAlert && claudeFlags.session.low) ||
-        (settings.enableCodexWeeklyLowAlert && (claudeFlags.weekly.low || claudeFlags.weekly.exhausted)) ||
-        (settings.enableCodexCooldownAlert && claudeFlags.cooldownActive)
+        (settings.enableCodexWeeklyLowAlert && (claudeFlags.weekly.low || claudeFlags.weekly.exhausted))
       );
     }
     return false;
@@ -1065,7 +1006,7 @@ export class MonitorEngine extends EventEmitter {
         const flags = evaluateClaudeLowFlags(stored.claude.windows, settings);
         const events = await readClaudeCliQuotaEvents(Date.now() - CLI_LOG_LOOKBACK_MS);
         const sessionConfirmed =
-          flags.cooldownActive && hasRecentRejection(events, ["five_hour", "session"], stored.claude.resetsAt);
+          flags.session.exhausted && hasRecentRejection(events, ["five_hour", "session"], stored.claude.resetsAt);
         const weeklyConfirmed =
           flags.weekly.exhausted &&
           hasRecentRejection(events, ["seven_day", "seven_day_all", "weekly"], stored.claude.weeklyResetAt ?? null);

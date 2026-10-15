@@ -16,8 +16,8 @@
 - `AppSettings` (see `src/shared/types.ts`; there is no user-facing check interval):
   - Per-service monitoring: `enableCursorMonitoring` / `enableClaudeMonitoring` / `enableCodexMonitoring`
   - Cursor low-quota: `cursorModels` (`autoPercentUsed`) and advanced / other models (`apiPercentUsed`) each have their own threshold and toggle
-  - Claude Code low-quota: 5-hour and weekly each have their own threshold and toggle; `enableClaudeCooldownAlert` is a lockout alert when the 5-hour window hits 0%, not a percent threshold
-  - Codex low-quota: mirrors Claude — 5-hour, weekly, and `enableCodexCooldownAlert`. Extra API windows (per-model, code review) are displayed but not independently alerted
+  - Claude Code low-quota: 5-hour and weekly each have their own threshold and toggle; a 5-hour window spent down to 0% is still "low", so it needs no alert of its own
+  - Codex low-quota: mirrors Claude — 5-hour and weekly. Extra API windows (per-model, code review) are displayed but not independently alerted
   - Alarms: Cursor period-end; Claude Code 5-hour / weekly / subscription-renewal as three independent switches plus `claudeBillingCadence`; Codex 5-hour / weekly as two independent switches
   - Other: `trayValueColorMode`, per-service popup / LINE switches (`enableCursorAlarmPopup` / `enableClaudeAlarmPopup` / `enableCodexAlarmPopup`, `enableCursorLineNotification` / `enableClaudeLineNotification` / `enableCodexLineNotification`), `claudeUseCliActivityPolling`, `codexUseCliActivityPolling`, UI language (`zh` / `en` / `ja` / `ko`), notification cooldown, `autoCheckForUpdates` (Windows only — see "Auto-update" below)
 - `CombinedSnapshot`: Cursor, Claude, and Codex quota snapshots
@@ -204,22 +204,22 @@ An alarm is only raised from a reading the app can stand behind.
   threshold, or the window actually resetting, is a new event and will alert
   again; quota recovering above the threshold clears the last record so the next
   drop is treated as fresh.
-- **Recovery sends its own one-shot notice.** When `fireWindowAlert` (or the
-  Claude/Codex cooldown-lift branch) clears a low/exhausted/cooldown latch and
-  that latch actually existed, `fireRecoveredAlert` sends one desktop + LINE
+- **Recovery sends its own one-shot notice.** When `fireWindowAlert` clears a
+  low/exhausted latch and that latch actually existed, `fireRecoveredAlert` sends one desktop + LINE
   message (no popup — recovery isn't urgent). A window that was already healthy,
   or whose latch was never set, never gets a spurious recovered message —
   `notificationStore.clear`'s own return value (did it find something to remove)
   is the gate, so no separate dedupe key is needed.
-- **One reset, one recovered notice.** A 5-hour reset clears the session's
-  low-quota latch and its cooldown latch in the same poll.
-  `handleSessionWindowAlerts` (shared by Claude Code and Codex) merges the two into
-  a single recovered notice instead of one each. The cooldown latch is only cleared
-  by `shouldClearCooldownLatch`: not while the session is at 0%, not until the
-  reading clears the same 5-point hysteresis as the low-quota latch, and — when the
-  payload no longer lists the window — not until the reset time recorded on the
-  latch has passed. A cooldown whose `resetsAt` is momentarily blank stays silent
-  and keeps its latch; a missing reading is not a recovery.
+- **The 5-hour recovered notice carries no reset time.** `handleSessionWindowAlerts`
+  (shared by Claude Code and Codex) takes the recovery from `fireWindowAlert` and
+  sends it without a reset time, since the next 5-hour window has not started yet.
+  The low-quota latch is normally cleared once the reading clears the 5-point
+  hysteresis above the threshold. When the payload stops listing the window after a
+  reset (`remainingPercent` is null), `shouldClearVanishedWindowLatch` decides instead:
+  the latch clears once the reset time recorded in its key has passed, and a latch
+  with no recorded reset time stays until a reading returns. Either way
+  `notificationStore.clear` reports the removal only once, so a reset sends one
+  recovered notice, never two.
 - **`resetsAt` is pinned across polls, within a jitter tolerance.** Sources that
   recompute `resetsAt` as `now + secondsLeft` (Codex's `reset_after_seconds`)
   would otherwise drift by a second or two each poll, which looks like a new
@@ -253,13 +253,13 @@ action buttons. OS-native desktop notifications are also closed by
 How to be notified is chosen per service: each service block ends with two checkboxes on one
 row — the app popup (`enable<Service>AlarmPopup`) and LINE (`enable<Service>LineNotification`; a
 token must still be pasted below before anything is sent). A service's checkboxes cover every
-alert about that service (low quota, cooldown, exhausted, reset, period end, quota recovered,
+alert about that service (low quota, exhausted, reset, period end, quota recovered,
 credential expired, and its part of the quit-time LINE status); OS-native desktop notifications
 have no switch. The one exception is the 5-hour **reset** alarms (Claude Code and Codex): they
 reset several times a day whether or not the window was ever low, so they ring as popup + desktop
 notification only and never as LINE (`alarmSendsLine` in `src/shared/alarm-utils.ts`). On LINE a
 5-hour reset is heard through the one-shot recovered notice, and only if the window had been low
-or on cooldown; since that notice is sent when the next poll sees the recovery, it can arrive up
+(a window spent down to 0% counts); since that notice is sent when the next poll sees the recovery, it can arrive up
 to one polling interval after the reset (longer while the CLI is idle and activity polling is on).
 Weekly and period-end / renewal alarms keep their LINE message. A store that still carries the old single global popup / LINE switch hands that
 value to every service on first read (`resolveChannelFlags` in `src/shared/notify-channels.ts`),
@@ -352,8 +352,8 @@ Two failure modes of the old reset alert are fixed here:
 - `AppSettings`（見 `src/shared/types.ts`；沒有使用者可調的檢查頻率）：
   - 服務開關：`enableCursorMonitoring` / `enableClaudeMonitoring` / `enableCodexMonitoring`
   - Cursor 低額度：`cursorModels`（`autoPercentUsed`）與進階／其他模型（`apiPercentUsed`）各自有閾值與開關
-  - Claude Code 低額度：5 小時與每週各自有閾值與開關；`enableClaudeCooldownAlert` 是 5 小時視窗用盡鎖定的提醒，不是百分比閾值
-  - Codex 低額度：與 Claude 相同——5 小時、每週，以及 `enableCodexCooldownAlert`。API 回報的額外視窗（單模型、code review）會顯示，但不獨立告警
+  - Claude Code 低額度：5 小時與每週各自有閾值與開關；5 小時視窗用到 0% 仍屬「低額度」，不另設提醒
+  - Codex 低額度：與 Claude 相同——5 小時與每週。API 回報的額外視窗（單模型、code review）會顯示，但不獨立告警
   - 鬧鐘：Cursor 本期到期；Claude Code 5 小時／每週／訂閱到期三個獨立開關，加上 `claudeBillingCadence`；Codex 5 小時／每週兩個獨立開關
   - 其他：`trayValueColorMode`、各服務的彈窗／LINE 開關（`enableCursorAlarmPopup`／`enableClaudeAlarmPopup`／`enableCodexAlarmPopup`、`enableCursorLineNotification`／`enableClaudeLineNotification`／`enableCodexLineNotification`）、`claudeUseCliActivityPolling`、`codexUseCliActivityPolling`、介面語言（`zh`／`en`／`ja`／`ko`）、通知冷卻時間、`autoCheckForUpdates`（僅 Windows，見下方「自動更新」）
 - `CombinedSnapshot`：Cursor、Claude 與 Codex 配額快照
@@ -507,15 +507,16 @@ Codex 不套用 Claude/Cursor 的正常/低額度雙檔排程，而是走單一�
   跟低額度提醒、憑證失效提醒無關。同一次「事件」由「閾值＋該視窗的重置時間」共同識別（`monitor-engine.ts` 的
   `fireWindowAlert`）：改動閾值設定，或視窗真的重置到下一輪，都算新事件，會重新提醒一次；額度
   真的回升到閾值之上，則會清掉上一次的紀錄，下次再跌破閾值就當作全新事件重新提醒。
-- **額度恢復時會發一則一次性通知**：`fireWindowAlert`（以及 Claude／Codex 的冷卻解除分支）清掉
-  低量/耗盡/冷卻鎖定、且那個鎖定確實存在時，`fireRecoveredAlert` 會發一則桌面＋LINE 通知（不含
+- **額度恢復時會發一則一次性通知**：`fireWindowAlert` 清掉
+  低量/耗盡鎖定、且那個鎖定確實存在時，`fireRecoveredAlert` 會發一則桌面＋LINE 通知（不含
   彈窗——恢復不算緊急）。本來就健康、或鎖定從沒設過的視窗不會誤發——閘門就是
   `notificationStore.clear` 自己的回傳值（有沒有真的清掉東西），不需要另外的 dedupe key。
-- **一次重置只發一則恢復通知**：5 小時視窗重置時，session 的低額度鎖定與冷卻鎖定會在同一次輪詢被清掉。
-  `handleSessionWindowAlerts`（Claude Code 與 Codex 共用）把兩者合併成一則恢復通知，而不是各發一則。
-  冷卻鎖定只由 `shouldClearCooldownLatch` 決定能不能清：session 還在 0% 不清；讀數沒有越過跟低額度鎖定同樣的
-  5 個百分點遲滯邊界不清；payload 不再列出該視窗時，要等鎖定上記錄的重置時間已過才清。冷卻中但 `resetsAt`
-  暫時空白時保持靜默、不清鎖定——讀不到不等於已恢復。
+- **5 小時的恢復通知不帶重置時間**：`handleSessionWindowAlerts`（Claude Code 與 Codex 共用）從
+  `fireWindowAlert` 接手恢復通知，並且不附重置時間——下一個 5 小時視窗還沒開始，沒有可說的結束時間。
+  低額度鎖定平常等讀數越過閾值之上 5 個百分點的遲滯邊界才會清；重置後若 payload 不再列出該視窗
+ （`remainingPercent` 為 null），改由 `shouldClearVanishedWindowLatch` 決定：鎖定 key 裡記錄的重置時間
+  已過就清，沒有記錄重置時間的鎖定則等到讀數回來。不論走哪條路，`notificationStore.clear` 都只會回報一次
+  移除，所以一次重置只會發一則恢復通知，不會兩則。
 - **`resetsAt` 會在輪詢之間釘住，但有雜訊容忍值**：會把 `resetsAt` 重算成 `now + secondsLeft` 的
   來源（Codex 的 `reset_after_seconds`）每次輪詢可能差一兩秒，對一次性閘門來說就像新事件。
   `stabilizeWindowResets`／`stabilizeResetTime`（`src/shared/monitor-utils.ts`）會在舊值仍屬未來
@@ -538,11 +539,11 @@ OS 原生桌面通知也會由 `sendPlainDesktopNotification` 在同樣的 30 �
 
 「用什麼方式提醒」改為各服務自訂：每個服務區塊的最後有同一行的兩個勾選框——App 彈窗
 （`enable<Service>AlarmPopup`）與 LINE 通知（`enable<Service>LineNotification`；仍須在下方區塊貼
-Token 才會真的送出）。服務的勾選涵蓋該服務所有提醒（低額度、冷卻、已用完、重置、到期、額度恢復、
+Token 才會真的送出）。服務的勾選涵蓋該服務所有提醒（低額度、已用完、重置、到期、額度恢復、
 憑證失效，以及結束時的 LINE 現況）；OS 原生桌面通知沒有開關。唯一的例外是 Claude Code 與 Codex 的
 5 小時**到點提醒**：5 小時視窗一天會重置好幾次，不論當次有沒有跌到低額度都會響，所以只有彈窗＋桌面通知，
 不發 LINE（`src/shared/alarm-utils.ts` 的 `alarmSendsLine`）。5 小時重置在 LINE 上由一次性的恢復通知代表，
-而且只有當時真的跌到低額度或冷卻過才會收到；這則通知是下一次輪詢看到恢復時才送，所以最多會比重置時間晚一個
+而且只有當時真的跌到低額度（含用到 0%）才會收到；這則通知是下一次輪詢看到恢復時才送，所以最多會比重置時間晚一個
 輪詢間隔（CLI 閒置且開啟活動輪詢時會更久）。每週與到期／續訂提醒仍會發 LINE。舊設定若還是單一的全域彈窗／LINE
 開關，首次讀取時會把該值帶給每個服務（`src/shared/notify-channels.ts` 的 `resolveChannelFlags`），
 所以升級不會改變任何人的行為。各服務的開關跟該服務的

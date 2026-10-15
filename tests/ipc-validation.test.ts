@@ -48,6 +48,15 @@ test("asSettingsPatch keeps Codex settings keys", () => {
   assert.deepEqual(patch, { enableCodexMonitoring: false, enableCodexResetAlarm: false });
 });
 
+test("asSettingsPatch rejects the removed 5-hour cooldown switches", () => {
+  const patch = asSettingsPatch({
+    enableClaudeCooldownAlert: true,
+    enableCodexCooldownAlert: true,
+    enableCodexSessionLowAlert: false
+  });
+  assert.deepEqual(patch, { enableCodexSessionLowAlert: false });
+});
+
 test("asSettingsPatch drops unknown keys and mistyped values", () => {
   const patch = asSettingsPatch({
     language: "en",

@@ -50,27 +50,24 @@ export const shouldClearLowQuotaLatch = (
 ): boolean => remainingPercent !== null && remainingPercent > threshold + hysteresisPercent;
 
 /**
- * Whether a 5-hour cooldown latch should be cleared now that the session is no
- * longer reported as exhausted. Called only when the cooldown is not active.
+ * Whether a low-quota latch should be cleared because its window has vanished
+ * from the payload and the reset time the latch was raised for has passed.
  *
- * Two readings must not count as "the cooldown lifted": a remaining percent
- * hovering just above 0 (the same rounding/borderline noise the hysteresis on
- * the low-quota latch guards against), and a window the payload simply left out.
- * The latter is the normal state right after a reset, so it only counts once
- * the reset time the latch recorded has actually passed; before that it is a
- * data gap, not a recovery. An unparseable recorded time is treated as passed
- * so a corrupt latch cannot stay stuck forever.
+ * The latch key is `<threshold>|<resetAt>` (see fireWindowAlert). Right after a
+ * 5-hour reset the usage payload may omit the session window until the next
+ * message starts a new one, so there is no reading to clear the latch the usual
+ * way. Until the recorded reset time has passed that gap is just missing data,
+ * not a recovery. A latch raised without a known reset time (`none`) has
+ * nothing to judge by and stays; an unparseable time is treated as passed so a
+ * corrupt latch cannot stay stuck forever.
  */
-export const shouldClearCooldownLatch = (
-  remainingPercent: number | null,
-  latchResetAt: string,
-  nowMs: number,
-  hysteresisPercent: number
-): boolean => {
-  if (remainingPercent !== null) {
-    return remainingPercent > hysteresisPercent;
+export const shouldClearVanishedWindowLatch = (latchKey: string, nowMs: number): boolean => {
+  const separator = latchKey.indexOf("|");
+  const resetAt = separator === -1 ? "" : latchKey.slice(separator + 1);
+  if (resetAt === "none") {
+    return false;
   }
-  const resetMs = Date.parse(latchResetAt);
+  const resetMs = Date.parse(resetAt);
   return Number.isNaN(resetMs) || resetMs <= nowMs;
 };
 

@@ -149,11 +149,10 @@ export class AlarmService {
     showAlarmPopup({
       id: "test",
       service: "codex",
-      label: t(settings.language, "alertLabel.codexCooldown"),
+      label: t(settings.language, "alertLabel.codexSession"),
       fireAt: nowIso(),
       language: settings.language,
-      countdownTarget: new Date(Date.now() + 11 * 60_000).toISOString(),
-      resetAlarmEnabled: settings.enableCodexResetAlarm
+      countdownTarget: new Date(Date.now() + 11 * 60_000).toISOString()
     });
   }
 

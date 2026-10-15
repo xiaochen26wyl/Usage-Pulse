@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "services": [
+    {
+      "name": "desktop",
+      "role": "desktop",
+      "command": ["pnpm", "dev"],
+      "port": true,
+      "env": { "PORT": "{port}" }
+    }
+  ]
+}

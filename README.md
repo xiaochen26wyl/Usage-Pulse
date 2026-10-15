@@ -95,6 +95,96 @@ A pasted token is tried against your real usage before it is kept: if it can't r
 
 If anything appears incorrect — such as a reading that seems wrong, a notification that should not have been triggered, or any other unexpected behavior — please open a question in [Discussions Q&A](https://github.com/xiaochen26wyl/Usage-Pulse/discussions/categories/q-a-%E8%A7%A3%E6%B1%BA%E5%95%8F%E9%A1%8C) instead of making assumptions.
 
+## 品牌配色（Brand colors）
+
+本節列出 Usage-Pulse 介面**全部**已定義的色票，供設計與 Logo 取色。單一來源是 [`src/renderer/styles.css`](src/renderer/styles.css) 的 `:root` token（`--color-*`）；介面只有一組深色配色，沒有淺色變體。品牌主色由使用者確認，色碼一律取自該檔。
+
+> **維護規則**：新增、修改或刪除色票時，必須同步更新本節；色碼與 [`src/renderer/styles.css`](src/renderer/styles.css) 不一致就是文件錯誤。
+
+### 主要配色（Logo 取色）
+
+| 角色 | 色碼 | 說明 |
+|---|---|---|
+| Primary 主色 | `#3B82F6` | 品牌主色（`--color-primary`） |
+| Primary Strong 深主色 | `#2563EB` | 主色的加深版本（`--color-primary-strong`） |
+
+### 完整色票
+
+色碼全部取自上述 `:root`，用腳本產生；依用途分組。
+
+#### 品牌色
+
+| Token | 色碼 | 說明 |
+|---|---|---|
+| `--color-primary` | `#3B82F6` | 品牌主色 |
+| `--color-primary-strong` | `#2563EB` | 主色的加深版本 |
+
+#### 狀態色
+
+| Token | 色碼 | 說明 |
+|---|---|---|
+| `--color-warning` | `#6CB6FF` | 警告 |
+| `--color-success` | `#59D090` | 成功 |
+| `--color-danger` | `#FF7D7D` | 危險 |
+
+#### 服務識別色
+
+| Token | 色碼 | 說明 |
+|---|---|---|
+| `--color-line` | `#06C755` | LINE 綠 |
+| `--color-line-strong` | `#05B34C` | LINE 深綠 |
+| `--color-claude` | `#E8945A` | Claude 橘 |
+| `--color-cursor` | `#C084FC` | Cursor 紫 |
+| `--color-codex` | `#60A5FA` | Codex 藍 |
+
+#### 文字與邊框
+
+| Token | 色碼 | 說明 |
+|---|---|---|
+| `--color-text` | `#F5F6F8` | 內文 |
+| `--color-text-muted` | `#9AA4B5` | 次要文字 |
+| `--color-border` | `#2A3442` | 邊框 |
+
+### 局部色／備註
+
+以下是 [`src/renderer/styles.css`](src/renderer/styles.css) 裡直接寫死、沒有定義成 token 的顏色（依色碼與屬性合併，行號為撰寫當下該檔的行號），不屬於上面的正式色票：
+
+| 色碼 | 屬性 | 行號 |
+|---|---|---|
+| `#0E1116` | `background` | L27 |
+| `#10141B` | `background` | L309 |
+| `#11161D` | `background` | L130 |
+| `#181D25` | `background` | L40, L590, L598 |
+| `#1F2328` | `background` | L508 |
+| `#1F2328` | `border-color` | L509 |
+| `#1F2328` | `color` | L504 |
+| `#212833` | `background` | L641 |
+| `#243142` | `background` | L419 |
+| `#2B3442` | `background` | L197, L338 |
+| `#304157` | `background` | L424 |
+| `#314157` | `border` | L127 |
+| `#334155` | `border` | L308 |
+| `#3F4F65` | `border` | L337, L415 |
+| `#6CB6FF` | `color` | L564 |
+| `#8B949E` | `color` | L559, L582 |
+| `#B5BDCA` | `border-color` | L242 |
+| `#B5BDCA` | `color` | L243 |
+| `#BFDBFE` | `background` | L214 |
+| `#C5DDFF` | `color` | L525 |
+| `#E9D5FF` | `background` | L210 |
+| `#F0B27A` | `background` | L206 |
+| `#F5F6F8` | `background` | L351 |
+| `#F5F6F8` | `color` | L28, L298, L310, L383, L397 |
+| `#FFFFFF` | `background` | L502 |
+| `#FFFFFF` | `border-color` | L503 |
+| `#FFFFFF` | `color` | L82, L418, L442, L498, L510, L614 等 9 處 |
+| `rgba(0, 0, 0, 0.25)` | `background` | L539 |
+| `rgba(108, 182, 255, 0.12)` | `background` | L472, L524 |
+| `rgba(255, 125, 125, 0.12)` | `background` | L462 |
+
+- `--color-warning` 的色碼是淺藍 `#6CB6FF`，與名稱的「警告」直覺不同；本節依來源檔照列，沒有更動。
+- `--shadow-card`（L18）不是固定色碼：`0 4px 14px rgba(0, 0, 0, 0.28)`。
+
 ## License and important notice
 
 Usage-Pulse uses an **MIT-style license with a non-commercial default** (full terms in [`LICENSE`](LICENSE)). **Personal use and use within a company for the company's own internal purposes are both free.** Since it's provided free for company use, please have your company assess the security risk on its own before adopting it.

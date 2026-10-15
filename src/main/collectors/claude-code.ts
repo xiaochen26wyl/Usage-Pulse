@@ -167,7 +167,7 @@ export const collectClaudeCodeQuotaFromToken = async (
 
   const { session, weekly } = selectPrimaryLimits(limits);
   // The usage API does not always return a reset time. Without one there is no
-  // reset alarm to arm and no cooldown countdown to show, so fall back to what
+  // reset alarm to arm and no popup countdown to show, so fall back to what
   // the CLI recorded locally before giving up on it. Profile is independent of
   // quota windows; a failure there must not drop a successful usage scrape.
   const [cliResets, billingAnchorAt] = await Promise.all([

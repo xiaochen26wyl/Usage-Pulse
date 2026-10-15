@@ -17,9 +17,6 @@ const formatTime = (iso: string): string => {
   return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
 };
 
-const isCooldownPopup = (id: AlarmPopupPayload["id"]): boolean =>
-  id === "test" || id === "claude-cooldown" || id === "codex-cooldown";
-
 const isSessionReset = (id: AlarmPopupPayload["id"]): boolean =>
   id === "claude-session" || id === "codex-session";
 
@@ -33,10 +30,7 @@ const alarmTitleKey = (id: AlarmPopupPayload["id"]): TranslationKey => {
   if (id === "claude-billing") {
     return "alarm.popup.title.claudePeriod";
   }
-  if (isCooldownPopup(id)) {
-    return "alarm.popup.title.cooldown";
-  }
-  if (id === "claude-session-low" || id === "codex-session-low") {
+  if (id === "test" || id === "claude-session-low" || id === "codex-session-low") {
     return "alarm.popup.title.sessionLow";
   }
   if (id === "claude-weekly-low" || id === "codex-weekly-low") {
@@ -126,7 +120,6 @@ export const AlarmApp = () => {
   }
 
   const lang = payload.language;
-  const isCooldown = isCooldownPopup(payload.id);
   const isBilling = payload.id === "cursor-billing" || payload.id === "claude-billing";
   const isReset = isSessionReset(payload.id) || isWeeklyReset(payload.id);
   const serviceLabel = payload.service ? serviceNames[payload.service] : "Usage-Pulse";
@@ -174,9 +167,6 @@ export const AlarmApp = () => {
 
       {card}
       {extraMeta}
-      {isCooldown && payload.resetAlarmEnabled ? (
-        <p className="alarm-meta">{t(lang, "alarm.popup.resetAlarmOn")}</p>
-      ) : null}
       <p className="alarm-meta">{t(lang, "alarm.autoDismiss", { seconds: ALARM_POPUP_AUTO_DISMISS_SECONDS })}</p>
     </main>
   );

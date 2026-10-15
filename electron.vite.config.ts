@@ -59,9 +59,10 @@ export default defineConfig({
   renderer: {
     root: ".",
     plugins: [react(), devCspPlugin()],
+    // port 由啟動端決定（Push Watch 專案啟動頁會以 PORT 傳入）；沒給就用 Vite 預設，被占用時自動往後找。
     server: {
-      port: 5176,
-      strictPort: true
+      port: Number.isInteger(Number(process.env.PORT)) && Number(process.env.PORT) > 0 ? Number(process.env.PORT) : undefined,
+      strictPort: false
     },
     build: {
       outDir: "dist/renderer",

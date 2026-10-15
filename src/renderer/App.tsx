@@ -82,12 +82,10 @@ const defaultSettings: AppSettings = {
   enableClaudeSessionLowAlert: true,
   claudeWeeklyLowThresholdPercent: 20,
   enableClaudeWeeklyLowAlert: true,
-  enableClaudeCooldownAlert: true,
   codexSessionLowThresholdPercent: 20,
   enableCodexSessionLowAlert: true,
   codexWeeklyLowThresholdPercent: 20,
   enableCodexWeeklyLowAlert: true,
-  enableCodexCooldownAlert: true,
   launchWithIde: false,
   notifyCooldownMinutes: 15,
   enableCursorResetAlarm: true,
@@ -1340,8 +1338,8 @@ export const App = () => {
   };
 
   // One threshold slider + notify toggle per independent low-quota alert —
-  // Cursor has two (advanced models, cursor models), Claude Code has two of
-  // these plus a third toggle-only cooldown alert (see renderToggleOnlyRow).
+  // Cursor has two (advanced models, cursor models), Claude Code and Codex
+  // have two each (5-hour session, weekly).
   const renderLowQuotaRow = (
     labelKey: TranslationKey,
     thresholdKey: LowQuotaThresholdKey,
@@ -1438,30 +1436,6 @@ export const App = () => {
       </div>
     );
   };
-
-  const renderToggleOnlyRow = (
-    labelKey: TranslationKey,
-    toggleKey: "enableClaudeCooldownAlert" | "enableCodexCooldownAlert",
-  ) => (
-    <label
-      className="field switch-row"
-      key={toggleKey}
-      style={{ marginTop: "10px" }}
-    >
-      <span>{t(lang, labelKey)}</span>
-      <input
-        type="checkbox"
-        className="toggle"
-        checked={settings[toggleKey]}
-        onChange={(event) =>
-          setSettings((prev) => ({
-            ...prev,
-            [toggleKey]: event.target.checked,
-          }))
-        }
-      />
-    </label>
-  );
 
   return (
     <main className="app">
@@ -1942,10 +1916,6 @@ export const App = () => {
             "claudeWeeklyLowThresholdPercent",
             "enableClaudeWeeklyLowAlert",
           )}
-          {renderToggleOnlyRow(
-            "alertLabel.claudeCooldown",
-            "enableClaudeCooldownAlert",
-          )}
 
           <label className="field switch-row" style={{ marginTop: "10px" }}>
             <span>{t(lang, "settings.claudeActivityPolling")}</span>
@@ -2094,10 +2064,6 @@ export const App = () => {
             "alertLabel.codexWeekly",
             "codexWeeklyLowThresholdPercent",
             "enableCodexWeeklyLowAlert",
-          )}
-          {renderToggleOnlyRow(
-            "alertLabel.codexCooldown",
-            "enableCodexCooldownAlert",
           )}
 
           <label className="field switch-row" style={{ marginTop: "10px" }}>
