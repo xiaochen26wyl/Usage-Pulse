@@ -8,6 +8,19 @@ Language / 語言：[English](#english) | [繁體中文](#繁體中文)
 
 All notable changes to Usage-Pulse are documented in this file.
 
+### [2.2.0] - 2026-10-18
+
+#### Added
+- Codex subscription-expiry alarm with its own switch. It rings one day before the plan ends, and only when the local login data carries a future expiry date.
+- Clearing old Codex conversations while Codex is open: a second warning (cancel is the default) must be confirmed first; otherwise nothing is changed.
+
+#### Changed
+- The Claude Code subscription alarm now rings only when the API supplies an expiry date; the billing cycle is no longer guessed, and the monthly / annual setting is removed.
+- Codex's leftover crash-reporter helper process is no longer mistaken for Codex running.
+
+#### Removed
+- The Claude Code "poll by CLI activity" switch.
+
 ### [2.1.1] - 2026-10-15
 
 #### Changed
@@ -101,6 +114,19 @@ All notable changes to Usage-Pulse are documented in this file.
 ## 繁體中文
 
 本檔案記錄 Usage-Pulse 所有重要版本變更。
+
+### [2.2.0] - 2026-10-18
+
+#### 新增
+- Codex 訂閱到期提醒，有獨立開關：方案到期前一天提醒，且只在本機登入資料帶有未來的到期日時生效。
+- Codex 開著時也能清除舊對話：需先通過第二道警告（預設為取消）才會執行，否則不做任何變更。
+
+#### 變更
+- Claude Code 訂閱到期提醒改為只在 API 提供到期日時才響，不再自行推算扣款週期，並移除月繳／年繳設定。
+- Codex 殘留的當機回報輔助程序不再被誤判為 Codex 執行中。
+
+#### 移除
+- Claude Code 的「依 CLI 活動輪詢」開關。
 
 ### [2.1.1] - 2026-10-15
 

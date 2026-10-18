@@ -1,0 +1,6 @@
+{
+  "zh": "- 新增 Codex 訂閱到期提醒（可獨立開關）：到期前一天通知，僅在登入資料帶有到期日時生效\n- Claude Code 訂閱到期提醒改為只在 API 提供到期日時才響，不再自行推算扣款週期，並移除月繳／年繳設定\n- Codex 執行中也能清除舊對話：會先跳出第二次警告，確認後才執行\n- 移除 Claude Code 的「依 CLI 活動輪詢」開關",
+  "en": "- New Codex subscription-expiry alarm (own switch): rings one day before, only when the login data carries an expiry date\n- The Claude Code subscription alarm now rings only when the API supplies an expiry date, no longer guessing the billing cycle; the monthly / annual setting is removed\n- Old conversations can now be cleared while Codex is open: a second warning appears first and nothing runs until you confirm\n- The Claude Code \"poll by CLI activity\" switch is removed",
+  "ja": "- Codex のサブスクリプション期限アラームを追加（個別にオン／オフ可能）：期限の 1 日前に通知します。ログイン情報に期限日がある場合のみ動作します\n- Claude Code のサブスクリプションアラームは、API が期限日を返す場合のみ鳴るようになり、請求サイクルの推測を廃止。月払い／年払いの設定も削除しました\n- Codex が起動中でも古い会話を削除可能に：先に 2 回目の警告が表示され、確認するまで実行されません\n- Claude Code の「CLI アクティビティでポーリング」スイッチを削除しました",
+  "ko": "- Codex 구독 만료 알람 추가(별도 스위치): 만료 하루 전에 알리며, 로그인 정보에 만료일이 있을 때만 동작합니다\n- Claude Code 구독 알람은 API가 만료일을 제공할 때만 울리며 결제 주기를 추측하지 않습니다. 월간/연간 설정은 제거되었습니다\n- Codex가 실행 중이어도 오래된 대화를 정리할 수 있습니다: 먼저 두 번째 경고가 표시되고, 확인해야 실행됩니다\n- Claude Code의 'CLI 활동 기반 폴링' 스위치를 제거했습니다"
+}
