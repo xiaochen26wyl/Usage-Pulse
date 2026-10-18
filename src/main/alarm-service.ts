@@ -174,7 +174,9 @@ export class AlarmService {
       ? t(lang, "reason.cursorPeriodEnded")
       : target.id === "claude-billing"
         ? t(lang, "reason.claudePeriodEnded")
-        : t(lang, "reason.resetFired", {
+        : target.id === "codex-billing"
+          ? t(lang, "reason.codexPeriodEnded")
+          : t(lang, "reason.resetFired", {
             service: SERVICE_LABELS[target.service],
             label: target.label
           });
@@ -198,7 +200,9 @@ export class AlarmService {
               ? "alarm.popup.title.cursorPeriod"
               : target.id === "claude-billing"
                 ? "alarm.popup.title.claudePeriod"
-                : "alarm.popup.title",
+                : target.id === "codex-billing"
+                  ? "alarm.popup.title.codexPeriod"
+                  : "alarm.popup.title",
             { service: SERVICE_LABELS[target.service] }
           ),
           body: reason,

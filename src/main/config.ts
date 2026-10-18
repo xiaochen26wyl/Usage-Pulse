@@ -28,9 +28,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   enableClaudeResetAlarm: true,
   enableClaudeWeeklyResetAlarm: true,
   enableClaudeBillingAlarm: true,
-  claudeBillingCadence: "monthly",
   enableCodexResetAlarm: true,
   enableCodexWeeklyResetAlarm: true,
+  enableCodexBillingAlarm: true,
   language: "zh",
   trayValueColorMode: "system",
   enableCursorAlarmPopup: true,
@@ -41,7 +41,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   enableCodexLineNotification: true,
   lineChannelAccessToken: "",
   claudeManualToken: "",
-  claudeUseCliActivityPolling: true,
   codexUseCliActivityPolling: false,
   autoCheckForUpdates: true
 };

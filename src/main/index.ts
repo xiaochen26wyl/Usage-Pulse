@@ -435,6 +435,7 @@ const stripMaskedSecrets = (patch: Partial<AppSettings>): Partial<AppSettings> =
 const historyCleanerDeps: HistoryCleanerDeps = {
   trashItem: (path) => shell.trashItem(path),
   isCodexRunning: () => probeCodexRunning(),
+  confirmWhileRunning: () => confirmCleanWhileCodexRunning(),
   openDatabase: createNodeSqliteOpener()
 };
 let historyCleaning = false;
@@ -453,6 +454,21 @@ const confirmHistoryClean = async (service: HistoryService, stats: HistoryStats)
       count: stats.staleFileCount,
       size: formatBytes(stats.staleBytes)
     })
+  });
+  return response === 1;
+};
+
+// Second, separate warning: the first dialog said what will be removed, this one
+// says the app that owns the files is open. Cancel is the default here too.
+const confirmCleanWhileCodexRunning = async (): Promise<boolean> => {
+  const lang = settingsStore.get().language;
+  const { response } = await dialog.showMessageBox({
+    type: "warning",
+    buttons: [t(lang, "history.runningWarn.cancel"), t(lang, "history.runningWarn.ok")],
+    defaultId: 0,
+    cancelId: 0,
+    title: t(lang, "history.runningWarn.title"),
+    message: t(lang, "history.runningWarn.message")
   });
   return response === 1;
 };

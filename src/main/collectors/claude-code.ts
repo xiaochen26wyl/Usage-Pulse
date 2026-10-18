@@ -1,7 +1,7 @@
 import axios from "axios";
 import type { CredentialSource, Language, ScrapeResult } from "@shared/types";
 import { t } from "@shared/i18n";
-import { nextBillingAt, parseSubscriptionCreatedAt } from "@shared/claude-billing";
+import { parseSubscriptionCreatedAt } from "@shared/claude-billing";
 import { buildClaudeScrapeResult, extractLimits, selectPrimaryLimits } from "@shared/claude-usage";
 import { stabilizeResetTime } from "@shared/monitor-utils";
 import { latestFutureReset, readClaudeCliQuotaEvents } from "@main/collectors/claude-cli-log";
@@ -175,13 +175,12 @@ export const collectClaudeCodeQuotaFromToken = async (
     readSubscriptionCreatedAt(token)
   ]);
   const result = buildClaudeScrapeResult(limits, lang, cliResets);
-  const cadence = settingsStore.get().claudeBillingCadence;
-  const billingResetAt = billingAnchorAt ? nextBillingAt(billingAnchorAt, cadence, Date.now()) : null;
+  // No cadence guess: a billing alarm needs an expiry the API actually gave.
   return {
     ...result,
     billingAnchorAt,
-    billingResetAt,
-    billingResetLabel: billingResetAt ? t(lang, "fallback.claudeBilling") : null
+    billingResetAt: null,
+    billingResetLabel: null
   };
 };
 

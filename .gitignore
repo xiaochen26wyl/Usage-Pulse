@@ -12,7 +12,12 @@ out/
 # Environment variables
 .env
 .env.*
+*.env
+*.env.*
+.dev.vars
+.dev.vars.*
 !.env.example
+!.dev.vars.example
 
 # IDE and OS
 .DS_Store

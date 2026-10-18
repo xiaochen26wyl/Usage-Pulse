@@ -84,8 +84,15 @@ export const commandLineLooksLikeCodex = (commandLine: string): boolean => {
 const CODEX_DESKTOP_NEEDLES = ["codex framework.framework", "codex-code-mode-host"] as const;
 const BARE_CODEX_BINARY = /^(?:\S*[\\/])?codex(?:\.exe)?(?:\s|$)/;
 
+// The crashpad handler also lives under "Codex Framework.framework", but it
+// holds none of the databases and can outlive the app for days.
+const CODEX_IGNORED_HELPERS = ["crashpad_handler"] as const;
+
 export const commandLineLooksLikeCodexProcess = (commandLine: string): boolean => {
   const lower = commandLine.toLowerCase();
+  if (CODEX_IGNORED_HELPERS.some((needle) => lower.includes(needle))) {
+    return false;
+  }
   return (
     CODEX_DESKTOP_NEEDLES.some((needle) => lower.includes(needle)) ||
     CODEX_COMMAND_NEEDLES.some((needle) => lower.includes(needle)) ||

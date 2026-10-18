@@ -479,6 +479,30 @@ test("codex clean refuses while Codex is running and changes nothing", async () 
   }
 });
 
+test("codex clean while running stops and changes nothing when the user declines the warning", async () => {
+  const sandbox = await setup({ isCodexRunning: async () => true, confirmWhileRunning: async () => false });
+  try {
+    await seedCodex(sandbox);
+    const result = await cleanHistory("codex", sandbox.deps);
+    assert.equal(result.status, "cancelled");
+    await assertNothingChanged(sandbox);
+  } finally {
+    await cleanup(sandbox);
+  }
+});
+
+test("codex clean while running goes ahead once the user accepts the warning", async () => {
+  const sandbox = await setup({ isCodexRunning: async () => true, confirmWhileRunning: async () => true });
+  try {
+    await seedCodex(sandbox);
+    const result = await cleanHistory("codex", sandbox.deps);
+    assert.equal(result.status, "done");
+    assert.ok(result.dbRowsDeleted > 0);
+  } finally {
+    await cleanup(sandbox);
+  }
+});
+
 test("codex clean refuses when it cannot tell whether Codex is running", async () => {
   const sandbox = await setup({
     isCodexRunning: async () => {
@@ -674,6 +698,7 @@ test("Codex process detection matches the desktop app and CLI but not bystanders
     "node /usr/local/lib/node_modules/@openai/codex/bin/codex.js"
   ];
   const noMatch = [
+    "/Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/155/Helpers/browser_crashpad_handler --monitor-self --database=/Users/me/Library/Application Support/Codex/Crashpad",
     "/Users/me/.codex/computer-use/Codex Computer Use.app/Contents/MacOS/SkyComputerUseService",
     "/Applications/ChatGPT.app/Contents/Frameworks/Sparkle.framework/Versions/B/Autoupdate com.openai.codex /Users/me me",
     "/Users/me/Library/Caches/com.openai.codex/org.sparkle-project.Sparkle/Launcher/x/Updater.app/Contents/MacOS/Updater /Applications/ChatGPT.app 0",

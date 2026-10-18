@@ -14,6 +14,9 @@ export interface ParsedCodexAuth {
   idToken: string | null;
   accountId: string | null;
   expiresAtMs: number | null;
+  // End of the paid period, as the ChatGPT token claims it. Null when the claim
+  // is absent or empty (a snapshot taken at login, so it can also be stale).
+  subscriptionActiveUntil: string | null;
   source: CredentialSource;
 }
 
@@ -50,6 +53,20 @@ export const jwtExpiryMs = (token: string): number | null => {
   const payload = decodeJwtPayload(token);
   const exp = payload?.exp;
   return typeof exp === "number" && Number.isFinite(exp) && exp > 0 ? exp * 1000 : null;
+};
+
+export const jwtSubscriptionActiveUntil = (token: string | null): string | null => {
+  if (!token) {
+    return null;
+  }
+  const raw = asRecord(decodeJwtPayload(token)?.["https://api.openai.com/auth"])?.chatgpt_subscription_active_until;
+  const ms =
+    typeof raw === "number" && Number.isFinite(raw) && raw > 0
+      ? (raw < 1e12 ? raw * 1000 : raw)
+      : typeof raw === "string" && raw.trim()
+        ? Date.parse(raw)
+        : NaN;
+  return Number.isFinite(ms) ? new Date(ms).toISOString() : null;
 };
 
 const jwtAccountId = (token: string | null): string | null => {
@@ -127,6 +144,7 @@ export const parseCodexAuthJson = (rawText: string, source: CredentialSource): P
     idToken,
     accountId,
     expiresAtMs: jwtExpiryMs(accessToken),
+    subscriptionActiveUntil: jwtSubscriptionActiveUntil(idToken) ?? jwtSubscriptionActiveUntil(accessToken),
     source
   };
 };

@@ -28,13 +28,13 @@ const settings = (patch: Partial<AppSettings> = {}): AppSettings =>
     enableCodexMonitoring: true,
     enableCodexResetAlarm: true,
     enableCodexWeeklyResetAlarm: true,
+    enableCodexBillingAlarm: true,
     launchWithIde: false,
     notifyCooldownMinutes: 15,
     enableCursorResetAlarm: true,
     enableClaudeResetAlarm: true,
     enableClaudeWeeklyResetAlarm: true,
     enableClaudeBillingAlarm: true,
-    claudeBillingCadence: "monthly",
     language: "zh",
     trayValueColorMode: "system",
     enableCursorAlarmPopup: true,
@@ -130,6 +130,18 @@ test("collectAlarmTargets gathers Codex session and weekly independently", () =>
   );
 });
 
+test("collectAlarmTargets arms the Codex subscription end only when it is known and enabled", () => {
+  const off = { enableCursorResetAlarm: false, enableClaudeResetAlarm: false, enableClaudeWeeklyResetAlarm: false, enableClaudeBillingAlarm: false };
+  const base = [{ resetsAt: null }, { resetsAt: null }] as const;
+  const known = snapshot(base[0], base[1], { resetsAt: null, billingResetAt: at(86_400_000) });
+  assert.deepEqual(collectAlarmTargets(known, settings(off), "zh").map((target) => target.id), ["codex-billing"]);
+  assert.deepEqual(
+    collectAlarmTargets(known, settings({ ...off, enableCodexBillingAlarm: false }), "zh").map((target) => target.id),
+    []
+  );
+  assert.deepEqual(collectAlarmTargets(snapshot(base[0], base[1], { resetsAt: null }), settings(off), "zh"), []);
+});
+
 test("collectAlarmTargets honours the per-service reset toggles", () => {
   const targets = collectAlarmTargets(
     snapshot({ resetsAt: at(3_600_000) }, { resetsAt: at(600_000), weeklyResetAt: at(7_200_000) }),
@@ -153,7 +165,7 @@ test("collectAlarmTargets treats Claude session, weekly, and billing as independ
     {
       resetsAt: at(600_000),
       weeklyResetAt: at(7_200_000),
-      billingAnchorAt: "2026-07-20T12:00:00.000Z"
+      billingResetAt: "2026-08-21T12:00:00.000Z"
     }
   );
 
@@ -180,7 +192,18 @@ test("collectAlarmTargets treats Claude session, weekly, and billing as independ
     billingOnly.map((target) => target.id),
     ["claude-billing"]
   );
+  // The reminder rings one day before the plan's expiry.
   assert.equal(billingOnly[0]?.fireAt, "2026-08-20T12:00:00.000Z");
+
+  // No expiry from the API, no reminder (the cadence is never guessed).
+  const noExpiry = collectAlarmTargets(
+    snapshot({ resetsAt: null }, { resetsAt: null, billingAnchorAt: "2026-07-20T12:00:00.000Z" }),
+    settings({ enableClaudeResetAlarm: false, enableClaudeWeeklyResetAlarm: false }),
+    "zh",
+    {},
+    NOW
+  );
+  assert.deepEqual(noExpiry, []);
 });
 
 test("collectAlarmTargets skips missing and unparseable reset times", () => {

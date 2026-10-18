@@ -7,7 +7,6 @@ import {
 import {
   type AlarmStatusReport,
   type AppSettings,
-  type ClaudeBillingCadence,
   type AuthStatus,
   type CombinedSnapshot,
   type CredentialState,
@@ -27,8 +26,8 @@ import { CLAUDE_TOKEN_MASK, LINE_TOKEN_MASK } from "@shared/types";
 import {
   ALARM_POPUP_AUTO_DISMISS_SECONDS,
   formatCountdown,
+  claudeBillingFireAt,
 } from "@shared/alarm-utils";
-import { resolveClaudeBillingAt } from "@shared/claude-billing";
 import { classifyHistoryFailure, formatBytes, hasHistoryApi } from "@shared/history";
 import { isCodexBackendSlotKey } from "@shared/codex-usage";
 import { localeForLanguage, t, type TranslationKey } from "@shared/i18n";
@@ -92,9 +91,9 @@ const defaultSettings: AppSettings = {
   enableClaudeResetAlarm: true,
   enableClaudeWeeklyResetAlarm: true,
   enableClaudeBillingAlarm: true,
-  claudeBillingCadence: "monthly",
   enableCodexResetAlarm: true,
   enableCodexWeeklyResetAlarm: true,
+  enableCodexBillingAlarm: true,
   language: "zh",
   trayValueColorMode: "system",
   enableCursorAlarmPopup: true,
@@ -105,7 +104,6 @@ const defaultSettings: AppSettings = {
   enableCodexLineNotification: true,
   lineChannelAccessToken: "",
   claudeManualToken: "",
-  claudeUseCliActivityPolling: true,
   codexUseCliActivityPolling: false,
   autoCheckForUpdates: true,
 };
@@ -317,12 +315,8 @@ export const App = () => {
   >({ claude: "", codex: "" });
   const canAutoUpdate = window.usagePulse.platform === "win32";
   const lang = settings.language;
-  const claudeBillingAt = resolveClaudeBillingAt(
-    snapshot?.claude.billingAnchorAt,
-    snapshot?.claude.billingResetAt,
-    settings.claudeBillingCadence,
-    now,
-  );
+  const claudeBillingAt = snapshot?.claude.billingResetAt ?? null;
+  const claudeBillingFireAtIso = claudeBillingFireAt(claudeBillingAt);
 
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 1000);
@@ -991,10 +985,10 @@ export const App = () => {
               })
             : t(lang, "auth.lastCheckedNever")}
         </p>
-        {credential.expiresAt ? (
+        {credential.rotatedAt ? (
           <p className="meta-text" style={{ margin: "2px 0 0" }}>
-            {t(lang, "auth.expiresAt", {
-              time: new Date(credential.expiresAt).toLocaleString(
+            {t(lang, "auth.rotatedAt", {
+              time: new Date(credential.rotatedAt).toLocaleString(
                 localeForLanguage(lang),
               ),
             })}
@@ -1663,6 +1657,13 @@ export const App = () => {
                           {item.creditsText}
                         </p>
                       ) : null}
+                      {item?.billingResetAt ? (
+                        <p className="meta-text" style={{ marginTop: "8px" }}>
+                          {t(lang, "window.codexBilling.renewsAt", {
+                            resetTime: formatResetText(item.billingResetAt, lang),
+                          })}
+                        </p>
+                      ) : null}
                     </div>
                   ) : (
                     <p className="meta-text" style={{ marginTop: "8px" }}>
@@ -1918,21 +1919,6 @@ export const App = () => {
           )}
 
           <label className="field switch-row" style={{ marginTop: "10px" }}>
-            <span>{t(lang, "settings.claudeActivityPolling")}</span>
-            <input
-              type="checkbox"
-              className="toggle"
-              checked={settings.claudeUseCliActivityPolling}
-              onChange={(event) =>
-                setSettings((prev) => ({
-                  ...prev,
-                  claudeUseCliActivityPolling: event.target.checked,
-                }))
-              }
-            />
-          </label>
-
-          <label className="field switch-row" style={{ marginTop: "10px" }}>
             <span>{t(lang, "alarm.when.claudeSession")}</span>
             <input
               type="checkbox"
@@ -2010,26 +1996,7 @@ export const App = () => {
               }
             />
           </label>
-          <label className="field" style={{ margin: "6px 0 0" }}>
-            <span>{t(lang, "settings.claudeBilling.cadence")}</span>
-            <select
-              value={settings.claudeBillingCadence}
-              onChange={(event) =>
-                setSettings((prev) => ({
-                  ...prev,
-                  claudeBillingCadence: event.target.value as ClaudeBillingCadence,
-                }))
-              }
-            >
-              <option value="monthly">
-                {t(lang, "settings.claudeBilling.monthly")}
-              </option>
-              <option value="annual">
-                {t(lang, "settings.claudeBilling.annual")}
-              </option>
-            </select>
-          </label>
-          {settings.enableClaudeBillingAlarm && claudeBillingAt && (
+          {settings.enableClaudeBillingAlarm && claudeBillingFireAtIso && (
             <p
               className="meta-text"
               style={{
@@ -2039,8 +2006,8 @@ export const App = () => {
               }}
             >
               {t(lang, "settings.resetAlarm.nextFire", {
-                countdown: formatCountdown(claudeBillingAt, now, lang),
-                resetTime: formatResetText(claudeBillingAt, lang),
+                countdown: formatCountdown(claudeBillingFireAtIso, now, lang),
+                resetTime: formatResetText(claudeBillingFireAtIso, lang),
               })}
             </p>
           )}
@@ -2142,6 +2109,40 @@ export const App = () => {
                 ),
               })}
             </p>
+          )}
+
+          {snapshot?.codex.billingResetAt && (
+            <>
+              <label className="field switch-row" style={{ marginTop: "10px" }}>
+                <span>{t(lang, "alarm.when.codexBilling")}</span>
+                <input
+                  type="checkbox"
+                  className="toggle"
+                  checked={settings.enableCodexBillingAlarm}
+                  onChange={(event) =>
+                    setSettings((prev) => ({
+                      ...prev,
+                      enableCodexBillingAlarm: event.target.checked,
+                    }))
+                  }
+                />
+              </label>
+              {settings.enableCodexBillingAlarm && (
+                <p
+                  className="meta-text"
+                  style={{ margin: "2px 0 0", color: "#8b949e", fontSize: "12px" }}
+                >
+                  {t(lang, "settings.resetAlarm.nextFire", {
+                    countdown: formatCountdown(
+                      snapshot.codex.billingResetAt,
+                      now,
+                      lang,
+                    ),
+                    resetTime: formatResetText(snapshot.codex.billingResetAt, lang),
+                  })}
+                </p>
+              )}
+            </>
           )}
 
           {renderNotifyChannels("codex")}

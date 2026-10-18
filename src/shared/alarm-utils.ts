@@ -7,7 +7,6 @@ import type {
   ServiceType
 } from "./types";
 import { t } from "./i18n";
-import { resolveClaudeBillingAt } from "./claude-billing";
 import { isTrusted } from "./snapshot-trust";
 
 // setTimeout silently fires immediately once the delay exceeds a signed 32-bit
@@ -21,6 +20,15 @@ export const DUE_GRACE_MS = 60_000;
 // The alarm popup always closes itself after this long — not user-configurable.
 export const ALARM_POPUP_AUTO_DISMISS_SECONDS = 30;
 
+// The subscription alarm rings this long before the plan's expiry.
+export const CLAUDE_BILLING_LEAD_MS = 24 * 60 * 60 * 1000;
+
+/** When the subscription reminder fires for a known expiry, or null if there is none. */
+export const claudeBillingFireAt = (expiresAt: string | null | undefined): string | null => {
+  const expiresMs = expiresAt ? Date.parse(expiresAt) : Number.NaN;
+  return Number.isNaN(expiresMs) ? null : new Date(expiresMs - CLAUDE_BILLING_LEAD_MS).toISOString();
+};
+
 export type FireClass = "pending" | "due" | "expired";
 
 type ResetToggleKey =
@@ -29,7 +37,8 @@ type ResetToggleKey =
   | "enableClaudeWeeklyResetAlarm"
   | "enableClaudeBillingAlarm"
   | "enableCodexResetAlarm"
-  | "enableCodexWeeklyResetAlarm";
+  | "enableCodexWeeklyResetAlarm"
+  | "enableCodexBillingAlarm";
 
 const resetToggleMap: Record<AlarmSource, ResetToggleKey> = {
   "cursor-billing": "enableCursorResetAlarm",
@@ -37,7 +46,8 @@ const resetToggleMap: Record<AlarmSource, ResetToggleKey> = {
   "claude-weekly": "enableClaudeWeeklyResetAlarm",
   "claude-billing": "enableClaudeBillingAlarm",
   "codex-session": "enableCodexResetAlarm",
-  "codex-weekly": "enableCodexWeeklyResetAlarm"
+  "codex-weekly": "enableCodexWeeklyResetAlarm",
+  "codex-billing": "enableCodexBillingAlarm"
 };
 
 // Which reset alarms also go out as a LINE message. The 5-hour windows reset
@@ -51,7 +61,8 @@ const alarmLineMap: Record<AlarmSource, boolean> = {
   "claude-weekly": true,
   "claude-billing": true,
   "codex-session": false,
-  "codex-weekly": true
+  "codex-weekly": true,
+  "codex-billing": true
 };
 
 export const alarmSendsLine = (id: AlarmSource): boolean => alarmLineMap[id];
@@ -142,12 +153,7 @@ export const collectAlarmTargets = (
     {
       id: "claude-billing",
       service: "claude",
-      resetAt: resolveClaudeBillingAt(
-        snapshot.claude.billingAnchorAt,
-        snapshot.claude.billingResetAt,
-        settings.claudeBillingCadence,
-        nowMs
-      ),
+      resetAt: claudeBillingFireAt(snapshot.claude.billingResetAt),
       label: snapshot.claude.billingResetLabel || t(lang, "fallback.claudeBilling")
     },
     {
@@ -161,6 +167,12 @@ export const collectAlarmTargets = (
       service: "codex",
       resetAt: snapshot.codex.weeklyResetAt,
       label: snapshot.codex.weeklyResetLabel || t(lang, "window.label.weekly")
+    },
+    {
+      id: "codex-billing",
+      service: "codex",
+      resetAt: snapshot.codex.billingResetAt,
+      label: snapshot.codex.billingResetLabel || t(lang, "fallback.codexBilling")
     }
   ];
 

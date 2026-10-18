@@ -30,6 +30,9 @@ const alarmTitleKey = (id: AlarmPopupPayload["id"]): TranslationKey => {
   if (id === "claude-billing") {
     return "alarm.popup.title.claudePeriod";
   }
+  if (id === "codex-billing") {
+    return "alarm.popup.title.codexPeriod";
+  }
   if (id === "test" || id === "claude-session-low" || id === "codex-session-low") {
     return "alarm.popup.title.sessionLow";
   }
@@ -120,7 +123,7 @@ export const AlarmApp = () => {
   }
 
   const lang = payload.language;
-  const isBilling = payload.id === "cursor-billing" || payload.id === "claude-billing";
+  const isBilling = payload.id === "cursor-billing" || payload.id === "claude-billing" || payload.id === "codex-billing";
   const isReset = isSessionReset(payload.id) || isWeeklyReset(payload.id);
   const serviceLabel = payload.service ? serviceNames[payload.service] : "Usage-Pulse";
   const title = t(lang, alarmTitleKey(payload.id), { service: serviceLabel });

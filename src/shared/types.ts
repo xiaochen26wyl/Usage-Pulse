@@ -129,9 +129,9 @@ export interface AppSettings {
   enableClaudeResetAlarm: boolean;
   enableClaudeWeeklyResetAlarm: boolean;
   enableClaudeBillingAlarm: boolean;
-  claudeBillingCadence: ClaudeBillingCadence;
   enableCodexResetAlarm: boolean;
   enableCodexWeeklyResetAlarm: boolean;
+  enableCodexBillingAlarm: boolean;
   language: Language;
   // Menu-bar numeric text: follow OS appearance, or force white / near-black.
   trayValueColorMode: TrayValueColorMode;
@@ -154,9 +154,6 @@ export interface AppSettings {
   // written here unless it has already proved it can read the usage API, so a
   // stored value is one that worked at least once.
   claudeManualToken: string;
-  // Poll Claude Code only when its CLI has actually been active since the last
-  // successful fetch. Idle ticks skip the request but keep the normal interval.
-  claudeUseCliActivityPolling: boolean;
   // Optional Codex traffic saver: skip the usage API while the CLI session dir
   // has been idle since the last successful fetch.
   codexUseCliActivityPolling: boolean;
@@ -164,8 +161,6 @@ export interface AppSettings {
   // newer GitHub Release, independent of the always-available manual check.
   autoCheckForUpdates: boolean;
 }
-
-export type ClaudeBillingCadence = "monthly" | "annual";
 
 // Same contract for the LINE channel access token. It is a live credential —
 // anyone holding it can broadcast to the user's official account — so the
@@ -220,7 +215,8 @@ export type AlarmSource =
   | "claude-weekly"
   | "claude-billing"
   | "codex-session"
-  | "codex-weekly";
+  | "codex-weekly"
+  | "codex-billing";
 
 export interface AlarmTarget {
   id: AlarmSource;

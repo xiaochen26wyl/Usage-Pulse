@@ -55,6 +55,14 @@ pnpm dev
 
 A fresh clone already checks out and tracks the `main` branch. Since every release is published as a tag off `main`, run `git pull` before rebuilding to pick up the changes behind each new release.
 
+### Local environment files 本機環境檔
+
+Usage-Pulse does not need an environment file, so do not create a `.env`.
+Usage-Pulse 不需要環境檔，請不要建立 `.env`。
+
+Provider logins are read from your existing local logins; optional notification credentials entered in the app are stored encrypted on your machine.
+各服務的登入沿用你本機既有的登入；在 app 內填入的選用通知憑證會加密存放在你的電腦上。
+
 ### Unsigned build warnings
 
 - macOS Gatekeeper: on first launch, right-click the app in Finder -> `Open` -> click `Open` again.
@@ -90,7 +98,7 @@ A pasted token is tried against your real usage before it is kept: if it can't r
 
 - What's read, all read-only: Cursor's local session file, the official Claude Code CLI's saved login, and Codex's local auth file.
 - Usage-Pulse never writes to or modifies any of these files or credentials.
-- The one exception is the Clear older than 2 weeks button on the Claude Code and Codex cards. It acts only when you click it and confirm: only conversations not updated in over 2 weeks are removed (pinned Codex conversations are kept), their files go to the Trash, and Codex's database records for them are deleted permanently, so quit Codex first.
+- The one exception is the Clear older than 2 weeks button on the Claude Code and Codex cards. It acts only when you click it and confirm: only conversations not updated in over 2 weeks are removed (pinned Codex conversations are kept), their files go to the Trash, and Codex's database records for them are deleted permanently; if Codex is open you get a second warning first.
 - General settings (notification toggles, language, and the rest of Settings) are stored locally only — there's no cloud sync.
 
 If anything appears incorrect — such as a reading that seems wrong, a notification that should not have been triggered, or any other unexpected behavior — please open a question in [Discussions Q&A](https://github.com/xiaochen26wyl/Usage-Pulse/discussions/categories/q-a-%E8%A7%A3%E6%B1%BA%E5%95%8F%E9%A1%8C) instead of making assumptions.

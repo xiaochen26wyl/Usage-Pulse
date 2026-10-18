@@ -6,7 +6,6 @@ import type {
   AlarmObservation,
   AlarmSource,
   AppSettings,
-  ClaudeBillingCadence,
   CombinedSnapshot,
   CredentialState,
   Language,
@@ -98,7 +97,9 @@ type StoredSettings = AppSettings & {
   claudeManualOAuthTokenExpiresAt?: string | null;
   enableClaudeWeeklyResetAlarm?: boolean;
   enableClaudeBillingAlarm?: boolean;
-  claudeBillingCadence?: ClaudeBillingCadence;
+  // Removed billing-cadence select and Claude activity-polling switch; dropped on read so they leave the file on the next save.
+  claudeBillingCadence?: string;
+  claudeUseCliActivityPolling?: boolean;
   // Legacy global popup / LINE switches, now per service (see resolveChannelFlags).
   enableAlarmPopup?: boolean;
   enableLineNotification?: boolean;
@@ -115,9 +116,6 @@ const migrateClaudeWeeklyResetAlarm = (raw: StoredSettings): boolean =>
   typeof raw.enableClaudeWeeklyResetAlarm === "boolean"
     ? raw.enableClaudeWeeklyResetAlarm
     : Boolean(raw.enableClaudeResetAlarm ?? DEFAULT_SETTINGS.enableClaudeResetAlarm);
-
-const migrateClaudeBillingCadence = (raw: StoredSettings): ClaudeBillingCadence =>
-  raw.claudeBillingCadence === "annual" ? "annual" : "monthly";
 
 const CODEX_ACTIVITY_POLLING_DEFAULT_OFF_MIGRATION = "codexActivityPollingDefaultOff20260903";
 
@@ -137,6 +135,8 @@ const readSettings = (): AppSettings => {
     waterCupSizeMl: _legacyWaterCup,
     enableClaudeCooldownAlert: _legacyClaudeCooldown,
     enableCodexCooldownAlert: _legacyCodexCooldown,
+    claudeBillingCadence: _legacyBillingCadence,
+    claudeUseCliActivityPolling: _legacyClaudeActivityPolling,
     ...rest
   } = raw;
   const settings = decryptSettings({
@@ -149,7 +149,6 @@ const readSettings = (): AppSettings => {
       typeof raw.enableClaudeBillingAlarm === "boolean"
         ? raw.enableClaudeBillingAlarm
         : DEFAULT_SETTINGS.enableClaudeBillingAlarm,
-    claudeBillingCadence: migrateClaudeBillingCadence(raw),
     codexUseCliActivityPolling: shouldMigrateCodexActivityPolling
       ? false
       : Boolean(raw.codexUseCliActivityPolling ?? DEFAULT_SETTINGS.codexUseCliActivityPolling)
@@ -202,9 +201,9 @@ export const settingsStore = {
     merged.enableClaudeBillingAlarm = Boolean(merged.enableClaudeBillingAlarm);
     merged.enableCodexResetAlarm = Boolean(merged.enableCodexResetAlarm);
     merged.enableCodexWeeklyResetAlarm = Boolean(merged.enableCodexWeeklyResetAlarm);
+    merged.enableCodexBillingAlarm = Boolean(merged.enableCodexBillingAlarm);
     merged.codexUseCliActivityPolling = Boolean(merged.codexUseCliActivityPolling);
     merged.autoCheckForUpdates = Boolean(merged.autoCheckForUpdates);
-    merged.claudeBillingCadence = merged.claudeBillingCadence === "annual" ? "annual" : "monthly";
     store.set("settings", encryptSettings(merged));
     return merged;
   }

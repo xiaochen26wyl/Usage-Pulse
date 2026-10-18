@@ -76,7 +76,13 @@ export const collectCodexQuota = async (): Promise<ScrapeResult> => {
   const auth = await getCodexAuthContext();
   try {
     const payload = await fetchUsagePayload(auth.token, auth.accountId);
-    return buildCodexScrapeResult(payload, lang);
+    const result = buildCodexScrapeResult(payload, lang);
+    // A date already past is a stale login-time snapshot, not a plan that ended.
+    const periodEnd = auth.subscriptionActiveUntil;
+    if (periodEnd && Date.parse(periodEnd) > Date.now()) {
+      return { ...result, billingResetAt: periodEnd, billingResetLabel: t(lang, "fallback.codexBilling") };
+    }
+    return result;
   } catch (error) {
     const status = statusOf(error);
     if (status === 401 || status === 403) {

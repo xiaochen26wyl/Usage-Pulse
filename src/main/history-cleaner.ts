@@ -19,9 +19,10 @@ import type { HistoryBlockedReason, HistoryCleanResult, HistoryService, HistoryS
  *    never credentials, settings, projects, or anything under a `memory` folder.
  *  - Files go to the OS trash, not to unlink. The exception is the Codex SQLite
  *    rows, which cannot be trashed; the confirmation text says so.
- *  - Codex fails closed: it refuses while Codex is running, when the database
- *    layout is not exactly the one verified below, or when no SQLite engine is
- *    available. A refusal changes nothing.
+ *  - Codex fails closed: it refuses while Codex is running (unless the user
+ *    answers a second, explicit warning), when the database layout is not
+ *    exactly the one verified below, or when no SQLite engine is available.
+ *    A refusal changes nothing.
  */
 
 export const HISTORY_RETENTION_DAYS = 14;
@@ -403,6 +404,8 @@ const pruneSessionIndex = async (home: string, removedIds: ReadonlySet<string>):
 export interface HistoryCleanerDeps {
   trashItem: (path: string) => Promise<void>;
   isCodexRunning: () => Promise<boolean>;
+  // Asked only when Codex is running. Absent or false: the clean is not done.
+  confirmWhileRunning?: () => Promise<boolean>;
   // null: no SQLite engine in this environment.
   openDatabase: OpenDatabase | null;
   now?: () => number;
@@ -493,7 +496,12 @@ const cleanCodex = async (deps: HistoryCleanerDeps): Promise<HistoryCleanResult>
     return blocked("codex", "probeFailed");
   }
   if (running) {
-    return blocked("codex", "codexRunning");
+    if (!deps.confirmWhileRunning) {
+      return blocked("codex", "codexRunning");
+    }
+    if (!(await deps.confirmWhileRunning())) {
+      return { ...emptyResult("codex"), status: "cancelled" };
+    }
   }
 
   const now = (deps.now ?? Date.now)();

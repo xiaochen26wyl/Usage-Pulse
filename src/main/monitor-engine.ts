@@ -477,10 +477,9 @@ export class MonitorEngine extends EventEmitter {
     const settings = settingsStore.get();
 
     try {
-      // When activity polling is on and the CLI has been idle, skip the API
-      // request but keep the normal interval — stretching was removed with
-      // claudeIdleIntervalMinutes.
-      if (settings.claudeUseCliActivityPolling && !(await this.claudeHasActivitySinceLastFetch())) {
+      // When the CLI has been idle, skip the API request but keep the normal
+      // interval — stretching was removed with claudeIdleIntervalMinutes.
+      if (!(await this.claudeHasActivitySinceLastFetch())) {
         // Idle tick: no fetch.
       } else {
         await this.checkService("claude", "scheduled");

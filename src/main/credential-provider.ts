@@ -8,7 +8,7 @@ import axios from "axios";
 import type { SqlJsStatic } from "sql.js";
 import type { CredentialSource, Language } from "@shared/types";
 import { isClaudeOAuthToken } from "@shared/claude-auth";
-import { jwtExpiryMs, parseCodexAuthJson, parseCodexCredentialsStore, type ParsedCodexAuth } from "@shared/codex-auth";
+import { jwtExpiryMs, jwtSubscriptionActiveUntil, parseCodexAuthJson, parseCodexCredentialsStore, type ParsedCodexAuth } from "@shared/codex-auth";
 import { t } from "@shared/i18n";
 
 const execFileAsync = promisify(execFile);
@@ -498,6 +498,7 @@ export interface CodexAuthContext {
   token: string;
   accountId: string | null;
   expiresAt: string | null;
+  subscriptionActiveUntil: string | null;
   source: CredentialSource;
 }
 
@@ -608,6 +609,9 @@ const refreshCodexAccessToken = async (refreshToken: string, source: CredentialS
     idToken: typeof data.id_token === "string" ? data.id_token : null,
     accountId: parseCodexAuthJson(JSON.stringify({ tokens: data }), source)?.accountId ?? null,
     expiresAtMs: expiresIn !== null ? Date.now() + expiresIn * 1000 : jwtExpiryMs(accessToken),
+    subscriptionActiveUntil:
+      jwtSubscriptionActiveUntil(typeof data.id_token === "string" ? data.id_token : null) ??
+      jwtSubscriptionActiveUntil(accessToken),
     source
   };
   return applyParsedToMemory(parsed);
@@ -649,6 +653,7 @@ export const getCodexAuthContext = async (): Promise<CodexAuthContext> => {
     token: parsed.accessToken,
     accountId: parsed.accountId,
     expiresAt: parsed.expiresAtMs === null ? null : new Date(parsed.expiresAtMs).toISOString(),
+    subscriptionActiveUntil: parsed.subscriptionActiveUntil,
     source: parsed.source
   };
 };
