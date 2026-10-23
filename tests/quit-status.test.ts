@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import type { AppSettings, CombinedSnapshot, QuotaSnapshot, QuotaWindow, ServiceType } from "../src/shared/types";
 import { buildQuitStatusMessages } from "../src/shared/quit-status";
+import { ALERT_KEYS, ALERT_SERVICE, defaultAlertChannels } from "../src/shared/notify-channels";
 import { EXHAUSTED_RED, SERVICE_ACCENT, type LineFlexMessage } from "../src/shared/line-templates";
 
 const NOW = new Date("2026-08-24T12:00:00.000Z");
@@ -72,6 +73,17 @@ const combinedOf = (
   fetchedAt: NOW.toISOString()
 });
 
+// Every reminder of the given services with LINE unticked (popup left as is).
+const lineOffFor = (...services: ServiceType[]): Pick<AppSettings, "alertChannels"> => {
+  const alertChannels = defaultAlertChannels();
+  for (const key of ALERT_KEYS) {
+    if (services.includes(ALERT_SERVICE[key])) {
+      alertChannels[key] = { ...alertChannels[key], line: false };
+    }
+  }
+  return { alertChannels };
+};
+
 const settingsOf = (
   patch: Partial<
     Pick<
@@ -79,9 +91,7 @@ const settingsOf = (
       | "enableCursorMonitoring"
       | "enableClaudeMonitoring"
       | "enableCodexMonitoring"
-      | "enableCursorLineNotification"
-      | "enableClaudeLineNotification"
-      | "enableCodexLineNotification"
+      | "alertChannels"
       | "language"
     >
   > = {}
@@ -89,9 +99,7 @@ const settingsOf = (
   enableCursorMonitoring: true,
   enableClaudeMonitoring: true,
   enableCodexMonitoring: false,
-  enableCursorLineNotification: true,
-  enableClaudeLineNotification: true,
-  enableCodexLineNotification: true,
+  alertChannels: defaultAlertChannels(),
   language: "zh" as const,
   ...patch
 });
@@ -115,7 +123,7 @@ test("returns [] when both services' monitoring is disabled", () => {
 
 test("skips a service whose LINE checkbox is off but keeps the others", () => {
   const messages = buildQuitStatusMessages({
-    settings: settingsOf({ enableClaudeLineNotification: false }),
+    settings: settingsOf(lineOffFor("claude")),
     snapshot: combinedOf(workingCursorSnapshot(), workingClaudeSnapshot()),
     serviceLabels,
     now: NOW
@@ -128,7 +136,7 @@ test("skips a service whose LINE checkbox is off but keeps the others", () => {
 
 test("returns [] when every monitored service has LINE unchecked", () => {
   const messages = buildQuitStatusMessages({
-    settings: settingsOf({ enableCursorLineNotification: false, enableClaudeLineNotification: false }),
+    settings: settingsOf(lineOffFor("cursor", "claude")),
     snapshot: combinedOf(workingCursorSnapshot(), workingClaudeSnapshot()),
     serviceLabels,
     now: NOW

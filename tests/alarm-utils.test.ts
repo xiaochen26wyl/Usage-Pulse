@@ -3,46 +3,39 @@ import assert from "node:assert/strict";
 import {
   DUE_GRACE_MS,
   MAX_TIMEOUT_MS,
-  alarmSendsLine,
   clampTimeoutMs,
   classifyFire,
   collectAlarmTargets,
   decideAlarmAction,
   nextTarget
 } from "../src/shared/alarm-utils";
-import type { AlarmSource, AppSettings, CombinedSnapshot, QuotaSnapshot } from "../src/shared/types";
+import { defaultAlertChannels } from "../src/shared/notify-channels";
+import type { AlarmSource, AlertKey, AppSettings, CombinedSnapshot, QuotaSnapshot } from "../src/shared/types";
 
 const NOW = Date.parse("2026-08-20T12:00:00.000Z");
 const at = (offsetMs: number) => new Date(NOW + offsetMs).toISOString();
 
+// Settings with the given reminders switched off (neither channel ticked).
+const without = (...keys: AlertKey[]): Partial<AppSettings> => {
+  const alertChannels = defaultAlertChannels();
+  for (const key of keys) {
+    alertChannels[key] = { popup: false, line: false };
+  }
+  return { alertChannels };
+};
+
 const settings = (patch: Partial<AppSettings> = {}): AppSettings =>
   ({
     cursorAdvancedModelsLowThresholdPercent: 20,
-    enableCursorAdvancedModelsLowAlert: true,
     cursorModelsLowThresholdPercent: 20,
-    enableCursorModelsLowAlert: true,
     claudeSessionLowThresholdPercent: 20,
-    enableClaudeSessionLowAlert: true,
     claudeWeeklyLowThresholdPercent: 20,
-    enableClaudeWeeklyLowAlert: true,
     enableCodexMonitoring: true,
-    enableCodexResetAlarm: true,
-    enableCodexWeeklyResetAlarm: true,
-    enableCodexBillingAlarm: true,
     launchWithIde: false,
     notifyCooldownMinutes: 15,
-    enableCursorResetAlarm: true,
-    enableClaudeResetAlarm: true,
-    enableClaudeWeeklyResetAlarm: true,
-    enableClaudeBillingAlarm: true,
     language: "zh",
-    trayValueColorMode: "system",
-    enableCursorAlarmPopup: true,
-    enableClaudeAlarmPopup: true,
-    enableCodexAlarmPopup: true,
-    enableCursorLineNotification: true,
-    enableClaudeLineNotification: true,
-    enableCodexLineNotification: true,
+    showWeeklyInTray: true,
+    alertChannels: defaultAlertChannels(),
     lineChannelAccessToken: "",
     ...patch
   }) as AppSettings;
@@ -115,12 +108,7 @@ test("collectAlarmTargets gathers Codex session and weekly independently", () =>
       { resetsAt: null },
       { resetsAt: at(600_000), resetLabel: "Session", weeklyResetAt: at(7_200_000), weeklyResetLabel: "Weekly" }
     ),
-    settings({
-      enableCursorResetAlarm: false,
-      enableClaudeResetAlarm: false,
-      enableClaudeWeeklyResetAlarm: false,
-      enableClaudeBillingAlarm: false
-    }),
+    settings(without("cursor-billing", "claude-session", "claude-weekly", "claude-billing")),
     "zh"
   );
 
@@ -131,12 +119,13 @@ test("collectAlarmTargets gathers Codex session and weekly independently", () =>
 });
 
 test("collectAlarmTargets arms the Codex subscription end only when it is known and enabled", () => {
-  const off = { enableCursorResetAlarm: false, enableClaudeResetAlarm: false, enableClaudeWeeklyResetAlarm: false, enableClaudeBillingAlarm: false };
+  const offKeys: AlertKey[] = ["cursor-billing", "claude-session", "claude-weekly", "claude-billing"];
+  const off = without(...offKeys);
   const base = [{ resetsAt: null }, { resetsAt: null }] as const;
   const known = snapshot(base[0], base[1], { resetsAt: null, billingResetAt: at(86_400_000) });
   assert.deepEqual(collectAlarmTargets(known, settings(off), "zh").map((target) => target.id), ["codex-billing"]);
   assert.deepEqual(
-    collectAlarmTargets(known, settings({ ...off, enableCodexBillingAlarm: false }), "zh").map((target) => target.id),
+    collectAlarmTargets(known, settings(without(...offKeys, "codex-billing")), "zh").map((target) => target.id),
     []
   );
   assert.deepEqual(collectAlarmTargets(snapshot(base[0], base[1], { resetsAt: null }), settings(off), "zh"), []);
@@ -145,11 +134,7 @@ test("collectAlarmTargets arms the Codex subscription end only when it is known 
 test("collectAlarmTargets honours the per-service reset toggles", () => {
   const targets = collectAlarmTargets(
     snapshot({ resetsAt: at(3_600_000) }, { resetsAt: at(600_000), weeklyResetAt: at(7_200_000) }),
-    settings({
-      enableClaudeResetAlarm: false,
-      enableClaudeWeeklyResetAlarm: false,
-      enableClaudeBillingAlarm: false
-    }),
+    settings(without("claude-session", "claude-weekly", "claude-billing")),
     "zh"
   );
 
@@ -171,7 +156,7 @@ test("collectAlarmTargets treats Claude session, weekly, and billing as independ
 
   const weeklyOnly = collectAlarmTargets(
     combined,
-    settings({ enableClaudeResetAlarm: false, enableClaudeBillingAlarm: false }),
+    settings(without("claude-session", "claude-billing")),
     "zh",
     {},
     NOW
@@ -183,7 +168,7 @@ test("collectAlarmTargets treats Claude session, weekly, and billing as independ
 
   const billingOnly = collectAlarmTargets(
     combined,
-    settings({ enableClaudeResetAlarm: false, enableClaudeWeeklyResetAlarm: false }),
+    settings(without("claude-session", "claude-weekly")),
     "zh",
     {},
     NOW
@@ -198,7 +183,7 @@ test("collectAlarmTargets treats Claude session, weekly, and billing as independ
   // No expiry from the API, no reminder (the cadence is never guessed).
   const noExpiry = collectAlarmTargets(
     snapshot({ resetsAt: null }, { resetsAt: null, billingAnchorAt: "2026-07-20T12:00:00.000Z" }),
-    settings({ enableClaudeResetAlarm: false, enableClaudeWeeklyResetAlarm: false }),
+    settings(without("claude-session", "claude-weekly")),
     "zh",
     {},
     NOW
@@ -274,14 +259,3 @@ test("clampTimeoutMs keeps delays inside the setTimeout ceiling", () => {
   assert.equal(clampTimeoutMs(Number.NaN), 0);
 });
 
-test("alarmSendsLine keeps the frequent 5-hour reset alarms off LINE", () => {
-  assert.equal(alarmSendsLine("claude-session"), false);
-  assert.equal(alarmSendsLine("codex-session"), false);
-});
-
-test("alarmSendsLine keeps the weekly and billing reminders on LINE", () => {
-  const sources: AlarmSource[] = ["claude-weekly", "codex-weekly", "cursor-billing", "claude-billing"];
-  for (const source of sources) {
-    assert.equal(alarmSendsLine(source), true, source);
-  }
-});

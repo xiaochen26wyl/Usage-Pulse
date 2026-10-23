@@ -11,7 +11,7 @@ import { localeForLanguage, t } from "./i18n";
 export const SERVICE_ACCENT: Record<ServiceType, string> = {
   cursor: "#1F2328",
   claude: "#E8945A",
-  codex: "#60A5FA",
+  codex: "#3F87F7",
 };
 
 // Deliberately darker than --color-danger (#ff7d7d): that one is tuned for the

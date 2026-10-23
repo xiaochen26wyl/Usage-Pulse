@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import type { QuotaSnapshot, QuotaWindow } from "../src/shared/types";
+import type { CombinedSnapshot, QuotaSnapshot, QuotaWindow } from "../src/shared/types";
 import {
   claudeCountdownTargetAt,
   claudeTrayValueText,
@@ -9,13 +9,21 @@ import {
   codexTrayValueText,
   codexWeeklyTrayValueText,
   cursorCountdownTargetAt,
+  cursorSecondaryTrayValueText,
+  cursorTrayColumnValueText,
   cursorTrayValueText,
   findClaudeWeeklyWindow,
   formatCountdown,
   formatCountdownWithDays,
   localizeTrayUnknownValue,
-  snapshotValueText
+  nextTrayWeeklyCache,
+  snapshotValueText,
+  TRAY_WEEKLY_REFRESH_MS,
+  trayColumns,
+  trayWeeklySignature,
+  trayWeeklyValues
 } from "../src/shared/tray-display";
+import { TRAY_WEEKLY_COLOR, TRAY_WEEKLY_LOW_COLOR } from "../src/shared/tray-value-color";
 
 const NOW = Date.parse("2026-08-24T12:00:00.000Z");
 
@@ -177,11 +185,42 @@ test("formatCountdownWithDays switches to days at 24 hours and hands off to h/m 
   assert.equal(formatCountdownWithDays(null, NOW), null);
 });
 
-test("cursorCountdownTargetAt only reports a target once both model windows are spent", () => {
+test("cursorCountdownTargetAt reports a target as soon as either of two model windows is spent", () => {
   const resetsAt = new Date(NOW + 12 * 24 * 60 * 60 * 1000).toISOString();
   assert.equal(cursorCountdownTargetAt(cursorSnapshot(100, 100, resetsAt)), resetsAt);
-  assert.equal(cursorCountdownTargetAt(cursorSnapshot(20, 100, resetsAt)), null);
+  assert.equal(cursorCountdownTargetAt(cursorSnapshot(20, 100, resetsAt)), resetsAt);
+  assert.equal(cursorCountdownTargetAt(cursorSnapshot(100, 20, resetsAt)), resetsAt);
+  assert.equal(cursorCountdownTargetAt(cursorSnapshot(20, 30, resetsAt)), null);
   assert.equal(cursorCountdownTargetAt(cursorSnapshot(null, null, resetsAt)), null);
+});
+
+test("cursorCountdownTargetAt with a single model window keeps the all-spent rule", () => {
+  const resetsAt = new Date(NOW + 12 * 24 * 60 * 60 * 1000).toISOString();
+  assert.equal(cursorCountdownTargetAt(cursorSnapshot(null, 100, resetsAt)), resetsAt);
+  assert.equal(cursorCountdownTargetAt(cursorSnapshot(null, 20, resetsAt)), null);
+});
+
+test("cursor column shows Auto as the main figure and advanced models as the second", () => {
+  // Used% in, remaining% out: 58 used -> 42% Auto, 85 used -> 15% advanced.
+  assert.equal(cursorTrayColumnValueText(cursorSnapshot(58, 85), NOW), "42%");
+  assert.equal(cursorSecondaryTrayValueText(cursorSnapshot(58, 85), NOW), "15%");
+});
+
+test("cursor column counts down per spent window instead of switching to the other one", () => {
+  const resetsAt = new Date(NOW + 12 * 24 * 60 * 60 * 1000).toISOString();
+  assert.equal(cursorTrayColumnValueText(cursorSnapshot(100, 85, resetsAt), NOW), "12d");
+  assert.equal(cursorSecondaryTrayValueText(cursorSnapshot(100, 85, resetsAt), NOW), "15%");
+  assert.equal(cursorSecondaryTrayValueText(cursorSnapshot(40, 100, resetsAt), NOW), "12d");
+  assert.equal(cursorSecondaryTrayValueText(cursorSnapshot(40, 100), NOW), "0%");
+});
+
+test("cursor column has no second figure unless both model windows exist", () => {
+  assert.equal(cursorSecondaryTrayValueText(cursorSnapshot(null, 30), NOW), null);
+  assert.equal(cursorSecondaryTrayValueText(cursorSnapshot(30, null), NOW), null);
+  assert.equal(cursorSecondaryTrayValueText(cursorSnapshot(null, null), NOW), null);
+  // The single window stays the main figure instead of being duplicated.
+  assert.equal(cursorTrayColumnValueText(cursorSnapshot(null, 30), NOW), "70%");
+  assert.equal(cursorTrayColumnValueText(cursorSnapshot(30, null), NOW), "70%");
 });
 
 test("snapshotValueText keeps the plain per-service figure for tooltips", () => {
@@ -215,4 +254,87 @@ test("codex weekly tray value uses the weekly window and day countdown when spen
     percent: 0
   });
   assert.equal(codexWeeklyTrayValueText(snapshot, NOW), "2d");
+});
+
+const combined = (
+  claudeWeekly: number | null,
+  codexWeekly: number | null,
+  cursor: QuotaSnapshot = cursorSnapshot(10, 40)
+): CombinedSnapshot => ({
+  cursor,
+  claude: makeSnapshot("claude", [
+    { key: "session", remaining: 60 },
+    ...(claudeWeekly === null ? [] : [{ key: "weekly_all", remaining: claudeWeekly }])
+  ]),
+  codex: makeSnapshot("codex", [
+    { key: "session", remaining: 90 },
+    ...(codexWeekly === null ? [] : [{ key: "weekly", remaining: codexWeekly }])
+  ]),
+  fetchedAt: new Date(NOW).toISOString()
+});
+
+const weeklySettings = {
+  showWeeklyInTray: true,
+  enableCursorMonitoring: true,
+  enableClaudeMonitoring: true,
+  enableCodexMonitoring: true,
+  language: "zh" as const
+};
+
+test("trayWeeklyValues only includes enabled services that have a second window", () => {
+  assert.deepEqual(trayWeeklyValues(combined(41, 73), weeklySettings, NOW), {
+    cursor: { value: "60%", remaining: 60 },
+    claude: { value: "41%", remaining: 41 },
+    codex: { value: "73%", remaining: 73 }
+  });
+  assert.deepEqual(trayWeeklyValues(combined(null, 73, cursorSnapshot(10, null)), weeklySettings, NOW), {
+    codex: { value: "73%", remaining: 73 }
+  });
+  assert.deepEqual(
+    trayWeeklyValues(combined(41, 73), { ...weeklySettings, enableCodexMonitoring: false, enableCursorMonitoring: false }, NOW),
+    { claude: { value: "41%", remaining: 41 } }
+  );
+  assert.deepEqual(trayWeeklyValues(combined(41, 73), { ...weeklySettings, showWeeklyInTray: false }, NOW), {});
+});
+
+test("trayColumns keeps service order and colours the second figure yellow, red at 5% or less", () => {
+  const columns = trayColumns(["cursor", "claude", "codex"], () => "50%", {
+    cursor: { value: "60%", remaining: 60 },
+    claude: { value: "6%", remaining: 6 },
+    codex: { value: "5%", remaining: 5 }
+  });
+  assert.deepEqual(
+    columns.map((column) => column.label),
+    ["Cursor", "Claude", "Codex"]
+  );
+  assert.deepEqual(columns[0].weekly, { value: "60%", color: TRAY_WEEKLY_COLOR });
+  assert.deepEqual(columns[1].weekly, { value: "6%", color: TRAY_WEEKLY_COLOR });
+  assert.deepEqual(columns[2].weekly, { value: "5%", color: TRAY_WEEKLY_LOW_COLOR });
+  assert.equal(trayColumns(["claude"], () => "50%")[0].weekly, null);
+});
+
+test("trayColumns paints a spent second figure (shown as a countdown) red", () => {
+  const columns = trayColumns(["claude"], () => "50%", { claude: { value: "4d", remaining: 0 } });
+  assert.deepEqual(columns[0].weekly, { value: "4d", color: TRAY_WEEKLY_LOW_COLOR });
+  // 5.4% rounds to 5 and is red; 5.5% rounds to 6 and stays yellow.
+  assert.equal(trayColumns(["claude"], () => "x", { claude: { value: "5%", remaining: 5.4 } })[0].weekly?.color, TRAY_WEEKLY_LOW_COLOR);
+  assert.equal(trayColumns(["claude"], () => "x", { claude: { value: "6%", remaining: 5.5 } })[0].weekly?.color, TRAY_WEEKLY_COLOR);
+});
+
+test("nextTrayWeeklyCache refreshes only after 10 minutes, on setting change, or when a window appears", () => {
+  const signature = trayWeeklySignature(weeklySettings);
+  const first = nextTrayWeeklyCache(null, { claude: { value: "41%", remaining: 41 } }, NOW, signature);
+  assert.deepEqual(first.values, { claude: { value: "41%", remaining: 41 } });
+
+  const held = nextTrayWeeklyCache(first, { claude: { value: "39%", remaining: 39 } }, NOW + TRAY_WEEKLY_REFRESH_MS - 1, signature);
+  assert.equal(held, first);
+
+  const expired = nextTrayWeeklyCache(first, { claude: { value: "39%", remaining: 39 } }, NOW + TRAY_WEEKLY_REFRESH_MS, signature);
+  assert.deepEqual(expired.values, { claude: { value: "39%", remaining: 39 } });
+
+  const toggled = trayWeeklySignature({ ...weeklySettings, showWeeklyInTray: false });
+  assert.deepEqual(nextTrayWeeklyCache(first, {}, NOW + 1000, toggled).values, {});
+
+  const gained = nextTrayWeeklyCache(first, { claude: { value: "39%", remaining: 39 }, codex: { value: "73%", remaining: 73 } }, NOW + 1000, signature);
+  assert.deepEqual(gained.values, { claude: { value: "39%", remaining: 39 }, codex: { value: "73%", remaining: 73 } });
 });

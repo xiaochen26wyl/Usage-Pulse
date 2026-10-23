@@ -8,7 +8,6 @@ import type {
 } from "@shared/types";
 import {
   MAX_TIMEOUT_MS,
-  alarmSendsLine,
   clampTimeoutMs,
   collectAlarmTargets,
   decideAlarmAction,
@@ -18,7 +17,7 @@ import { isTrusted } from "@shared/snapshot-trust";
 import { t } from "@shared/i18n";
 import { SERVICE_LABELS } from "@main/config";
 import { buildPlainAlertFlex } from "@shared/line-templates";
-import { isPopupEnabled } from "@shared/notify-channels";
+import { isAlertLine, isAlertPopup } from "@shared/notify-channels";
 import { showAlarmPopup } from "@main/alarm-window";
 import { sendLineBroadcast } from "@main/line-notifier";
 import { sendDesktopNotification } from "@main/notifiers";
@@ -187,9 +186,7 @@ export class AlarmService {
       sendDesktopNotification({ snapshot, reason });
     }
 
-    // The 5-hour windows reset too often for a LINE message each time; they
-    // reach LINE through the "recovered" notice instead (see alarmSendsLine).
-    if (alarmSendsLine(target.id)) {
+    if (isAlertLine(settings, target.id)) {
       void sendLineBroadcast(
         buildPlainAlertFlex({
           service: target.service,
@@ -208,11 +205,11 @@ export class AlarmService {
           body: reason,
           lang
         }),
-        { service: target.service }
+        { alert: target.id }
       );
     }
 
-    if (isPopupEnabled(settings, target.service)) {
+    if (isAlertPopup(settings, target.id)) {
       const payload: AlarmPopupPayload = {
         id: target.id,
         service: target.service,

@@ -7,6 +7,7 @@ import type {
   ServiceType
 } from "./types";
 import { t } from "./i18n";
+import { isAlertEnabled } from "./notify-channels";
 import { isTrusted } from "./snapshot-trust";
 
 // setTimeout silently fires immediately once the delay exceeds a signed 32-bit
@@ -30,42 +31,6 @@ export const claudeBillingFireAt = (expiresAt: string | null | undefined): strin
 };
 
 export type FireClass = "pending" | "due" | "expired";
-
-type ResetToggleKey =
-  | "enableCursorResetAlarm"
-  | "enableClaudeResetAlarm"
-  | "enableClaudeWeeklyResetAlarm"
-  | "enableClaudeBillingAlarm"
-  | "enableCodexResetAlarm"
-  | "enableCodexWeeklyResetAlarm"
-  | "enableCodexBillingAlarm";
-
-const resetToggleMap: Record<AlarmSource, ResetToggleKey> = {
-  "cursor-billing": "enableCursorResetAlarm",
-  "claude-session": "enableClaudeResetAlarm",
-  "claude-weekly": "enableClaudeWeeklyResetAlarm",
-  "claude-billing": "enableClaudeBillingAlarm",
-  "codex-session": "enableCodexResetAlarm",
-  "codex-weekly": "enableCodexWeeklyResetAlarm",
-  "codex-billing": "enableCodexBillingAlarm"
-};
-
-// Which reset alarms also go out as a LINE message. The 5-hour windows reset
-// several times a day and ring whether or not the window was ever low, so on
-// LINE they are only ever heard through the one-shot "recovered" notice that
-// follows a low-quota spell; the popup and desktop notification still ring.
-// A Record keyed by every source makes a newly added alarm choose explicitly.
-const alarmLineMap: Record<AlarmSource, boolean> = {
-  "cursor-billing": true,
-  "claude-session": false,
-  "claude-weekly": true,
-  "claude-billing": true,
-  "codex-session": false,
-  "codex-weekly": true,
-  "codex-billing": true
-};
-
-export const alarmSendsLine = (id: AlarmSource): boolean => alarmLineMap[id];
 
 export const clampTimeoutMs = (ms: number): number => {
   if (!Number.isFinite(ms)) {
@@ -178,7 +143,7 @@ export const collectAlarmTargets = (
 
   const targets: AlarmTarget[] = [];
   for (const spec of specs) {
-    if (!settings[resetToggleMap[spec.id]]) {
+    if (!isAlertEnabled(settings, spec.id)) {
       continue;
     }
     const trusted = isTrusted(snapshot[spec.service]);

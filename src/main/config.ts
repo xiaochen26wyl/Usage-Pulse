@@ -1,3 +1,4 @@
+import { defaultAlertChannels } from "@shared/notify-channels";
 import type { AppSettings, ServiceType } from "@shared/types";
 
 export const SERVICE_LABELS: Record<ServiceType, string> = {
@@ -11,36 +12,17 @@ export const DEFAULT_SETTINGS: AppSettings = {
   enableClaudeMonitoring: true,
   enableCodexMonitoring: true,
   cursorAdvancedModelsLowThresholdPercent: 20,
-  enableCursorAdvancedModelsLowAlert: true,
   cursorModelsLowThresholdPercent: 20,
-  enableCursorModelsLowAlert: true,
   claudeSessionLowThresholdPercent: 20,
-  enableClaudeSessionLowAlert: true,
   claudeWeeklyLowThresholdPercent: 20,
-  enableClaudeWeeklyLowAlert: true,
   codexSessionLowThresholdPercent: 20,
-  enableCodexSessionLowAlert: true,
   codexWeeklyLowThresholdPercent: 20,
-  enableCodexWeeklyLowAlert: true,
   launchWithIde: false,
   notifyCooldownMinutes: 15,
-  enableCursorResetAlarm: true,
-  enableClaudeResetAlarm: true,
-  enableClaudeWeeklyResetAlarm: true,
-  enableClaudeBillingAlarm: true,
-  enableCodexResetAlarm: true,
-  enableCodexWeeklyResetAlarm: true,
-  enableCodexBillingAlarm: true,
   language: "zh",
-  trayValueColorMode: "system",
-  enableCursorAlarmPopup: true,
-  enableClaudeAlarmPopup: true,
-  enableCodexAlarmPopup: true,
-  enableCursorLineNotification: true,
-  enableClaudeLineNotification: true,
-  enableCodexLineNotification: true,
+  showWeeklyInTray: true,
+  alertChannels: defaultAlertChannels(),
   lineChannelAccessToken: "",
   claudeManualToken: "",
-  codexUseCliActivityPolling: false,
   autoCheckForUpdates: true
 };

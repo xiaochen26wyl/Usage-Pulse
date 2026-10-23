@@ -115,7 +115,7 @@ const CODEX_DB_PLANS: readonly CodexDbPlan[] = [
     prefix: "state_",
     version: 5,
     clean: [
-      { table: "thread_artifacts", by: "thread", columns: ["thread_id"] },
+      { table: "thread_attachments", by: "thread", columns: ["thread_id"] },
       { table: "thread_dynamic_tools", by: "thread", columns: ["thread_id"] },
       { table: "thread_spawn_edges", by: "thread", columns: ["parent_thread_id", "child_thread_id"] },
       { table: "threads", by: "thread", columns: ["id"] }

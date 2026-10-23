@@ -1,4 +1,12 @@
-import type { Language, QuotaSnapshot } from "./types";
+import type { AppSettings, CombinedSnapshot, Language, QuotaSnapshot, ServiceType } from "./types";
+import {
+  TRAY_CLAUDE_LABEL_COLOR,
+  TRAY_CODEX_LABEL_COLOR,
+  TRAY_CURSOR_LABEL_COLOR,
+  TRAY_WEEKLY_COLOR,
+  TRAY_WEEKLY_LOW_COLOR,
+  TRAY_WEEKLY_LOW_THRESHOLD_PERCENT
+} from "./tray-value-color";
 
 // Countdown units stay as the English single letters "d" / "h" / "m" in every
 // UI language: the menu bar only has room for a glyph or two next to the
@@ -112,20 +120,51 @@ export const cursorTrayValueText = (snapshot: QuotaSnapshot, nowMs: number): str
 };
 
 // Mirrors claudeCountdownTargetAt for Cursor: a reset time to tick against
-// once both cursor_models and other_models are exhausted, or null while a
-// plain percentage is still on screen.
+// while a countdown is on screen, or null while only plain percentages are.
+// With both windows present the menu bar shows both figures, so either one
+// being spent puts a countdown on screen; with a single window it is the old
+// "everything spent" rule.
 export const cursorCountdownTargetAt = (snapshot: QuotaSnapshot): string | null => {
   const modelsRemaining = cursorRemainingPercent(snapshot, "cursor_models");
   const advancedRemaining = cursorRemainingPercent(snapshot, "other_models");
+  const isSpent = (remaining: number | null): boolean => remaining === null || Math.round(remaining) <= 0;
   const hasData = modelsRemaining !== null || advancedRemaining !== null;
-  const bothSpent =
-    (modelsRemaining === null || Math.round(modelsRemaining) <= 0) &&
-    (advancedRemaining === null || Math.round(advancedRemaining) <= 0);
-  if (!hasData || !bothSpent) {
+  const showsCountdown =
+    modelsRemaining !== null && advancedRemaining !== null
+      ? isSpent(modelsRemaining) || isSpent(advancedRemaining)
+      : isSpent(modelsRemaining) && isSpent(advancedRemaining);
+  if (!hasData || !showsCountdown) {
     return null;
   }
   return snapshot.resetsAt ?? null;
 };
+
+const cursorWindowText = (remaining: number, snapshot: QuotaSnapshot, nowMs: number): string =>
+  Math.round(remaining) <= 0 ? (formatCountdownWithDays(snapshot.resetsAt, nowMs) ?? "0%") : `${Math.round(remaining)}%`;
+
+// Menu-bar figures for Cursor when both model windows exist: Cursor's own
+// models (Auto) as the main figure, advanced models as the second one. A spent
+// window shows the billing-cycle countdown instead of a dead "0%". With only
+// one window the main figure keeps cursorTrayValueText's fallback chain and
+// there is no second figure.
+export const cursorTrayColumnValueText = (snapshot: QuotaSnapshot, nowMs: number): string => {
+  const modelsRemaining = cursorRemainingPercent(snapshot, "cursor_models");
+  if (modelsRemaining !== null && cursorRemainingPercent(snapshot, "other_models") !== null) {
+    return cursorWindowText(modelsRemaining, snapshot, nowMs);
+  }
+  return cursorTrayValueText(snapshot, nowMs);
+};
+
+export const cursorSecondaryTrayValueText = (snapshot: QuotaSnapshot, nowMs: number): string | null => {
+  const advancedRemaining = cursorRemainingPercent(snapshot, "other_models");
+  if (advancedRemaining === null || cursorRemainingPercent(snapshot, "cursor_models") === null) {
+    return null;
+  }
+  return cursorWindowText(advancedRemaining, snapshot, nowMs);
+};
+
+export const cursorSecondaryRemainingPercent = (snapshot: QuotaSnapshot): number | null =>
+  cursorSecondaryTrayValueText(snapshot, 0) === null ? null : cursorRemainingPercent(snapshot, "other_models");
 
 // Menu-bar priority for Claude Code: the 5-hour session window first. Claude
 // Code's top-level `remaining` is the max of the session and weekly windows,
@@ -186,4 +225,134 @@ export const codexWeeklyTrayValueText = (snapshot: QuotaSnapshot, nowMs: number)
     return `${Math.round(weekly.remaining)}%`;
   }
   return snapshotValueText(snapshot);
+};
+
+// ---- Menu-bar columns ----------------------------------------------------
+// Each enabled service is one column (name over its live value); Claude Code
+// and Codex may carry a weekly figure drawn right beside their column, with no
+// name above it, in the service's own colour so it reads as theirs.
+
+export const TRAY_SERVICE_LABELS: Record<ServiceType, string> = {
+  cursor: "Cursor",
+  claude: "Claude",
+  codex: "Codex"
+};
+
+export const TRAY_SERVICE_COLORS: Record<ServiceType, string> = {
+  cursor: TRAY_CURSOR_LABEL_COLOR,
+  claude: TRAY_CLAUDE_LABEL_COLOR,
+  codex: TRAY_CODEX_LABEL_COLOR
+};
+
+// Second figure beside a column: weekly remaining for Claude Code / Codex,
+// advanced models for Cursor. `remaining` drives its colour.
+export interface TrayWeeklyValue {
+  value: string;
+  remaining: number;
+}
+export type TrayWeeklyValues = Partial<Record<ServiceType, TrayWeeklyValue>>;
+
+export interface TrayColumn {
+  label: string;
+  labelColor: string;
+  value: string;
+  weekly: { value: string; color: string } | null;
+}
+
+export const trayWeeklyColor = (remaining: number): string =>
+  Math.round(remaining) <= TRAY_WEEKLY_LOW_THRESHOLD_PERCENT ? TRAY_WEEKLY_LOW_COLOR : TRAY_WEEKLY_COLOR;
+
+export const trayColumns = (
+  services: ServiceType[],
+  valueFor: (service: ServiceType) => string,
+  weekly: TrayWeeklyValues = {}
+): TrayColumn[] =>
+  services.map((service) => {
+    const second = weekly[service];
+    return {
+      label: TRAY_SERVICE_LABELS[service],
+      labelColor: TRAY_SERVICE_COLORS[service],
+      value: valueFor(service),
+      weekly: second ? { value: second.value, color: trayWeeklyColor(second.remaining) } : null
+    };
+  });
+
+// Gated on the second window actually existing: the *WeeklyTrayValueText
+// helpers fall back to the top-level figure when it's missing, which would put
+// the session number in the weekly slot.
+export const trayWeeklyValues = (
+  snapshot: CombinedSnapshot,
+  settings: Pick<
+    AppSettings,
+    "showWeeklyInTray" | "enableCursorMonitoring" | "enableClaudeMonitoring" | "enableCodexMonitoring"
+  >,
+  nowMs: number
+): TrayWeeklyValues => {
+  const values: TrayWeeklyValues = {};
+  if (!settings.showWeeklyInTray) {
+    return values;
+  }
+  const cursorRemaining = cursorSecondaryRemainingPercent(snapshot.cursor);
+  const cursorText = cursorSecondaryTrayValueText(snapshot.cursor, nowMs);
+  if (settings.enableCursorMonitoring && cursorRemaining !== null && cursorText !== null) {
+    values.cursor = { value: cursorText, remaining: cursorRemaining };
+  }
+  const claudeWeekly = findClaudeWeeklyWindow(snapshot.claude);
+  if (settings.enableClaudeMonitoring && claudeWeekly && claudeWeekly.remaining !== null) {
+    values.claude = { value: claudeWeeklyTrayValueText(snapshot.claude, nowMs), remaining: claudeWeekly.remaining };
+  }
+  const codexWeekly = findCodexWeeklyWindow(snapshot.codex);
+  if (settings.enableCodexMonitoring && codexWeekly && codexWeekly.remaining !== null) {
+    values.codex = { value: codexWeeklyTrayValueText(snapshot.codex, nowMs), remaining: codexWeekly.remaining };
+  }
+  return values;
+};
+
+// Weekly figures move slowly, so the menu bar only refreshes them every 10
+// minutes instead of on every poll / countdown redraw. Display-only: this never
+// triggers a fetch.
+export const TRAY_WEEKLY_REFRESH_MS = 10 * 60 * 1000;
+
+export interface TrayWeeklyCache {
+  values: TrayWeeklyValues;
+  computedAtMs: number;
+  signature: string;
+}
+
+export const trayWeeklySignature = (
+  settings: Pick<
+    AppSettings,
+    "showWeeklyInTray" | "enableCursorMonitoring" | "enableClaudeMonitoring" | "enableCodexMonitoring" | "language"
+  >
+): string =>
+  [
+    settings.showWeeklyInTray,
+    settings.enableCursorMonitoring,
+    settings.enableClaudeMonitoring,
+    settings.enableCodexMonitoring,
+    settings.language
+  ].join("|");
+
+const sameKeys = (a: TrayWeeklyValues, b: TrayWeeklyValues): boolean =>
+  Object.keys(a).sort().join(",") === Object.keys(b).sort().join(",");
+
+// Refresh when there's no cache, 10 minutes have passed, a relevant setting
+// changed, or a service gained/lost its weekly window (e.g. its first fetch
+// landed) — so a figure never sits missing for 10 minutes after startup.
+export const nextTrayWeeklyCache = (
+  cache: TrayWeeklyCache | null,
+  fresh: TrayWeeklyValues,
+  nowMs: number,
+  signature: string
+): TrayWeeklyCache => {
+  if (
+    cache &&
+    cache.signature === signature &&
+    nowMs - cache.computedAtMs < TRAY_WEEKLY_REFRESH_MS &&
+    nowMs >= cache.computedAtMs &&
+    sameKeys(cache.values, fresh)
+  ) {
+    return cache;
+  }
+  return { values: fresh, computedAtMs: nowMs, signature };
 };

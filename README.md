@@ -143,7 +143,7 @@ If anything appears incorrect — such as a reading that seems wrong, a notifica
 | `--color-line-strong` | `#05B34C` | LINE 深綠 |
 | `--color-claude` | `#E8945A` | Claude 橘 |
 | `--color-cursor` | `#C084FC` | Cursor 紫 |
-| `--color-codex` | `#60A5FA` | Codex 藍 |
+| `--color-codex` | `#3F87F7` | Codex 藍 |
 
 #### 文字與邊框
 
@@ -192,6 +192,20 @@ If anything appears incorrect — such as a reading that seems wrong, a notifica
 
 - `--color-warning` 的色碼是淺藍 `#6CB6FF`，與名稱的「警告」直覺不同；本節依來源檔照列，沒有更動。
 - `--shadow-card`（L18）不是固定色碼：`0 4px 14px rgba(0, 0, 0, 0.28)`。
+
+#### 選單列色（macOS 選單列繪圖）
+
+選單列的圖片由主行程繪製，色碼定義在 [`src/shared/tray-value-color.ts`](src/shared/tray-value-color.ts)，不在 `styles.css`，因此另列於此；同樣依該檔照列。
+
+| Token | 色碼 | 說明 |
+|---|---|---|
+| `TRAY_BACKGROUND_COLOR` | `#181D25` | 選單列圖片背景（同面板灰，四角小圓角） |
+| `TRAY_VALUE_COLOR` | `#FFFFFF` | 主數值 |
+| `TRAY_CURSOR_LABEL_COLOR` | `#C084FC` | Cursor 名稱（對應 `--color-cursor`） |
+| `TRAY_CLAUDE_LABEL_COLOR` | `#E8945A` | Claude 名稱（對應 `--color-claude`） |
+| `TRAY_CODEX_LABEL_COLOR` | `#3F87F7` | Codex 名稱（對應 `--color-codex`） |
+| `TRAY_WEEKLY_COLOR` | `#FACC15` | 第二個數值（每週剩餘／Cursor 進階模型），各服務統一 |
+| `TRAY_WEEKLY_LOW_COLOR` | `#FF5A5A` | 第二個數值剩 5% 以下（含耗盡倒數） |
 
 ## License and important notice
 

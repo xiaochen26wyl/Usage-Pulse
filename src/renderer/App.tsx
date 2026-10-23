@@ -6,6 +6,7 @@ import {
 } from "react";
 import {
   type AlarmStatusReport,
+  type AlertKey,
   type AppSettings,
   type AuthStatus,
   type CombinedSnapshot,
@@ -19,7 +20,6 @@ import {
   type QuotaSnapshot,
   type QuotaWindow,
   type ServiceType,
-  type TrayValueColorMode,
   type UpdateInfo,
 } from "@shared/types";
 import { CLAUDE_TOKEN_MASK, LINE_TOKEN_MASK } from "@shared/types";
@@ -32,8 +32,11 @@ import { classifyHistoryFailure, formatBytes, hasHistoryApi } from "@shared/hist
 import { isCodexBackendSlotKey } from "@shared/codex-usage";
 import { localeForLanguage, t, type TranslationKey } from "@shared/i18n";
 import {
-  LINE_SETTING_KEY,
-  POPUP_SETTING_KEY,
+  ALERT_KEYS,
+  ALERT_SERVICE,
+  defaultAlertChannels,
+  isAlertLine,
+  isAlertPopup,
   isLineInUse,
 } from "@shared/notify-channels";
 import {
@@ -74,37 +77,18 @@ const defaultSettings: AppSettings = {
   enableClaudeMonitoring: true,
   enableCodexMonitoring: true,
   cursorAdvancedModelsLowThresholdPercent: 20,
-  enableCursorAdvancedModelsLowAlert: true,
   cursorModelsLowThresholdPercent: 20,
-  enableCursorModelsLowAlert: true,
   claudeSessionLowThresholdPercent: 20,
-  enableClaudeSessionLowAlert: true,
   claudeWeeklyLowThresholdPercent: 20,
-  enableClaudeWeeklyLowAlert: true,
   codexSessionLowThresholdPercent: 20,
-  enableCodexSessionLowAlert: true,
   codexWeeklyLowThresholdPercent: 20,
-  enableCodexWeeklyLowAlert: true,
   launchWithIde: false,
   notifyCooldownMinutes: 15,
-  enableCursorResetAlarm: true,
-  enableClaudeResetAlarm: true,
-  enableClaudeWeeklyResetAlarm: true,
-  enableClaudeBillingAlarm: true,
-  enableCodexResetAlarm: true,
-  enableCodexWeeklyResetAlarm: true,
-  enableCodexBillingAlarm: true,
   language: "zh",
-  trayValueColorMode: "system",
-  enableCursorAlarmPopup: true,
-  enableClaudeAlarmPopup: true,
-  enableCodexAlarmPopup: true,
-  enableCursorLineNotification: true,
-  enableClaudeLineNotification: true,
-  enableCodexLineNotification: true,
+  showWeeklyInTray: true,
+  alertChannels: defaultAlertChannels(),
   lineChannelAccessToken: "",
   claudeManualToken: "",
-  codexUseCliActivityPolling: false,
   autoCheckForUpdates: true,
 };
 
@@ -225,14 +209,6 @@ type LowQuotaThresholdKey =
   | "claudeWeeklyLowThresholdPercent"
   | "codexSessionLowThresholdPercent"
   | "codexWeeklyLowThresholdPercent";
-
-type LowQuotaToggleKey =
-  | "enableCursorAdvancedModelsLowAlert"
-  | "enableCursorModelsLowAlert"
-  | "enableClaudeSessionLowAlert"
-  | "enableClaudeWeeklyLowAlert"
-  | "enableCodexSessionLowAlert"
-  | "enableCodexWeeklyLowAlert";
 
 const roundToStep = (
   value: unknown,
@@ -1300,12 +1276,11 @@ export const App = () => {
   };
 
   // Takes effect immediately rather than waiting on the "save settings"
-  // button — the menu-bar icon should reflect the choice as soon as it's
-  // made, same immediacy as changeLanguage above.
-  const changeTrayValueColorMode = async (mode: TrayValueColorMode) => {
-    setSettings((prev) => ({ ...prev, trayValueColorMode: mode }));
+  // button — the menu bar redraws on save, same immediacy as changeLanguage.
+  const changeShowWeeklyInTray = async (enabled: boolean) => {
+    setSettings((prev) => ({ ...prev, showWeeklyInTray: enabled }));
     try {
-      const next = await window.usagePulse.saveSettings({ trayValueColorMode: mode });
+      const next = await window.usagePulse.saveSettings({ showWeeklyInTray: enabled });
       setSettings(next);
     } catch (error) {
       console.error(error);
@@ -1331,13 +1306,75 @@ export const App = () => {
     }
   };
 
-  // One threshold slider + notify toggle per independent low-quota alert —
-  // Cursor has two (advanced models, cursor models), Claude Code and Codex
-  // have two each (5-hour session, weekly).
+  // Two plain checkboxes on one wrapping row. Ticking neither turns that
+  // reminder off, so there is no separate on/off switch.
+  const renderAlertChannels = (alertKey: AlertKey) => {
+    const channel = settings.alertChannels[alertKey];
+    const setChannel = (patch: Partial<typeof channel>) =>
+      setSettings((prev) => ({
+        ...prev,
+        alertChannels: {
+          ...prev.alertChannels,
+          [alertKey]: { ...prev.alertChannels[alertKey], ...patch },
+        },
+      }));
+    return (
+      <div className="check-row" style={{ marginBottom: "4px" }}>
+        <label className="check-item">
+          <input
+            type="checkbox"
+            checked={channel.popup}
+            onChange={(event) => setChannel({ popup: event.target.checked })}
+          />
+          <span>{t(lang, "alarm.channel.popup")}</span>
+        </label>
+        <label className="check-item">
+          <input
+            type="checkbox"
+            className="check-line"
+            checked={channel.line}
+            onChange={(event) => setChannel({ line: event.target.checked })}
+          />
+          <span>{t(lang, "alarm.channel.line")}</span>
+        </label>
+      </div>
+    );
+  };
+
+  // What the ticked boxes imply for one service, shown once under its card
+  // rather than under every reminder.
+  const renderChannelHints = (service: ServiceType) => {
+    const keys = ALERT_KEYS.filter((key) => ALERT_SERVICE[key] === service);
+    const anyPopup = keys.some((key) => isAlertPopup(settings, key));
+    const anyLine = keys.some((key) => isAlertLine(settings, key));
+    if (!anyPopup && !(anyLine && !lineToken.trim())) {
+      return null;
+    }
+    return (
+      <div className="notify-channels">
+        {anyPopup ? (
+          <p className="meta-text" style={{ margin: 0 }}>
+            {t(lang, "alarm.autoDismiss", {
+              seconds: ALARM_POPUP_AUTO_DISMISS_SECONDS,
+            })}
+          </p>
+        ) : null}
+        {anyLine && !lineToken.trim() ? (
+          <p className="meta-text" style={{ margin: anyPopup ? "6px 0 0" : 0 }}>
+            {t(lang, "alarm.lineNeedToken")}
+          </p>
+        ) : null}
+      </div>
+    );
+  };
+
+  // One threshold slider + channels per independent low-quota alert — Cursor
+  // has two (advanced models, cursor models), Claude Code and Codex have two
+  // each (5-hour session, weekly).
   const renderLowQuotaRow = (
     labelKey: TranslationKey,
     thresholdKey: LowQuotaThresholdKey,
-    toggleKey: LowQuotaToggleKey,
+    alertKey: AlertKey,
   ) => (
     <div className="alarm-suboption" key={thresholdKey}>
       <p className="subsection-title">{t(lang, labelKey)}</p>
@@ -1361,75 +1398,34 @@ export const App = () => {
           }
         />
       </label>
-      <label className="field switch-row" style={{ marginBottom: 0 }}>
-        <span>{t(lang, "settings.lowQuota.toggleLabel")}</span>
-        <input
-          type="checkbox"
-          className="toggle"
-          checked={settings[toggleKey]}
-          onChange={(event) =>
-            setSettings((prev) => ({
-              ...prev,
-              [toggleKey]: event.target.checked,
-            }))
-          }
-        />
-      </label>
+      {renderAlertChannels(alertKey)}
     </div>
   );
 
-  // Per-service "how to remind me": two checkboxes on one wrapping row, so the
-  // choice sits inside the service's own block without costing a row each.
-  const renderNotifyChannels = (service: ServiceType) => {
-    const popupKey = POPUP_SETTING_KEY[service];
-    const lineKey = LINE_SETTING_KEY[service];
-    return (
-      <div className="notify-channels">
-        <p className="notify-channels-title">{t(lang, "alarm.how.title")}</p>
-        <div className="check-row">
-          <label className="check-item">
-            <input
-              type="checkbox"
-              checked={settings[popupKey]}
-              onChange={(event) =>
-                setSettings((prev) => ({
-                  ...prev,
-                  [popupKey]: event.target.checked,
-                }))
-              }
-            />
-            <span>{t(lang, "alarm.popupToggle")}</span>
-          </label>
-          <label className="check-item">
-            <input
-              type="checkbox"
-              className="check-line"
-              checked={settings[lineKey]}
-              onChange={(event) =>
-                setSettings((prev) => ({
-                  ...prev,
-                  [lineKey]: event.target.checked,
-                }))
-              }
-            />
-            <span>{t(lang, "alarm.lineToggle")}</span>
-          </label>
-        </div>
-        {settings[popupKey] ? (
-          <p className="meta-text" style={{ margin: "6px 0 0" }}>
-            {t(lang, "alarm.autoDismiss", {
-              seconds: ALARM_POPUP_AUTO_DISMISS_SECONDS,
+  // A scheduled reminder (reset or period end): its label, the channels, and
+  // when it will next ring.
+  const renderResetAlarmRow = (
+    alertKey: AlertKey,
+    labelKey: TranslationKey,
+    fireAt: string | null | undefined,
+  ) => (
+    <div className="alarm-suboption" key={alertKey}>
+      <p className="subsection-title">{t(lang, labelKey)}</p>
+      {renderAlertChannels(alertKey)}
+      {(isAlertPopup(settings, alertKey) || isAlertLine(settings, alertKey)) &&
+        fireAt && (
+          <p
+            className="meta-text"
+            style={{ margin: "2px 0 0", color: "#8b949e", fontSize: "12px" }}
+          >
+            {t(lang, "settings.resetAlarm.nextFire", {
+              countdown: formatCountdown(fireAt, now, lang),
+              resetTime: formatResetText(fireAt, lang),
             })}
           </p>
-        ) : null}
-        {settings[lineKey] && !lineToken.trim() ? (
-          <p className="meta-text" style={{ margin: "6px 0 0" }}>
-            {t(lang, "alarm.lineNeedToken")}
-          </p>
-        ) : null}
-      </div>
-    );
-  };
+        )}
+    </div>
+  );
 
   return (
     <main className="app">
@@ -1834,25 +1830,20 @@ export const App = () => {
           </div>
         )}
 
-        <label className="field">
-          <span>{t(lang, "settings.trayValueColor")}</span>
-          <select
-            value={settings.trayValueColorMode}
-            onChange={(event) =>
-              void changeTrayValueColorMode(event.target.value as TrayValueColorMode)
-            }
-          >
-            <option value="system">
-              {t(lang, "settings.trayValueColor.system")}
-            </option>
-            <option value="white">
-              {t(lang, "settings.trayValueColor.white")}
-            </option>
-            <option value="black">
-              {t(lang, "settings.trayValueColor.black")}
-            </option>
-          </select>
-        </label>
+        <div className="field">
+          <label className="field switch-row" style={{ marginBottom: 0 }}>
+            <span>{t(lang, "settings.showWeeklyInTray")}</span>
+            <input
+              type="checkbox"
+              className="toggle"
+              checked={settings.showWeeklyInTray}
+              onChange={(event) => void changeShowWeeklyInTray(event.target.checked)}
+            />
+          </label>
+          <p className="meta-text" style={{ margin: 0 }}>
+            {t(lang, "settings.showWeeklyInTray.hint")}
+          </p>
+        </div>
 
         {settings.enableCursorMonitoring && (
         <div className="quota-card service-block service-block-cursor">
@@ -1863,41 +1854,20 @@ export const App = () => {
           {renderLowQuotaRow(
             "alertLabel.cursorAdvancedModels",
             "cursorAdvancedModelsLowThresholdPercent",
-            "enableCursorAdvancedModelsLowAlert",
+            "cursor-advanced-models-low",
           )}
           {renderLowQuotaRow(
             "alertLabel.cursorModels",
             "cursorModelsLowThresholdPercent",
-            "enableCursorModelsLowAlert",
+            "cursor-models-low",
+          )}
+          {renderResetAlarmRow(
+            "cursor-billing",
+            "alarm.when.cursor",
+            snapshot?.cursor.resetsAt,
           )}
 
-          <label className="field switch-row" style={{ marginTop: "10px" }}>
-            <span>{t(lang, "alarm.when.cursor")}</span>
-            <input
-              type="checkbox"
-              className="toggle"
-              checked={settings.enableCursorResetAlarm}
-              onChange={(event) =>
-                setSettings((prev) => ({
-                  ...prev,
-                  enableCursorResetAlarm: event.target.checked,
-                }))
-              }
-            />
-          </label>
-          {settings.enableCursorResetAlarm && snapshot?.cursor.resetsAt && (
-            <p
-              className="meta-text"
-              style={{ margin: "2px 0 0", color: "#8b949e", fontSize: "12px" }}
-            >
-              {t(lang, "settings.resetAlarm.nextFire", {
-                countdown: formatCountdown(snapshot.cursor.resetsAt, now, lang),
-                resetTime: formatResetText(snapshot.cursor.resetsAt, lang),
-              })}
-            </p>
-          )}
-
-          {renderNotifyChannels("cursor")}
+          {renderChannelHints("cursor")}
         </div>
         )}
 
@@ -1910,109 +1880,30 @@ export const App = () => {
           {renderLowQuotaRow(
             "alertLabel.claudeSession",
             "claudeSessionLowThresholdPercent",
-            "enableClaudeSessionLowAlert",
+            "claude-session-low",
+          )}
+          {renderResetAlarmRow(
+            "claude-session",
+            "alarm.when.claudeSession",
+            snapshot?.claude.resetsAt,
           )}
           {renderLowQuotaRow(
             "alertLabel.claudeWeekly",
             "claudeWeeklyLowThresholdPercent",
-            "enableClaudeWeeklyLowAlert",
+            "claude-weekly-low",
+          )}
+          {renderResetAlarmRow(
+            "claude-weekly",
+            "alarm.when.claudeWeekly",
+            snapshot?.claude.weeklyResetAt,
+          )}
+          {renderResetAlarmRow(
+            "claude-billing",
+            "alarm.when.claudeBilling",
+            claudeBillingFireAtIso,
           )}
 
-          <label className="field switch-row" style={{ marginTop: "10px" }}>
-            <span>{t(lang, "alarm.when.claudeSession")}</span>
-            <input
-              type="checkbox"
-              className="toggle"
-              checked={settings.enableClaudeResetAlarm}
-              onChange={(event) =>
-                setSettings((prev) => ({
-                  ...prev,
-                  enableClaudeResetAlarm: event.target.checked,
-                }))
-              }
-            />
-          </label>
-          {settings.enableClaudeResetAlarm && snapshot?.claude.resetsAt && (
-            <p
-              className="meta-text"
-              style={{ margin: "2px 0 0", color: "#8b949e", fontSize: "12px" }}
-            >
-              {t(lang, "settings.resetAlarm.nextFire", {
-                countdown: formatCountdown(snapshot.claude.resetsAt, now, lang),
-                resetTime: formatResetText(snapshot.claude.resetsAt, lang),
-              })}
-            </p>
-          )}
-
-          <label className="field switch-row" style={{ marginTop: "10px" }}>
-            <span>{t(lang, "alarm.when.claudeWeekly")}</span>
-            <input
-              type="checkbox"
-              className="toggle"
-              checked={settings.enableClaudeWeeklyResetAlarm}
-              onChange={(event) =>
-                setSettings((prev) => ({
-                  ...prev,
-                  enableClaudeWeeklyResetAlarm: event.target.checked,
-                }))
-              }
-            />
-          </label>
-          {settings.enableClaudeWeeklyResetAlarm &&
-            snapshot?.claude.weeklyResetAt && (
-              <p
-                className="meta-text"
-                style={{
-                  margin: "2px 0 0",
-                  color: "#8b949e",
-                  fontSize: "12px",
-                }}
-              >
-                {t(lang, "settings.resetAlarm.nextFire", {
-                  countdown: formatCountdown(
-                    snapshot.claude.weeklyResetAt,
-                    now,
-                    lang,
-                  ),
-                  resetTime: formatResetText(
-                    snapshot.claude.weeklyResetAt,
-                    lang,
-                  ),
-                })}
-              </p>
-            )}
-
-          <label className="field switch-row" style={{ marginTop: "10px" }}>
-            <span>{t(lang, "alarm.when.claudeBilling")}</span>
-            <input
-              type="checkbox"
-              className="toggle"
-              checked={settings.enableClaudeBillingAlarm}
-              onChange={(event) =>
-                setSettings((prev) => ({
-                  ...prev,
-                  enableClaudeBillingAlarm: event.target.checked,
-                }))
-              }
-            />
-          </label>
-          {settings.enableClaudeBillingAlarm && claudeBillingFireAtIso && (
-            <p
-              className="meta-text"
-              style={{
-                margin: "2px 0 0",
-                color: "#8b949e",
-                fontSize: "12px",
-              }}
-            >
-              {t(lang, "settings.resetAlarm.nextFire", {
-                countdown: formatCountdown(claudeBillingFireAtIso, now, lang),
-                resetTime: formatResetText(claudeBillingFireAtIso, lang),
-              })}
-            </p>
-          )}
-
-          {renderNotifyChannels("claude")}
+          {renderChannelHints("claude")}
         </div>
         )}
 
@@ -2025,127 +1916,31 @@ export const App = () => {
           {renderLowQuotaRow(
             "alertLabel.codexSession",
             "codexSessionLowThresholdPercent",
-            "enableCodexSessionLowAlert",
+            "codex-session-low",
+          )}
+          {renderResetAlarmRow(
+            "codex-session",
+            "alarm.when.codexSession",
+            snapshot?.codex.resetsAt,
           )}
           {renderLowQuotaRow(
             "alertLabel.codexWeekly",
             "codexWeeklyLowThresholdPercent",
-            "enableCodexWeeklyLowAlert",
+            "codex-weekly-low",
           )}
-
-          <label className="field switch-row" style={{ marginTop: "10px" }}>
-            <span>{t(lang, "settings.codexActivityPolling")}</span>
-            <input
-              type="checkbox"
-              className="toggle"
-              checked={settings.codexUseCliActivityPolling}
-              onChange={(event) =>
-                setSettings((prev) => ({
-                  ...prev,
-                  codexUseCliActivityPolling: event.target.checked,
-                }))
-              }
-            />
-          </label>
-
-          <label className="field switch-row" style={{ marginTop: "10px" }}>
-            <span>{t(lang, "alarm.when.codexSession")}</span>
-            <input
-              type="checkbox"
-              className="toggle"
-              checked={settings.enableCodexResetAlarm}
-              onChange={(event) =>
-                setSettings((prev) => ({
-                  ...prev,
-                  enableCodexResetAlarm: event.target.checked,
-                }))
-              }
-            />
-          </label>
-          {settings.enableCodexResetAlarm && snapshot?.codex.resetsAt && (
-            <p
-              className="meta-text"
-              style={{ margin: "2px 0 0", color: "#8b949e", fontSize: "12px" }}
-            >
-              {t(lang, "settings.resetAlarm.nextFire", {
-                countdown: formatCountdown(snapshot.codex.resetsAt, now, lang),
-                resetTime: formatResetText(snapshot.codex.resetsAt, lang),
-              })}
-            </p>
+          {renderResetAlarmRow(
+            "codex-weekly",
+            "alarm.when.codexWeekly",
+            snapshot?.codex.weeklyResetAt,
           )}
+          {snapshot?.codex.billingResetAt &&
+            renderResetAlarmRow(
+              "codex-billing",
+              "alarm.when.codexBilling",
+              snapshot.codex.billingResetAt,
+            )}
 
-          <label className="field switch-row" style={{ marginTop: "10px" }}>
-            <span>{t(lang, "alarm.when.codexWeekly")}</span>
-            <input
-              type="checkbox"
-              className="toggle"
-              checked={settings.enableCodexWeeklyResetAlarm}
-              onChange={(event) =>
-                setSettings((prev) => ({
-                  ...prev,
-                  enableCodexWeeklyResetAlarm: event.target.checked,
-                }))
-              }
-            />
-          </label>
-          {settings.enableCodexWeeklyResetAlarm && snapshot?.codex.weeklyResetAt && (
-            <p
-              className="meta-text"
-              style={{
-                margin: "2px 0 0",
-                color: "#8b949e",
-                fontSize: "12px",
-              }}
-            >
-              {t(lang, "settings.resetAlarm.nextFire", {
-                countdown: formatCountdown(
-                  snapshot.codex.weeklyResetAt,
-                  now,
-                  lang,
-                ),
-                resetTime: formatResetText(
-                  snapshot.codex.weeklyResetAt,
-                  lang,
-                ),
-              })}
-            </p>
-          )}
-
-          {snapshot?.codex.billingResetAt && (
-            <>
-              <label className="field switch-row" style={{ marginTop: "10px" }}>
-                <span>{t(lang, "alarm.when.codexBilling")}</span>
-                <input
-                  type="checkbox"
-                  className="toggle"
-                  checked={settings.enableCodexBillingAlarm}
-                  onChange={(event) =>
-                    setSettings((prev) => ({
-                      ...prev,
-                      enableCodexBillingAlarm: event.target.checked,
-                    }))
-                  }
-                />
-              </label>
-              {settings.enableCodexBillingAlarm && (
-                <p
-                  className="meta-text"
-                  style={{ margin: "2px 0 0", color: "#8b949e", fontSize: "12px" }}
-                >
-                  {t(lang, "settings.resetAlarm.nextFire", {
-                    countdown: formatCountdown(
-                      snapshot.codex.billingResetAt,
-                      now,
-                      lang,
-                    ),
-                    resetTime: formatResetText(snapshot.codex.billingResetAt, lang),
-                  })}
-                </p>
-              )}
-            </>
-          )}
-
-          {renderNotifyChannels("codex")}
+          {renderChannelHints("codex")}
         </div>
         )}
 

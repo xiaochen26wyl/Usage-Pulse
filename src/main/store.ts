@@ -10,16 +10,14 @@ import type {
   CredentialState,
   Language,
   QuotaSnapshot,
-  ServiceType,
-  TrayValueColorMode
+  ServiceType
 } from "@shared/types";
 import { DEFAULT_SETTINGS } from "@main/config";
 import { normalizeCodexSnapshot } from "@shared/codex-usage";
-import { resolveChannelFlags } from "@shared/notify-channels";
+import { LEGACY_ALERT_SETTING_KEYS, normalizeAlertChannels, resolveAlertChannels } from "@shared/notify-channels";
 import { migrateLaunchWithIde } from "@main/ide-presence";
 import { decryptSecret, encryptSecret } from "@main/secure-store";
 
-const TRAY_VALUE_COLOR_MODES: ReadonlySet<TrayValueColorMode> = new Set(["system", "white", "black"]);
 const LANGUAGES: ReadonlySet<Language> = new Set(["zh", "en", "ja", "ko"]);
 
 // Settings fields listed here are encrypted at rest via OS-native secret storage (see secure-store.ts)
@@ -95,14 +93,12 @@ type StoredSettings = AppSettings & {
   launchAtStartup?: boolean;
   claudeManualOAuthToken?: string;
   claudeManualOAuthTokenExpiresAt?: string | null;
-  enableClaudeWeeklyResetAlarm?: boolean;
-  enableClaudeBillingAlarm?: boolean;
-  // Removed billing-cadence select and Claude activity-polling switch; dropped on read so they leave the file on the next save.
+  // Removed billing-cadence select and the Claude / Codex activity-polling switches; dropped on read so they leave the file on the next save.
   claudeBillingCadence?: string;
   claudeUseCliActivityPolling?: boolean;
-  // Legacy global popup / LINE switches, now per service (see resolveChannelFlags).
-  enableAlarmPopup?: boolean;
-  enableLineNotification?: boolean;
+  codexUseCliActivityPolling?: boolean;
+  // Per-reminder on/off switches and per-service popup / LINE checkboxes, now
+  // alertChannels (see resolveAlertChannels, LEGACY_ALERT_SETTING_KEYS).
   // Removed drink-water reminder; dropped on read so it leaves the file on the next save.
   enableWaterReminder?: boolean;
   waterReminderMinutes?: number;
@@ -110,57 +106,39 @@ type StoredSettings = AppSettings & {
   // Removed 5-hour cooldown alerts; dropped on read so they leave the file on the next save.
   enableClaudeCooldownAlert?: boolean;
   enableCodexCooldownAlert?: boolean;
+  // Removed menu-bar value colour setting (the tray image now has a fixed dark background); dropped on read so it leaves the file on the next save.
+  trayValueColorMode?: string;
 };
-
-const migrateClaudeWeeklyResetAlarm = (raw: StoredSettings): boolean =>
-  typeof raw.enableClaudeWeeklyResetAlarm === "boolean"
-    ? raw.enableClaudeWeeklyResetAlarm
-    : Boolean(raw.enableClaudeResetAlarm ?? DEFAULT_SETTINGS.enableClaudeResetAlarm);
-
-const CODEX_ACTIVITY_POLLING_DEFAULT_OFF_MIGRATION = "codexActivityPollingDefaultOff20260903";
 
 const readSettings = (): AppSettings => {
   const raw = store.get("settings") as StoredSettings;
-  const migrations = (store.get("migrations") as Record<string, boolean> | undefined) ?? {};
-  const shouldMigrateCodexActivityPolling = !migrations[CODEX_ACTIVITY_POLLING_DEFAULT_OFF_MIGRATION];
   const {
     launchAtLogin: _legacy,
     launchAtStartup: _legacyLaunchAtStartup,
     claudeManualOAuthToken: _legacyClaudeToken,
     claudeManualOAuthTokenExpiresAt: _legacyClaudeTokenExpiresAt,
-    enableAlarmPopup: _legacyAlarmPopup,
-    enableLineNotification: _legacyLineNotification,
     enableWaterReminder: _legacyWaterReminder,
     waterReminderMinutes: _legacyWaterMinutes,
     waterCupSizeMl: _legacyWaterCup,
     enableClaudeCooldownAlert: _legacyClaudeCooldown,
     enableCodexCooldownAlert: _legacyCodexCooldown,
     claudeBillingCadence: _legacyBillingCadence,
+    trayValueColorMode: _legacyTrayValueColor,
     claudeUseCliActivityPolling: _legacyClaudeActivityPolling,
+    codexUseCliActivityPolling: _legacyCodexActivityPolling,
     ...rest
   } = raw;
+  const rawRecord = raw as unknown as Record<string, unknown>;
+  const withoutLegacy: Record<string, unknown> = { ...rest };
+  for (const key of LEGACY_ALERT_SETTING_KEYS) {
+    delete withoutLegacy[key];
+  }
   const settings = decryptSettings({
     ...DEFAULT_SETTINGS,
-    ...rest,
+    ...(withoutLegacy as Partial<AppSettings>),
     launchWithIde: migrateLaunchWithIde(raw),
-    ...resolveChannelFlags(raw as unknown as Record<string, unknown>),
-    enableClaudeWeeklyResetAlarm: migrateClaudeWeeklyResetAlarm(raw),
-    enableClaudeBillingAlarm:
-      typeof raw.enableClaudeBillingAlarm === "boolean"
-        ? raw.enableClaudeBillingAlarm
-        : DEFAULT_SETTINGS.enableClaudeBillingAlarm,
-    codexUseCliActivityPolling: shouldMigrateCodexActivityPolling
-      ? false
-      : Boolean(raw.codexUseCliActivityPolling ?? DEFAULT_SETTINGS.codexUseCliActivityPolling)
+    alertChannels: resolveAlertChannels(rawRecord)
   });
-
-  if (shouldMigrateCodexActivityPolling) {
-    store.set("settings", encryptSettings(settings));
-    store.set("migrations", {
-      ...migrations,
-      [CODEX_ACTIVITY_POLLING_DEFAULT_OFF_MIGRATION]: true
-    });
-  }
 
   return settings;
 };
@@ -188,22 +166,15 @@ export const settingsStore = {
     merged.notifyCooldownMinutes = Number.isFinite(Number(merged.notifyCooldownMinutes))
       ? clamp(Number(merged.notifyCooldownMinutes), 1, 240)
       : 15;
-    if (!TRAY_VALUE_COLOR_MODES.has(merged.trayValueColorMode)) {
-      merged.trayValueColorMode = DEFAULT_SETTINGS.trayValueColorMode;
-    }
     if (!LANGUAGES.has(merged.language)) {
       merged.language = DEFAULT_SETTINGS.language;
     }
     merged.enableCursorMonitoring = Boolean(merged.enableCursorMonitoring);
     merged.enableClaudeMonitoring = Boolean(merged.enableClaudeMonitoring);
     merged.enableCodexMonitoring = Boolean(merged.enableCodexMonitoring);
-    merged.enableClaudeWeeklyResetAlarm = Boolean(merged.enableClaudeWeeklyResetAlarm);
-    merged.enableClaudeBillingAlarm = Boolean(merged.enableClaudeBillingAlarm);
-    merged.enableCodexResetAlarm = Boolean(merged.enableCodexResetAlarm);
-    merged.enableCodexWeeklyResetAlarm = Boolean(merged.enableCodexWeeklyResetAlarm);
-    merged.enableCodexBillingAlarm = Boolean(merged.enableCodexBillingAlarm);
-    merged.codexUseCliActivityPolling = Boolean(merged.codexUseCliActivityPolling);
+    merged.alertChannels = normalizeAlertChannels(merged.alertChannels, current.alertChannels);
     merged.autoCheckForUpdates = Boolean(merged.autoCheckForUpdates);
+    merged.showWeeklyInTray = Boolean(merged.showWeeklyInTray);
     store.set("settings", encryptSettings(merged));
     return merged;
   }

@@ -1,10 +1,11 @@
-import { BrowserWindow, nativeImage, type NativeImage } from "electron";
-import {
-  TRAY_CLAUDE_LABEL_COLOR,
-  TRAY_CODEX_LABEL_COLOR,
-  TRAY_CURSOR_LABEL_COLOR,
-} from "@shared/tray-value-color";
+import { createCanvas } from "@napi-rs/canvas";
+import { nativeImage, type NativeImage } from "electron";
+import type { TrayColumn } from "@shared/tray-display";
+import { TRAY_BACKGROUND_COLOR, TRAY_VALUE_COLOR } from "@shared/tray-value-color";
 
+// Drawn in the main process with @napi-rs/canvas: a hidden BrowserWindow just
+// for one canvas costs a whole renderer process (50-80MB), this costs a few MB.
+//
 // macOS's Tray.setTitle() can't reliably fit two stacked lines: on the
 // classic ~22pt menu bar row (external displays, non-notched Macs) the
 // system font is too tall and the top line renders off the top edge of the
@@ -15,147 +16,108 @@ import {
 // either loses legibility or leaves an oversized gap before the text.
 const CANVAS_HEIGHT = 40;
 const SCALE_FACTOR = 2;
-const MAX_CANVAS_WIDTH = 210;
-const PADDING_X = 2;
+const MAX_CANVAS_WIDTH = 320;
+// Room between the background edge and the text. The corner radius is small on
+// purpose: the image should still read as a rectangle, not a pill.
+const PADDING_X = 8;
+const CORNER_RADIUS = 6;
 const TOKEN_GAP = 14;
+// Tighter than TOKEN_GAP so the weekly figure visibly belongs to its column.
+const WEEKLY_GAP = 5;
 const LINE1_SIZE = 15;
 const LINE2_SIZE = 22;
+// No name above the weekly figure, so it takes the full height.
+const WEEKLY_SIZE = 30;
 const LINE1_Y_RATIO = 0.28;
 const LINE2_Y_RATIO = 0.74;
 
-let rendererWindow: BrowserWindow | null = null;
-let loadPromise: Promise<void> | null = null;
+// Skia cannot resolve "-apple-system"; Helvetica Neue is on every macOS and
+// PingFang covers CJK should a label ever need it.
+const FONT_STACK = '"Helvetica Neue", "PingFang TC", Arial, sans-serif';
+const MIN_LINE1_SIZE = 8;
+const MIN_LINE2_SIZE = 9;
+const MIN_WEEKLY_SIZE = 12;
 
-const RENDERER_HTML = `<!DOCTYPE html>
-<html><body style="margin:0">
-<canvas id="c" width="${MAX_CANVAS_WIDTH}" height="${CANVAS_HEIGHT}"></canvas>
-<script>
-window.renderTray = (line1, line2, valueColor, labelColors) => {
-  const canvas = document.getElementById("c");
-  const ctx = canvas.getContext("2d");
-  const paddingX = ${PADDING_X};
-  const tokenGap = ${TOKEN_GAP};
-  const line1Size = ${LINE1_SIZE};
-  const line2Size = ${LINE2_SIZE};
-  const line1YRatio = ${LINE1_Y_RATIO};
-  const line2YRatio = ${LINE2_Y_RATIO};
-  const maxCanvasWidth = ${MAX_CANVAS_WIDTH};
-  const line1Colors = Array.isArray(labelColors) && labelColors.length
-    ? labelColors
-    : [${JSON.stringify(TRAY_CURSOR_LABEL_COLOR)}, ${JSON.stringify(TRAY_CLAUDE_LABEL_COLOR)}, ${JSON.stringify(TRAY_CODEX_LABEL_COLOR)}];
-  const fontStack = "-apple-system, BlinkMacSystemFont, sans-serif";
+interface FontSizes {
+  label: number;
+  value: number;
+  weekly: number;
+}
 
-  const tokensOf = (line) => String(line || "").trim().split(/\\s+/).filter(Boolean);
-
-  const measureLine = (tokens, weight, size) => {
-    ctx.font = weight + " " + size + "px " + fontStack;
-    if (tokens.length === 0) {
-      return 0;
-    }
-    let width = 0;
-    for (let i = 0; i < tokens.length; i++) {
-      width += ctx.measureText(tokens[i]).width;
-      if (i < tokens.length - 1) {
-        width += tokenGap;
-      }
-    }
-    return width;
+export const renderTrayImage = async (columns: TrayColumn[]): Promise<NativeImage> => {
+  // Measuring needs a context before the final width is known.
+  const probe = createCanvas(1, 1).getContext("2d");
+  const measure = (text: string, weight: string, size: number): number => {
+    probe.font = `${weight} ${size}px ${FONT_STACK}`;
+    return probe.measureText(text).width;
   };
 
-  let size1 = line1Size;
-  let size2 = line2Size;
-  let tokens1 = tokensOf(line1);
-  let tokens2 = tokensOf(line2);
-  let contentWidth = Math.max(measureLine(tokens1, "600", size1), measureLine(tokens2, "bold", size2));
+  const layout = (sizes: FontSizes) => {
+    let x = PADDING_X;
+    const placed = columns.map((column, i) => {
+      const columnX = x;
+      const columnWidth = Math.max(measure(column.label, "600", sizes.label), measure(column.value, "bold", sizes.value));
+      x += columnWidth;
+      let weeklyX: number | null = null;
+      if (column.weekly) {
+        x += WEEKLY_GAP;
+        weeklyX = x;
+        x += measure(column.weekly.value, "bold", sizes.weekly);
+      }
+      if (i < columns.length - 1) {
+        x += TOKEN_GAP;
+      }
+      return { column, columnX, weeklyX };
+    });
+    return { placed, width: x + PADDING_X };
+  };
 
-  while (contentWidth + paddingX * 2 > maxCanvasWidth && (size1 > 8 || size2 > 9)) {
-    if (size1 > 8) {
-      size1 -= 1;
-    }
-    if (size2 > 9) {
-      size2 -= 1;
-    }
-    contentWidth = Math.max(measureLine(tokens1, "600", size1), measureLine(tokens2, "bold", size2));
+  const sizes: FontSizes = { label: LINE1_SIZE, value: LINE2_SIZE, weekly: WEEKLY_SIZE };
+  let result = layout(sizes);
+  while (
+    result.width > MAX_CANVAS_WIDTH &&
+    (sizes.label > MIN_LINE1_SIZE || sizes.value > MIN_LINE2_SIZE || sizes.weekly > MIN_WEEKLY_SIZE)
+  ) {
+    sizes.label = Math.max(MIN_LINE1_SIZE, sizes.label - 1);
+    sizes.value = Math.max(MIN_LINE2_SIZE, sizes.value - 1);
+    sizes.weekly = Math.max(MIN_WEEKLY_SIZE, sizes.weekly - 1);
+    result = layout(sizes);
   }
 
-  canvas.width = Math.min(maxCanvasWidth, Math.ceil(contentWidth + paddingX * 2));
-  canvas.height = ${CANVAS_HEIGHT};
-  // Resizing the canvas resets the context; re-apply drawing state.
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  const width = Math.max(1, Math.min(MAX_CANVAS_WIDTH, Math.ceil(result.width)));
+  const canvas = createCanvas(width, CANVAS_HEIGHT);
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = TRAY_BACKGROUND_COLOR;
+  ctx.beginPath();
+  ctx.roundRect(0, 0, width, CANVAS_HEIGHT, CORNER_RADIUS);
+  ctx.fill();
   ctx.textBaseline = "middle";
   ctx.textAlign = "left";
 
-  const drawLine = (tokens, weight, size, y, colors) => {
-    ctx.font = weight + " " + size + "px " + fontStack;
-    let x = paddingX;
-    for (let i = 0; i < tokens.length; i++) {
-      ctx.fillStyle = colors[i] || colors[colors.length - 1] || "#ffffff";
-      ctx.fillText(tokens[i], x, y);
-      x += ctx.measureText(tokens[i]).width;
-      if (i < tokens.length - 1) {
-        x += tokenGap;
-      }
-    }
+  const draw = (text: string, weight: string, size: number, x: number, y: number, color: string): void => {
+    ctx.font = `${weight} ${size}px ${FONT_STACK}`;
+    ctx.fillStyle = color;
+    ctx.fillText(text, x, y);
   };
 
-  drawLine(tokens1, "600", size1, canvas.height * line1YRatio, line1Colors);
-  drawLine(
-    tokens2,
-    "bold",
-    size2,
-    canvas.height * line2YRatio,
-    tokens2.map(() => valueColor || "#ffffff")
-  );
-
-  return canvas.toDataURL("image/png");
-};
-</script>
-</body></html>`;
-
-const ensureRendererWindow = async (): Promise<BrowserWindow> => {
-  if (rendererWindow && !rendererWindow.isDestroyed()) {
-    if (loadPromise) {
-      await loadPromise;
+  for (const { column, columnX, weeklyX } of result.placed) {
+    draw(column.label, "600", sizes.label, columnX, CANVAS_HEIGHT * LINE1_Y_RATIO, column.labelColor);
+    draw(column.value, "bold", sizes.value, columnX, CANVAS_HEIGHT * LINE2_Y_RATIO, TRAY_VALUE_COLOR);
+    if (column.weekly && weeklyX !== null) {
+      // "middle" baseline centres on the em box, which leaves digits visibly off
+      // centre; centre the glyphs' own ink bounds instead.
+      // The bounds are relative to the current baseline, so measure on the alphabetic one.
+      ctx.textBaseline = "alphabetic";
+      ctx.font = `bold ${sizes.weekly}px ${FONT_STACK}`;
+      const ink = ctx.measureText(column.weekly.value);
+      const centerY = CANVAS_HEIGHT / 2 + (ink.actualBoundingBoxAscent - ink.actualBoundingBoxDescent) / 2;
+      draw(column.weekly.value, "bold", sizes.weekly, weeklyX, centerY, column.weekly.color);
+      ctx.textBaseline = "middle";
     }
-    return rendererWindow;
   }
 
-  rendererWindow = new BrowserWindow({
-    show: false,
-    width: MAX_CANVAS_WIDTH,
-    height: CANVAS_HEIGHT,
-    webPreferences: {
-      contextIsolation: true,
-      nodeIntegration: false,
-    },
-  });
-  loadPromise = rendererWindow.loadURL(
-    `data:text/html;charset=utf-8,${encodeURIComponent(RENDERER_HTML)}`,
-  );
-  await loadPromise;
-  return rendererWindow;
+  return nativeImage.createFromBuffer(canvas.toBuffer("image/png"), { scaleFactor: SCALE_FACTOR });
 };
 
-export const renderTrayImage = async (
-  line1: string,
-  line2: string,
-  valueColor: string,
-  labelColors: string[] = [TRAY_CURSOR_LABEL_COLOR, TRAY_CLAUDE_LABEL_COLOR, TRAY_CODEX_LABEL_COLOR],
-): Promise<NativeImage> => {
-  const win = await ensureRendererWindow();
-  const dataUrl = (await win.webContents.executeJavaScript(
-    `window.renderTray(${JSON.stringify(line1)}, ${JSON.stringify(line2)}, ${JSON.stringify(valueColor)}, ${JSON.stringify(labelColors)})`,
-  )) as string;
-  const base64 = dataUrl.split(",")[1] ?? "";
-  return nativeImage.createFromBuffer(Buffer.from(base64, "base64"), {
-    scaleFactor: SCALE_FACTOR,
-  });
-};
-
-export const destroyTrayRenderer = (): void => {
-  if (rendererWindow && !rendererWindow.isDestroyed()) {
-    rendererWindow.destroy();
-  }
-  rendererWindow = null;
-  loadPromise = null;
-};
+// Kept for the quit path in index.ts; nothing is held between renders anymore.
+export const destroyTrayRenderer = (): void => {};

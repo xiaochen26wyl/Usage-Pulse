@@ -19,9 +19,7 @@ export interface QuitStatusOptions {
     | "enableCursorMonitoring"
     | "enableClaudeMonitoring"
     | "enableCodexMonitoring"
-    | "enableCursorLineNotification"
-    | "enableClaudeLineNotification"
-    | "enableCodexLineNotification"
+    | "alertChannels"
     | "language"
   >;
   snapshot: CombinedSnapshot | null;

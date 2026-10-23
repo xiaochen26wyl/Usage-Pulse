@@ -59,10 +59,10 @@ test("a healthy snapshot with no reset time does not resurrect a stale one", () 
   );
 });
 
-test("the service toggle still wins over the fallback", () => {
+test("a reminder with neither channel ticked still wins over the fallback", () => {
   const targets = collectAlarmTargets(
     combined(serviceSnapshot("claude", "error", null, false)),
-    { ...settings, enableClaudeResetAlarm: false },
+    { ...settings, alertChannels: { ...settings.alertChannels, "claude-session": { popup: false, line: false } } },
     "zh",
     { "claude-session": "2026-09-01T00:00:00.000Z" }
   );

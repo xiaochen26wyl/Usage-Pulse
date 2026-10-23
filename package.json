@@ -12,7 +12,7 @@
   "scripts": {
     "postinstall": "node scripts/fix-electron-install.mjs",
     "fix:electron": "node scripts/fix-electron-install.mjs",
-    "dev": "electron-vite dev",
+    "dev": "electron-vite dev --watch",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "test:unit": "tsx --test \"tests/**/*.test.ts\"",
@@ -34,6 +34,7 @@
     "git:end-day": "node scripts/git-workflow.mjs end-day"
   },
   "dependencies": {
+    "@napi-rs/canvas": "^1.0.11",
     "axios": "^1.11.0",
     "electron-store": "^10.0.1",
     "electron-updater": "^6.3.9",
@@ -67,6 +68,7 @@
       "dist/**",
       "assets/**",
       "node_modules/sql.js/**/*",
+      "node_modules/@napi-rs/**/*",
       "package.json"
     ],
     "mac": {
@@ -98,6 +100,12 @@
       "provider": "github",
       "owner": "xiaochen26wyl",
       "repo": "Usage-Pulse"
+    }
+  },
+  "pnpm": {
+    "supportedArchitectures": {
+      "os": ["current", "darwin", "win32"],
+      "cpu": ["current", "x64", "arm64"]
     }
   },
   "packageManager": "pnpm@9.15.9"

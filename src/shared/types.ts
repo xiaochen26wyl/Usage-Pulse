@@ -2,10 +2,6 @@ export type ServiceType = "cursor" | "claude" | "codex";
 
 export type Language = "zh" | "en" | "ja" | "ko";
 
-// How menu-bar quota values (line 2) are coloured. Brand labels on line 1 stay
-// on their service accents regardless of this setting.
-export type TrayValueColorMode = "system" | "white" | "black";
-
 export type QuotaStatus = "ok" | "low" | "unknown" | "error";
 export type QuotaUnit = "usd" | "percent" | "count";
 
@@ -92,6 +88,24 @@ export interface AuthStatus {
   codex: CredentialStatus;
 }
 
+// One entry per reminder the user can switch on: the six low-quota alerts and
+// the seven scheduled reset / period-end alarms.
+export type AlertKey =
+  | "cursor-advanced-models-low"
+  | "cursor-models-low"
+  | "claude-session-low"
+  | "claude-weekly-low"
+  | "codex-session-low"
+  | "codex-weekly-low"
+  | AlarmSource;
+
+// Ticking neither box turns the reminder off. LINE only goes out when a channel
+// access token is stored, whatever this says.
+export interface AlertChannel {
+  popup: boolean;
+  line: boolean;
+}
+
 export interface AppSettings {
   // Opt-in per-service monitoring: off means the service's quota card and
   // settings block are hidden, and its credential is never probed.
@@ -102,49 +116,29 @@ export interface AppSettings {
   // other_models/apiPercentUsed window (pay-as-you-go premium models), "cursor
   // models" is the cursor_models/autoPercentUsed window (Cursor's own Grok/Composer).
   cursorAdvancedModelsLowThresholdPercent: number;
-  enableCursorAdvancedModelsLowAlert: boolean;
   cursorModelsLowThresholdPercent: number;
-  enableCursorModelsLowAlert: boolean;
   // Claude Code's low-quota warning is split two ways: the 5-hour session
   // window's consumption and its weekly window's consumption. The session
   // alert also covers the lockout at 0% (a spent window is necessarily low).
   claudeSessionLowThresholdPercent: number;
-  enableClaudeSessionLowAlert: boolean;
   claudeWeeklyLowThresholdPercent: number;
-  enableClaudeWeeklyLowAlert: boolean;
   // Codex mirrors Claude Code's split: 5-hour session and weekly. Extra API
   // windows (per-model, code review) are displayed but not independently
   // alerted.
   codexSessionLowThresholdPercent: number;
-  enableCodexSessionLowAlert: boolean;
   codexWeeklyLowThresholdPercent: number;
-  enableCodexWeeklyLowAlert: boolean;
   // When on, a tiny login helper starts Usage-Pulse only after Cursor or
   // Claude Code is running. The menu-bar app itself is not a login item.
   launchWithIde: boolean;
   notifyCooldownMinutes: number;
-  enableCursorResetAlarm: boolean;
-  // 5-hour session reset only. Weekly used to share this switch; existing
-  // stores migrate enableClaudeWeeklyResetAlarm from this value on first read.
-  enableClaudeResetAlarm: boolean;
-  enableClaudeWeeklyResetAlarm: boolean;
-  enableClaudeBillingAlarm: boolean;
-  enableCodexResetAlarm: boolean;
-  enableCodexWeeklyResetAlarm: boolean;
-  enableCodexBillingAlarm: boolean;
   language: Language;
-  // Menu-bar numeric text: follow OS appearance, or force white / near-black.
-  trayValueColorMode: TrayValueColorMode;
-  // How each service's alerts reach the user. The in-app popup and LINE are
-  // chosen per service, and each choice covers every alert about that service
-  // (low quota, reset, billing, recovered, credential expired).
-  enableCursorAlarmPopup: boolean;
-  enableClaudeAlarmPopup: boolean;
-  enableCodexAlarmPopup: boolean;
-  // Independent of the token: off skips LINE even when a token is stored.
-  enableCursorLineNotification: boolean;
-  enableClaudeLineNotification: boolean;
-  enableCodexLineNotification: boolean;
+  // Menu bar: draw each service's weekly remaining right beside its column.
+  showWeeklyInTray: boolean;
+  // How each reminder reaches the user: the in-app popup and LINE are chosen
+  // per reminder, and neither ticked means that reminder is off. A recovered
+  // notice follows its low-quota reminder; a credential-expired notice goes to
+  // LINE when any reminder of that service has LINE ticked.
+  alertChannels: Record<AlertKey, AlertChannel>;
   // Stored encrypted and never handed back to a renderer in cleartext — see
   // LINE_TOKEN_MASK.
   lineChannelAccessToken: string;
@@ -156,7 +150,6 @@ export interface AppSettings {
   claudeManualToken: string;
   // Optional Codex traffic saver: skip the usage API while the CLI session dir
   // has been idle since the last successful fetch.
-  codexUseCliActivityPolling: boolean;
   // Windows only (see UpdateCheckResult): periodic background check for a
   // newer GitHub Release, independent of the always-available manual check.
   autoCheckForUpdates: boolean;

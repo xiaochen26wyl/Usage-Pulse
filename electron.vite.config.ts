@@ -27,6 +27,8 @@ export default defineConfig({
     build: {
       outDir: "dist/main",
       rollupOptions: {
+        // Native addon: must stay a runtime require, it cannot be bundled.
+        external: ["@napi-rs/canvas"],
         input: {
           index: resolve("src/main/index.ts")
         }

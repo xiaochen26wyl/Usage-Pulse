@@ -2,6 +2,7 @@ import { EventEmitter } from "node:events";
 import type {
   AppSettings,
   CombinedSnapshot,
+  AlertKey,
   LowQuotaAlertSource,
   MonitorResult,
   QuotaSnapshot,
@@ -20,7 +21,7 @@ import {
 import { normalizeCodexSnapshot } from "@shared/codex-usage";
 import { isColdReading, isTrusted } from "@shared/snapshot-trust";
 import { buildExhaustedFlex, buildLowQuotaFlex, buildRecoveredFlex } from "@shared/line-templates";
-import { isPopupEnabled } from "@shared/notify-channels";
+import { isAlertEnabled, isAlertPopup } from "@shared/notify-channels";
 import { localeForLanguage, t, type TranslationKey } from "@shared/i18n";
 import { alarmService } from "@main/alarm-service";
 import { showAlarmPopup } from "@main/alarm-window";
@@ -33,9 +34,12 @@ import {
   readClaudeCliActivity,
   readClaudeCliQuotaEvents
 } from "@main/collectors/claude-cli-log";
-import { readCodexCliActivity } from "@main/collectors/codex-cli-activity";
 import { credentialStore, notificationStore, settingsStore, snapshotStore } from "@main/store";
 import { SERVICE_LABELS } from "./config";
+
+// The six low-quota reminders; each also names the channels its exhausted and
+// recovered notices follow.
+type LowAlertKey = Extract<AlertKey, LowQuotaAlertSource>;
 
 type TriggerType = "scheduled" | "manual" | "startup" | "credential" | "confirm";
 
@@ -311,7 +315,6 @@ export class MonitorEngine extends EventEmitter {
   // When a Claude Code usage request was last issued, for the rate floor and
   // for deciding whether the CLI has done anything since.
   private lastClaudeFetchMs = 0;
-  private lastCodexFetchMs = 0;
 
   private shouldNotify(scope: string, key: string, settings: AppSettings): boolean {
     const cooldownMs = settings.notifyCooldownMinutes * 60_000;
@@ -503,34 +506,9 @@ export class MonitorEngine extends EventEmitter {
     }, delayMs);
   }
 
-  private async codexHasActivitySinceLastFetch(): Promise<boolean> {
-    if (this.lastCodexFetchMs === 0) {
-      return true;
-    }
-    const rotatedAt = credentialStore.get("codex")?.rotatedAt;
-    if (rotatedAt && Date.parse(rotatedAt) > this.lastCodexFetchMs) {
-      return true;
-    }
-    try {
-      const activity = await readCodexCliActivity();
-      if (!activity.lastActivityAt) {
-        return activity.fileCount === 0;
-      }
-      return Date.parse(activity.lastActivityAt) > this.lastCodexFetchMs;
-    } catch {
-      return true;
-    }
-  }
-
   private async codexTick(): Promise<void> {
-    const settings = settingsStore.get();
-
     try {
-      if (settings.codexUseCliActivityPolling && !(await this.codexHasActivitySinceLastFetch())) {
-        // Idle tick: no fetch.
-      } else {
-        await this.checkService("codex", "scheduled");
-      }
+      await this.checkService("codex", "scheduled");
     } catch (error) {
       this.emit("error", error);
     } finally {
@@ -551,6 +529,9 @@ export class MonitorEngine extends EventEmitter {
   // that state persists, until the caller's dedupeKey actually changes.
   private fireLowQuotaAlert(options: {
     id: LowQuotaAlertSource;
+    // The reminder whose channels decide where this goes: the low alert's own
+    // key, also used by its exhausted alert.
+    alertKey: LowAlertKey;
     service: ServiceType;
     // "exhausted" picks the red LINE template; everything else is accented
     // with the service's own colour.
@@ -565,7 +546,7 @@ export class MonitorEngine extends EventEmitter {
     resetAt?: string | null;
     countdownTarget?: string | null;
   }): boolean {
-    const { id, service, kind, dedupeKey, label, reason, settings, combined, countdownTarget } = options;
+    const { id, alertKey, service, kind, dedupeKey, label, reason, settings, combined, countdownTarget } = options;
     if (!notificationStore.shouldFireOnce(`lowquota:${id}`, dedupeKey)) {
       return false;
     }
@@ -583,10 +564,10 @@ export class MonitorEngine extends EventEmitter {
     };
     void sendLineBroadcast(
       kind === "exhausted" ? buildExhaustedFlex(templateOptions) : buildLowQuotaFlex(templateOptions),
-      { service }
+      { alert: alertKey }
     );
 
-    if (isPopupEnabled(settings, service)) {
+    if (isAlertPopup(settings, alertKey)) {
       showAlarmPopup({
         id,
         service,
@@ -609,13 +590,14 @@ export class MonitorEngine extends EventEmitter {
    */
   private fireRecoveredAlert(options: {
     service: ServiceType;
+    alertKey: LowAlertKey;
     label: string;
     combined: CombinedSnapshot;
     remainingPercent: number | null;
     resetAt: string | null;
     lang: AppSettings["language"];
   }): void {
-    const { service, label, combined, remainingPercent, resetAt, lang } = options;
+    const { service, alertKey, label, combined, remainingPercent, resetAt, lang } = options;
     const serviceLabel = SERVICE_LABELS[service];
     sendDesktopNotification({
       snapshot: combined,
@@ -623,7 +605,7 @@ export class MonitorEngine extends EventEmitter {
     });
     void sendLineBroadcast(
       buildRecoveredFlex({ service, serviceLabel, windowLabel: label, remainingPercent, resetAt, lang }),
-      { service }
+      { alert: alertKey }
     );
   }
 
@@ -648,7 +630,7 @@ export class MonitorEngine extends EventEmitter {
   private fireWindowAlert(options: {
     service: ServiceType;
     state: WindowState;
-    lowId: LowQuotaAlertSource;
+    lowId: LowAlertKey;
     exhaustedId?: LowQuotaAlertSource;
     label: string;
     threshold: number;
@@ -665,6 +647,7 @@ export class MonitorEngine extends EventEmitter {
     if (exhaustedId && state.exhausted) {
       return this.fireLowQuotaAlert({
         id: exhaustedId,
+        alertKey: lowId,
         service,
         kind: "exhausted",
         // Keyed by the reset time rather than the threshold: a window parked
@@ -700,7 +683,15 @@ export class MonitorEngine extends EventEmitter {
             options.onRecovered();
             return false;
           }
-          this.fireRecoveredAlert({ service, label, combined, remainingPercent: state.remainingPercent, resetAt, lang });
+          this.fireRecoveredAlert({
+            service,
+            alertKey: lowId,
+            label,
+            combined,
+            remainingPercent: state.remainingPercent,
+            resetAt,
+            lang
+          });
           return true;
         }
       }
@@ -709,6 +700,7 @@ export class MonitorEngine extends EventEmitter {
 
     return this.fireLowQuotaAlert({
       id: lowId,
+      alertKey: lowId,
       service,
       kind: "low",
       // Threshold + reset time together identify "this occurrence": editing
@@ -735,7 +727,7 @@ export class MonitorEngine extends EventEmitter {
     let notified = false;
     const fallbackResetAt = combined.cursor.resetsAt;
 
-    if (settings.enableCursorAdvancedModelsLowAlert) {
+    if (isAlertEnabled(settings, "cursor-advanced-models-low")) {
       notified =
         this.fireWindowAlert({
           service: "cursor",
@@ -751,7 +743,7 @@ export class MonitorEngine extends EventEmitter {
         }) || notified;
     }
 
-    if (settings.enableCursorModelsLowAlert) {
+    if (isAlertEnabled(settings, "cursor-models-low")) {
       notified =
         this.fireWindowAlert({
           service: "cursor",
@@ -794,7 +786,7 @@ export class MonitorEngine extends EventEmitter {
     lang: AppSettings["language"];
     lowEnabled: boolean;
     threshold: number;
-    lowId: LowQuotaAlertSource;
+    lowId: LowAlertKey;
     sessionLabelKey: TranslationKey;
   }): boolean {
     if (!options.lowEnabled) {
@@ -831,6 +823,7 @@ export class MonitorEngine extends EventEmitter {
     if (recovered) {
       this.fireRecoveredAlert({
         service,
+        alertKey: options.lowId,
         label: sessionLabel,
         combined,
         remainingPercent: flags.session.remainingPercent,
@@ -858,13 +851,13 @@ export class MonitorEngine extends EventEmitter {
       settings,
       combined,
       lang,
-      lowEnabled: settings.enableClaudeSessionLowAlert,
+      lowEnabled: isAlertEnabled(settings, "claude-session-low"),
       threshold: settings.claudeSessionLowThresholdPercent,
       lowId: "claude-session-low",
       sessionLabelKey: "alertLabel.claudeSession"
     });
 
-    if (settings.enableClaudeWeeklyLowAlert) {
+    if (isAlertEnabled(settings, "claude-weekly-low")) {
       notified =
         this.fireWindowAlert({
           service: "claude",
@@ -898,13 +891,13 @@ export class MonitorEngine extends EventEmitter {
       settings,
       combined,
       lang,
-      lowEnabled: settings.enableCodexSessionLowAlert,
+      lowEnabled: isAlertEnabled(settings, "codex-session-low"),
       threshold: settings.codexSessionLowThresholdPercent,
       lowId: "codex-session-low",
       sessionLabelKey: "alertLabel.codexSession"
     });
 
-    if (settings.enableCodexWeeklyLowAlert) {
+    if (isAlertEnabled(settings, "codex-weekly-low")) {
       notified =
         this.fireWindowAlert({
           service: "codex",
@@ -955,21 +948,21 @@ export class MonitorEngine extends EventEmitter {
   ): boolean {
     if (cursorFlags) {
       return (
-        (settings.enableCursorAdvancedModelsLowAlert &&
+        (isAlertEnabled(settings, "cursor-advanced-models-low") &&
           (cursorFlags.advancedModels.low || cursorFlags.advancedModels.exhausted)) ||
-        (settings.enableCursorModelsLowAlert && (cursorFlags.models.low || cursorFlags.models.exhausted))
+        (isAlertEnabled(settings, "cursor-models-low") && (cursorFlags.models.low || cursorFlags.models.exhausted))
       );
     }
     if (service === "claude" && claudeFlags) {
       return (
-        (settings.enableClaudeSessionLowAlert && claudeFlags.session.low) ||
-        (settings.enableClaudeWeeklyLowAlert && (claudeFlags.weekly.low || claudeFlags.weekly.exhausted))
+        (isAlertEnabled(settings, "claude-session-low") && claudeFlags.session.low) ||
+        (isAlertEnabled(settings, "claude-weekly-low") && (claudeFlags.weekly.low || claudeFlags.weekly.exhausted))
       );
     }
     if (service === "codex" && claudeFlags) {
       return (
-        (settings.enableCodexSessionLowAlert && claudeFlags.session.low) ||
-        (settings.enableCodexWeeklyLowAlert && (claudeFlags.weekly.low || claudeFlags.weekly.exhausted))
+        (isAlertEnabled(settings, "codex-session-low") && claudeFlags.session.low) ||
+        (isAlertEnabled(settings, "codex-weekly-low") && (claudeFlags.weekly.low || claudeFlags.weekly.exhausted))
       );
     }
     return false;
@@ -1069,9 +1062,6 @@ export class MonitorEngine extends EventEmitter {
       if (service === "claude") {
         this.lastClaudeFetchMs = Date.now();
       }
-      if (service === "codex") {
-        this.lastCodexFetchMs = Date.now();
-      }
 
       const scrapeResult = await scrapeQuota(service);
       return this.applyScrapeResult(service, scrapeResult, previousServiceSnapshot);
@@ -1092,9 +1082,6 @@ export class MonitorEngine extends EventEmitter {
   ): MonitorResult {
     if (service === "claude") {
       this.lastClaudeFetchMs = Date.now();
-    }
-    if (service === "codex") {
-      this.lastCodexFetchMs = Date.now();
     }
 
     const settings = settingsStore.get();

@@ -15,11 +15,11 @@
 ### Data model
 - `AppSettings` (see `src/shared/types.ts`; there is no user-facing check interval):
   - Per-service monitoring: `enableCursorMonitoring` / `enableClaudeMonitoring` / `enableCodexMonitoring`
-  - Cursor low-quota: `cursorModels` (`autoPercentUsed`) and advanced / other models (`apiPercentUsed`) each have their own threshold and toggle
-  - Claude Code low-quota: 5-hour and weekly each have their own threshold and toggle; a 5-hour window spent down to 0% is still "low", so it needs no alert of its own
+  - Cursor low-quota: `cursorModels` (`autoPercentUsed`) and advanced / other models (`apiPercentUsed`) each have their own threshold and channel checkboxes
+  - Claude Code low-quota: 5-hour and weekly each have their own threshold and channel checkboxes; a 5-hour window spent down to 0% is still "low", so it needs no alert of its own
   - Codex low-quota: mirrors Claude — 5-hour and weekly. Extra API windows (per-model, code review) are displayed but not independently alerted
-  - Alarms: Cursor period-end; Claude Code 5-hour / weekly / subscription-renewal as three independent switches (rings 1 day before expiry, only when the API supplies an expiry); Codex 5-hour / weekly / subscription-expiry as three independent switches (expiry rings 1 day before, only when the login token carries a future `chatgpt_subscription_active_until`)
-  - Other: `trayValueColorMode`, per-service popup / LINE switches (`enableCursorAlarmPopup` / `enableClaudeAlarmPopup` / `enableCodexAlarmPopup`, `enableCursorLineNotification` / `enableClaudeLineNotification` / `enableCodexLineNotification`), `codexUseCliActivityPolling`, UI language (`zh` / `en` / `ja` / `ko`), notification cooldown, `autoCheckForUpdates` (Windows only — see "Auto-update" below)
+  - Alarms: Cursor period-end; Claude Code 5-hour / weekly / subscription-renewal as three independent reminders (rings 1 day before expiry, only when the API supplies an expiry); Codex 5-hour / weekly / subscription-expiry as three independent reminders (expiry rings 1 day before, only when the login token carries a future `chatgpt_subscription_active_until`)
+  - Other: `showWeeklyInTray` (macOS menu bar: Claude Code and Codex each show their weekly remaining right beside their own column, unlabeled and full height in the service colour; the weekly figure is redrawn at most every 10 minutes and never triggers a fetch; Cursor has no weekly quota), `alertChannels` (one `{ popup, line }` pair per reminder — the six low-quota alerts and the seven reset / period-end alarms, keyed by `AlertKey`; neither ticked means that reminder is off), UI language (`zh` / `en` / `ja` / `ko`), notification cooldown, `autoCheckForUpdates` (Windows only — see "Auto-update" below)
 - `CombinedSnapshot`: Cursor, Claude, and Codex quota snapshots
 - `QuotaSnapshot.windows`: multi-window quotas (Cursor billing / cursor models / other models; Claude Code 5-hour / weekly; Codex 5-hour / weekly plus any extra named windows the API reports)
 
@@ -157,9 +157,7 @@ Usage-Pulse deliberately keeps its request volume to Anthropic low.
 Codex does not share Claude/Cursor's fast/normal schedule. It polls on a
 single fixed cadence — every minute (`CODEX_POLL_INTERVAL_MS`) — with no
 separate minimum-gap floor, since the fixed interval already is the floor.
-`codexUseCliActivityPolling` is an optional traffic saver (off by default). If
-the user turns it on, neither the Codex CLI's session logs nor its credential
-changing since the last fetch means that tick is skipped and no request is made.
+There is no CLI-activity gate for Codex: every tick makes a request.
 
 ### Completed features
 - Electron + React + TypeScript project skeleton (Electron `^43.4.1`)
@@ -249,25 +247,26 @@ itself after `ALARM_POPUP_AUTO_DISMISS_SECONDS` (30 seconds; not a setting). The
 action buttons. OS-native desktop notifications are also closed by
 `sendPlainDesktopNotification` after the same 30-second window.
 
-How to be notified is chosen per service: each service block ends with two checkboxes on one
-row — the app popup (`enable<Service>AlarmPopup`) and LINE (`enable<Service>LineNotification`; a
-token must still be pasted below before anything is sent). A service's checkboxes cover every
-alert about that service (low quota, exhausted, reset, period end, quota recovered,
-credential expired, and its part of the quit-time LINE status); OS-native desktop notifications
-have no switch. The one exception is the 5-hour **reset** alarms (Claude Code and Codex): they
-reset several times a day whether or not the window was ever low, so they ring as popup + desktop
-notification only and never as LINE (`alarmSendsLine` in `src/shared/alarm-utils.ts`). On LINE a
-5-hour reset is heard through the one-shot recovered notice, and only if the window had been low
-(a window spent down to 0% counts); since that notice is sent when the next poll sees the recovery, it can arrive up
-to one polling interval after the reset (longer while the CLI is idle and activity polling is on).
-Weekly and period-end / renewal alarms keep their LINE message. A store that still carries the old single global popup / LINE switch hands that
-value to every service on first read (`resolveChannelFlags` in `src/shared/notify-channels.ts`),
-so upgrading changes nobody's behaviour. Each service's reminder switches sit on the same card as that service's low-quota threshold — no
-separate "Reset Alarm" card, no OS-level configuration. Cursor's switch is **period-end**
+How to be notified is chosen per reminder: each of the thirteen reminders (the six low-quota alerts and
+the seven reset / period-end alarms) has its own two checkboxes — the app popup and LINE (a token must
+still be pasted below before anything is sent) — and ticking neither turns that reminder off; there is
+no separate on/off switch. A low-quota reminder's own channels also decide its exhausted and
+recovered notices; the credential-expired notice and the quit-time LINE status go to LINE when any
+reminder of that service has LINE ticked. OS-native desktop notifications have no switch of their own:
+they accompany any reminder that is on. The 5-hour **reset** reminders (Claude Code and Codex) start with
+LINE unticked, because the window resets several times a day whether or not it was ever low; on LINE a
+5-hour reset is then heard through the one-shot recovered notice of the low-quota reminder, and only if
+the window had been low (a window spent down to 0% counts). Since that notice is sent when the next poll
+sees the recovery, it can arrive up to one polling interval after the reset (longer while the Claude Code
+CLI is idle). A store from before this model (one on/off switch per reminder plus one popup and one LINE
+checkbox per service, and before that a single global pair) is converted on first read
+(`resolveAlertChannels` in `src/shared/notify-channels.ts`), so upgrading changes nobody's behaviour.
+Each reminder sits on the same card as that service's low-quota threshold (a 5-hour or weekly reset reminder directly under the matching low-quota alert) — no
+separate "Reset Alarm" card, no OS-level configuration. Cursor's reminder is **period-end**
 (`billingCycleEnd`, which is both the included-usage reset and the billing date). Claude Code
-splits three independent switches: **5-hour reset**, **weekly reset** (usage windows from
+splits three independent reminders: **5-hour reset**, **weekly reset** (usage windows from
 `/api/oauth/usage`), and **subscription expiry** (rings one day before the plan expires, and only when the API supplies an expiry date — no billing cycle is guessed). The subscription date does not refill quota. Codex splits
-three independent switches: **5-hour reset**, **weekly reset**, and **subscription expiry** (`enableCodexBillingAlarm`; the end of the paid period read from the `chatgpt_subscription_active_until` claim of the local login token, ignored when absent or already past because that claim is a login-time snapshot).
+three independent reminders: **5-hour reset**, **weekly reset**, and **subscription expiry** (`codex-billing`; the end of the paid period read from the `chatgpt_subscription_active_until` claim of the local login token, ignored when absent or already past because that claim is a login-time snapshot).
 
 Two failure modes of the old reset alert are fixed here:
 
@@ -287,7 +286,7 @@ Two failure modes of the old reset alert are fixed here:
 - Writing to `state.vscdb`, `.credentials.json`, or `~/.codex/auth.json` is forbidden.
 - Clear older than 2 weeks (`history:get-stats` / `history:clean`, `src/main/history-cleaner.ts`) is the only module allowed to delete IDE/CLI files, and `scripts/check-readonly.mjs` lists it as the deliberate exception. It runs only after the user clicks the button on the Claude Code or Codex card and confirms a native dialog shown by main (Cancel is the default; the renderer cannot skip it). Cursor has no such button: its conversations share `state.vscdb` with its credential. Scope: conversation history older than two weeks (`HISTORY_RETENTION_DAYS`, by modification time, strictly older) — never credentials, settings, `memory` folders, `projects`/`thread_sections`, or `external_agent_session_imports.json`. The card shows the total and the part older than two weeks; the button is disabled when nothing is.
   - Claude Code: `.jsonl` files under `~/.claude/projects` older than two weeks go to the OS trash.
-  - Codex: refused if Codex (desktop app or CLI) cannot be probed; if it is running, a second warning dialog (cancel is the default) must be confirmed before the clean proceeds, otherwise nothing is done (the leftover `crashpad_handler` helper is not counted as Codex running), when a `state_N`/`thread_history_N`/`logs_N` file has a version other than the verified `5`/`1`/`2`, when a table or a matched column is unknown or missing, when an unlisted table references a cleared one, when `quick_check` fails, or when no SQLite engine (`node:sqlite`) is available. A refusal changes nothing. Otherwise the threads in `state_5` whose `updated_at` is older than two weeks and that are not pinned are removed together with their rows in `thread_artifacts`, `thread_dynamic_tools`, `thread_spawn_edges`, and the thread tables of `thread_history_1`; `logs` rows older than two weeks are removed from `logs_2` (one transaction per database, `state_5` first, then `wal_checkpoint(TRUNCATE)` + `VACUUM`). Only after every database succeeds are those threads' rollout files, plus old `.jsonl` files no thread points at, trashed (a file a surviving thread uses is never touched) and their lines dropped from `session_index.jsonl` (temp file + rename). Database rows cannot be trashed and cannot be restored; the confirmation dialog says so. Cross-database atomicity is not guaranteed: if a later database fails, orphaned history rows may remain but no file is touched.
+  - Codex: refused if Codex (desktop app or CLI) cannot be probed; if it is running, a second warning dialog (cancel is the default) must be confirmed before the clean proceeds, otherwise nothing is done (the leftover `crashpad_handler` helper is not counted as Codex running), when a `state_N`/`thread_history_N`/`logs_N` file has a version other than the verified `5`/`1`/`2`, when a table or a matched column is unknown or missing, when an unlisted table references a cleared one, when `quick_check` fails, or when no SQLite engine (`node:sqlite`) is available. A refusal changes nothing. Otherwise the threads in `state_5` whose `updated_at` is older than two weeks and that are not pinned are removed together with their rows in `thread_attachments`, `thread_dynamic_tools`, `thread_spawn_edges`, and the thread tables of `thread_history_1`; `logs` rows older than two weeks are removed from `logs_2` (one transaction per database, `state_5` first, then `wal_checkpoint(TRUNCATE)` + `VACUUM`). Only after every database succeeds are those threads' rollout files, plus old `.jsonl` files no thread points at, trashed (a file a surviving thread uses is never touched) and their lines dropped from `session_index.jsonl` (temp file + rename). Database rows cannot be trashed and cannot be restored; the confirmation dialog says so. Cross-database atomicity is not guaranteed: if a later database fails, orphaned history rows may remain but no file is touched.
   - Windows: the Codex process probe and the clean itself are untested there.
 - Claude Code credentials are entirely read-only: Usage-Pulse never spawns the `claude` CLI, never implements OAuth itself, and never writes to the official `Claude Code-credentials` Keychain item. The only Keychain write it ever performs is a one-time, best-effort deletion of the retired `Usage-Pulse-Claude-setup-token` item left over from the old setup-token flow.
 - Re-reading a credential (`auth:check`) only reads the Keychain item, never writes to it; the user completes `claude auth login` entirely in their own terminal, outside the app. A token pasted into the card is verified against the usage API before it is stored, and lives in `electron-store` under `safeStorage` encryption — never in a Keychain item.
@@ -346,11 +345,11 @@ Two failure modes of the old reset alert are fixed here:
 ### 資料架構
 - `AppSettings`（見 `src/shared/types.ts`；沒有使用者可調的檢查頻率）：
   - 服務開關：`enableCursorMonitoring` / `enableClaudeMonitoring` / `enableCodexMonitoring`
-  - Cursor 低額度：`cursorModels`（`autoPercentUsed`）與進階／其他模型（`apiPercentUsed`）各自有閾值與開關
-  - Claude Code 低額度：5 小時與每週各自有閾值與開關；5 小時視窗用到 0% 仍屬「低額度」，不另設提醒
+  - Cursor 低額度：`cursorModels`（`autoPercentUsed`）與進階／其他模型（`apiPercentUsed`）各自有閾值與提醒方式勾選
+  - Claude Code 低額度：5 小時與每週各自有閾值與提醒方式勾選；5 小時視窗用到 0% 仍屬「低額度」，不另設提醒
   - Codex 低額度：與 Claude 相同——5 小時與每週。API 回報的額外視窗（單模型、code review）會顯示，但不獨立告警
-  - 鬧鐘：Cursor 本期到期；Claude Code 5 小時／每週／訂閱到期三個獨立開關（到期前一天提醒，僅在 API 提供到期日時生效）；Codex 5 小時／每週／訂閱到期三個獨立開關（到期前一天提醒，僅在登入 token 帶有未來的 `chatgpt_subscription_active_until` 時生效）
-  - 其他：`trayValueColorMode`、各服務的彈窗／LINE 開關（`enableCursorAlarmPopup`／`enableClaudeAlarmPopup`／`enableCodexAlarmPopup`、`enableCursorLineNotification`／`enableClaudeLineNotification`／`enableCodexLineNotification`）、`codexUseCliActivityPolling`、介面語言（`zh`／`en`／`ja`／`ko`）、通知冷卻時間、`autoCheckForUpdates`（僅 Windows，見下方「自動更新」）
+  - 鬧鐘：Cursor 本期到期；Claude Code 5 小時／每週／訂閱到期三個獨立提醒（到期前一天提醒，僅在 API 提供到期日時生效）；Codex 5 小時／每週／訂閱到期三個獨立提醒（到期前一天提醒，僅在登入 token 帶有未來的 `chatgpt_subscription_active_until` 時生效）
+  - 其他：`showWeeklyInTray`（macOS 選單列：Claude Code 與 Codex 在各自欄位右側緊貼顯示每週剩餘額度，不標服務名稱、佔滿整個高度並用服務色；每週數字最多每 10 分鐘重繪一次，不會額外觸發抓取；Cursor 沒有每週額度）、`alertChannels`（每個提醒各一組 `{ popup, line }`——六個低額度提醒與七個到點／到期提醒，以 `AlertKey` 為鍵；兩個都不勾即該提醒關閉）、介面語言（`zh`／`en`／`ja`／`ko`）、通知冷卻時間、`autoCheckForUpdates`（僅 Windows，見下方「自動更新」）
 - `CombinedSnapshot`：Cursor、Claude 與 Codex 配額快照
 - `QuotaSnapshot.windows`：多視窗配額（Cursor 計費週期／Cursor 模型／其他模型；Claude Code 的 5 小時／每週；Codex 的 5 小時／每週，以及 API 回報的其他具名視窗）
 
@@ -464,9 +463,7 @@ Usage-Pulse 刻意把送往 Anthropic 的請求次數壓到最低。
 
 Codex 不套用 Claude/Cursor 的正常/低額度雙檔排程，而是走單一固定間隔——每 1
 分鐘一次（`CODEX_POLL_INTERVAL_MS`），沒有獨立的最短間隔 floor，因為固定間隔本身
-就是 floor。`codexUseCliActivityPolling` 是可選的省流量模式（預設關閉）：若使用者
-手動開啟，且 Codex CLI 的 session 紀錄與憑證自上次抓取以來都沒有動靜，這次 tick
-就會跳過，不打 API。
+就是 floor。Codex 沒有 CLI 活動閘門，每次 tick 都會發出請求。
 
 ### 已完成功能
 - Electron + React + TypeScript 專案骨架（Electron `^43.4.1`）
@@ -531,18 +528,17 @@ Usage-Pulse 完全不碰任何作業系統層級的鬧鐘或排程器——App �
 `ALARM_POPUP_AUTO_DISMISS_SECONDS`（30 秒，不是設定項）後自動關閉。彈窗沒有任何操作按鈕。
 OS 原生桌面通知也會由 `sendPlainDesktopNotification` 在同樣的 30 秒後主動關閉。
 
-「用什麼方式提醒」改為各服務自訂：每個服務區塊的最後有同一行的兩個勾選框——App 彈窗
-（`enable<Service>AlarmPopup`）與 LINE 通知（`enable<Service>LineNotification`；仍須在下方區塊貼
-Token 才會真的送出）。服務的勾選涵蓋該服務所有提醒（低額度、已用完、重置、到期、額度恢復、
-憑證失效，以及結束時的 LINE 現況）；OS 原生桌面通知沒有開關。唯一的例外是 Claude Code 與 Codex 的
-5 小時**到點提醒**：5 小時視窗一天會重置好幾次，不論當次有沒有跌到低額度都會響，所以只有彈窗＋桌面通知，
-不發 LINE（`src/shared/alarm-utils.ts` 的 `alarmSendsLine`）。5 小時重置在 LINE 上由一次性的恢復通知代表，
-而且只有當時真的跌到低額度（含用到 0%）才會收到；這則通知是下一次輪詢看到恢復時才送，所以最多會比重置時間晚一個
-輪詢間隔（CLI 閒置且開啟活動輪詢時會更久）。每週與到期／續訂提醒仍會發 LINE。舊設定若還是單一的全域彈窗／LINE
-開關，首次讀取時會把該值帶給每個服務（`src/shared/notify-channels.ts` 的 `resolveChannelFlags`），
-所以升級不會改變任何人的行為。各服務的開關跟該服務的
-低額度預警閾值放在同一張卡片裡——沒有獨立的「重置鬧鐘」卡片，也沒有任何作業系統層級的設定。
-Cursor 是「到期提醒」（本期 `billingCycleEnd`，用量重設與計費同一天）。Claude Code 拆成三個獨立開關：5 小時到點、每週配額到點（`/api/oauth/usage` 的用量視窗），以及訂閱到期（方案到期前一天提醒，且只在 API 有提供到期日時才觸發，不再自行推算扣款週期）。訂閱到期**不會**重設 5 小時或每週配額。Codex 拆成三個獨立開關：5 小時到點、每週配額到點，以及訂閱到期（`enableCodexBillingAlarm`；取自本機登入 token 的 `chatgpt_subscription_active_until` 宣告，缺漏或已過期時忽略，因為該值是登入當下的快照）。
+「用什麼方式提醒」改為每個提醒各自勾選：十三個提醒（六個低額度與七個到點／到期）各有兩個勾選框——App 彈窗
+與 LINE 通知（仍須在下方區塊貼 Token 才會真的送出），兩個都不勾即該提醒關閉，沒有另外的開關。低額度提醒的
+勾選同時決定它的「已用完」與「額度恢復」通知；憑證失效與結束時的 LINE 現況，則在該服務任一提醒勾了 LINE 時送出。
+OS 原生桌面通知沒有獨立開關，凡是開著的提醒都會附帶。Claude Code 與 Codex 的 5 小時**到點提醒**預設不勾 LINE：
+5 小時視窗一天會重置好幾次，不論當次有沒有跌到低額度都會響；在 LINE 上，5 小時重置由低額度提醒的一次性恢復通知
+代表，而且只有當時真的跌到低額度（含用到 0%）才會收到。這則通知是下一次輪詢看到恢復時才送，所以最多會比重置時間
+晚一個輪詢間隔（Claude Code 的 CLI 閒置時會更久）。舊版設定（每個提醒一個開關，加上每個服務一組彈窗／LINE 勾選，
+更早則是單一全域的一組）首次讀取時會自動轉換（`src/shared/notify-channels.ts` 的 `resolveAlertChannels`），
+所以升級不會改變任何人的行為。每個提醒都放在該服務卡片裡，5 小時與每週的到點提醒緊接在對應的
+低額度提醒下方——沒有獨立的「重置鬧鐘」卡片，也沒有任何作業系統層級的設定。
+Cursor 是「到期提醒」（本期 `billingCycleEnd`，用量重設與計費同一天）。Claude Code 拆成三個獨立提醒：5 小時到點、每週配額到點（`/api/oauth/usage` 的用量視窗），以及訂閱到期（方案到期前一天提醒，且只在 API 有提供到期日時才觸發，不再自行推算扣款週期）。訂閱到期**不會**重設 5 小時或每週配額。Codex 拆成三個獨立提醒：5 小時到點、每週配額到點，以及訂閱到期（`codex-billing`；取自本機登入 token 的 `chatgpt_subscription_active_until` 宣告，缺漏或已過期時忽略，因為該值是登入當下的快照）。
 
 這個機制同時修掉舊版重置提醒的兩個缺陷：
 
@@ -560,7 +556,7 @@ Cursor 是「到期提醒」（本期 `billingCycleEnd`，用量重設與計費�
 - 禁止寫入 `state.vscdb`、`.credentials.json`、`~/.codex/auth.json`。
 - 清除 2 週前的紀錄（`history:get-stats`／`history:clean`，`src/main/history-cleaner.ts`）是唯一被允許刪除 IDE／CLI 檔案的模組，並在 `scripts/check-readonly.mjs` 明列為刻意例外。只有使用者在 Claude Code 或 Codex 卡片按下按鈕、並在 main 彈出的原生對話框確認後才會執行（預設按鈕為取消，renderer 無法略過）。Cursor 沒有此按鈕：它的對話與憑證同在 `state.vscdb`。範圍僅限超過 2 週（`HISTORY_RETENTION_DAYS`，以修改時間判斷、嚴格大於）的對話紀錄——不碰憑證、設定、`memory` 資料夾、`projects`／`thread_sections`、`external_agent_session_imports.json`。卡片顯示總數與超過 2 週的部分，沒有可清的內容時按鈕停用。
   - Claude Code：`~/.claude/projects` 下超過 2 週的 `.jsonl` 移到系統垃圾桶。
-  - Codex：Codex（桌面 App 或 CLI）無法確認時拒絕；執行中則需再通過第二道警告對話框（預設為取消）才會繼續，否則不做任何事（殘留的 `crashpad_handler` 輔助程序不算 Codex 執行中）；另外 `state_N`／`thread_history_N`／`logs_N` 的版本不是已驗證的 `5`／`1`／`2`、資料表或比對用欄位未知或缺少、未列入的表格指向被清除的表格、`quick_check` 失敗、或沒有 SQLite 引擎（`node:sqlite`）時一律拒絕，拒絕不會改動任何東西。否則把 `state_5` 中 `updated_at` 超過 2 週且未置頂的對話串，連同它在 `thread_artifacts`、`thread_dynamic_tools`、`thread_spawn_edges` 與 `thread_history_1` 對話表中的列一併刪除，並刪除 `logs_2` 中超過 2 週的 `logs`（每個資料庫一個交易，`state_5` 先做，之後 `wal_checkpoint(TRUNCATE)` 與 `VACUUM`）。全部資料庫成功後，才把這些對話串的 rollout 檔案與沒有任何對話串引用的舊 `.jsonl` 移到垃圾桶（仍被未過期對話串使用的檔案絕不動），並從 `session_index.jsonl` 移除它們的行（暫存檔加 rename）。資料庫的列無法進垃圾桶、也無法還原，確認對話框已明說。跨資料庫不保證原子性：後面的資料庫失敗時，可能留下孤兒的對話內容列，但不會動任何檔案。
+  - Codex：Codex（桌面 App 或 CLI）無法確認時拒絕；執行中則需再通過第二道警告對話框（預設為取消）才會繼續，否則不做任何事（殘留的 `crashpad_handler` 輔助程序不算 Codex 執行中）；另外 `state_N`／`thread_history_N`／`logs_N` 的版本不是已驗證的 `5`／`1`／`2`、資料表或比對用欄位未知或缺少、未列入的表格指向被清除的表格、`quick_check` 失敗、或沒有 SQLite 引擎（`node:sqlite`）時一律拒絕，拒絕不會改動任何東西。否則把 `state_5` 中 `updated_at` 超過 2 週且未置頂的對話串，連同它在 `thread_attachments`、`thread_dynamic_tools`、`thread_spawn_edges` 與 `thread_history_1` 對話表中的列一併刪除，並刪除 `logs_2` 中超過 2 週的 `logs`（每個資料庫一個交易，`state_5` 先做，之後 `wal_checkpoint(TRUNCATE)` 與 `VACUUM`）。全部資料庫成功後，才把這些對話串的 rollout 檔案與沒有任何對話串引用的舊 `.jsonl` 移到垃圾桶（仍被未過期對話串使用的檔案絕不動），並從 `session_index.jsonl` 移除它們的行（暫存檔加 rename）。資料庫的列無法進垃圾桶、也無法還原，確認對話框已明說。跨資料庫不保證原子性：後面的資料庫失敗時，可能留下孤兒的對話內容列，但不會動任何檔案。
   - Windows：Codex 行程偵測與清理本身都尚未在該平台測試。
 - Claude Code 憑證完全唯讀：Usage-Pulse 不 spawn `claude` CLI、不自己實作 OAuth，也不寫入官方的 `Claude Code-credentials` Keychain 項目。唯一會做的 Keychain 寫入，是啟動時一次性、盡力刪除舊 setup-token 流程留下的 `Usage-Pulse-Claude-setup-token` 項目。
 - 憑證重讀（`auth:check`）只讀取 Keychain 項目，不寫入；使用者完全在自己的終端機執行 `claude auth login` 完成登入，App 不參與。貼進卡片的 token 會先對 usage API 驗證通過才儲存，並存在 `electron-store` 內由 `safeStorage` 加密，不會寫成 Keychain 項目。

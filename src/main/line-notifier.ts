@@ -1,7 +1,7 @@
 import axios from "axios";
 import type { LineMessage } from "@shared/line-templates";
-import { isLineEnabled } from "@shared/notify-channels";
-import type { ServiceType } from "@shared/types";
+import { isAlertLine, isLineEnabled } from "@shared/notify-channels";
+import type { AlertKey, ServiceType } from "@shared/types";
 import { redact } from "@main/log-redaction";
 import { settingsStore } from "@main/store";
 
@@ -27,18 +27,23 @@ const clampMessage = (message: LineMessage): LineMessage =>
  * blip must not take down the credential sweep or the quota monitor that called
  * this.
  *
- * `target` says whose alert this is. `{ service }` honours that service's own
- * LINE checkbox. `{ force: true }` skips the check — used by the settings
+ * `target` says whose alert this is. `{ alert }` honours that reminder's own
+ * LINE checkbox; `{ service }` is for messages that belong to the service as a
+ * whole (credential expired) and goes out when any of its reminders has LINE
+ * ticked. `{ force: true }` skips the check — used by the settings
  * panel's "send test message" button, where an unchecked box must not mask
  * whether the pasted token itself actually works, and by the quit status
  * broadcast, which has already filtered its messages per service.
  */
 export const sendLineBroadcast = async (
   message: LineMessage,
-  target: { service: ServiceType } | { force: true }
+  target: { alert: AlertKey } | { service: ServiceType } | { force: true }
 ): Promise<boolean> => {
   try {
     const settings = settingsStore.get();
+    if ("alert" in target && !isAlertLine(settings, target.alert)) {
+      return false;
+    }
     if ("service" in target && !isLineEnabled(settings, target.service)) {
       return false;
     }

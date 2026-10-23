@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeTheme, powerMonitor, screen, shell } from "electron";
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, powerMonitor, screen, shell } from "electron";
 import { menubar } from "menubar";
 import type {
   AlarmStatusReport,
@@ -18,16 +18,22 @@ import { formatBytes } from "@shared/history";
 import { CLAUDE_TOKEN_MASK, LINE_TOKEN_MASK } from "@shared/types";
 import { localeForLanguage, t } from "@shared/i18n";
 import { isSupportLink } from "@shared/support-links";
-import { resolveTrayValueColor, TRAY_CLAUDE_LABEL_COLOR, TRAY_CODEX_LABEL_COLOR, TRAY_CURSOR_LABEL_COLOR } from "@shared/tray-value-color";
 import {
   claudeCountdownTargetAt,
   claudeTrayValueText,
   codexCountdownTargetAt,
   codexTrayValueText,
   cursorCountdownTargetAt,
-  cursorTrayValueText,
+  cursorTrayColumnValueText,
   localizeTrayUnknownValue,
-  snapshotValueText
+  nextTrayWeeklyCache,
+  snapshotValueText,
+  trayColumns,
+  trayWeeklySignature,
+  trayWeeklyValues,
+  type TrayColumn,
+  type TrayWeeklyCache,
+  type TrayWeeklyValues
 } from "@shared/tray-display";
 import { alarmService } from "@main/alarm-service";
 import { destroyAlarmWindow, closeAlarmPopup, fitAlarmWindowSize, getAlarmPayload, snoozeAlarmPopup } from "@main/alarm-window";
@@ -91,6 +97,11 @@ if (!app.requestSingleInstanceLock()) {
 // builds its preloaded window a few lines below.
 installWebContentsHardening();
 
+// A tray popover needs no GPU compositing; skipping the GPU process and capping
+// the V8 heap keeps the resident footprint small. Must run before app ready.
+app.disableHardwareAcceleration();
+app.commandLine.appendSwitch("js-flags", "--max-old-space-size=128");
+
 const monitor = new MonitorEngine();
 
 // Explicit icon path: menubar's own default-icon fallback resolves via a
@@ -143,23 +154,42 @@ const applyPopoverSize = (): void => {
 
 // Resize before menubar positions the popover, otherwise a 700px placement
 // followed by a taller setSize would hang past the Dock / taskbar.
+// The window is created at launch and again lazily after the idle close below,
+// so the size has to be applied right after each creation too.
+trayApp.on("after-create-window", applyPopoverSize);
+
+// The popover is preloaded at launch, so the first open is instant. After
+// hiding, keep its renderer alive for a grace period so a quick re-open is
+// instant too; past that, close it to give the memory back (the next open
+// recreates it). close(), not destroy(): menubar only clears its window
+// reference on the "close" event.
+const POPOVER_IDLE_CLOSE_MS = 60 * 1000;
+let popoverIdleTimer: ReturnType<typeof setTimeout> | null = null;
+
+const clearPopoverIdleTimer = (): void => {
+  if (popoverIdleTimer) {
+    clearTimeout(popoverIdleTimer);
+    popoverIdleTimer = null;
+  }
+};
+
+trayApp.on("show", clearPopoverIdleTimer);
+trayApp.on("after-hide", () => {
+  clearPopoverIdleTimer();
+  popoverIdleTimer = setTimeout(() => {
+    popoverIdleTimer = null;
+    const window = trayApp.window;
+    if (window && !window.isDestroyed() && !window.isVisible()) {
+      window.close();
+    }
+  }, POPOVER_IDLE_CLOSE_MS);
+});
+
 const originalShowWindow = trayApp.showWindow.bind(trayApp);
 trayApp.showWindow = ((trayPos?: Electron.Rectangle) => {
   applyPopoverSize();
   return originalShowWindow(trayPos);
 }) as typeof trayApp.showWindow;
-
-const TRAY_LABELS: Record<ServiceType, string> = {
-  cursor: "Cursor",
-  claude: "Claude",
-  codex: "Codex"
-};
-
-const TRAY_LABEL_COLORS: Record<ServiceType, string> = {
-  cursor: TRAY_CURSOR_LABEL_COLOR,
-  claude: TRAY_CLAUDE_LABEL_COLOR,
-  codex: TRAY_CODEX_LABEL_COLOR
-};
 
 const enabledTrayServices = (): ServiceType[] => {
   const settings = settingsStore.get();
@@ -176,12 +206,9 @@ const enabledTrayServices = (): ServiceType[] => {
   return services.length > 0 ? services : ["cursor", "claude", "codex"];
 };
 
-const trayTitleLine1 = (services: ServiceType[] = enabledTrayServices()): string =>
-  services.map((service) => TRAY_LABELS[service]).join(" ");
-
 const trayValueFor = (service: ServiceType, snapshot: CombinedSnapshot, nowMs: number): string => {
   if (service === "cursor") {
-    return cursorTrayValueText(snapshot.cursor, nowMs);
+    return cursorTrayColumnValueText(snapshot.cursor, nowMs);
   }
   if (service === "claude") {
     return claudeTrayValueText(snapshot.claude, nowMs);
@@ -189,19 +216,33 @@ const trayValueFor = (service: ServiceType, snapshot: CombinedSnapshot, nowMs: n
   return codexTrayValueText(snapshot.codex, nowMs);
 };
 
-const trayTitleLine2 = (snapshot: CombinedSnapshot): string => {
-  const nowMs = Date.now();
-  const lang = settingsStore.get().language;
-  return enabledTrayServices()
-    .map((service) => trayValueFor(service, snapshot, nowMs))
-    .map((valueText) => localizeTrayUnknownValue(valueText, lang))
-    .join(" ");
+// Weekly figures are recomputed at most every 10 minutes (see
+// nextTrayWeeklyCache); live values and countdowns redraw on their own cadence.
+let trayWeeklyCache: TrayWeeklyCache | null = null;
+
+const currentTrayWeekly = (snapshot: CombinedSnapshot, nowMs: number): TrayWeeklyValues => {
+  const settings = settingsStore.get();
+  trayWeeklyCache = nextTrayWeeklyCache(
+    trayWeeklyCache,
+    trayWeeklyValues(snapshot, settings, nowMs),
+    nowMs,
+    trayWeeklySignature(settings)
+  );
+  return trayWeeklyCache.values;
 };
 
-const placeholderTrayLine2 = (): string =>
-  enabledTrayServices()
-    .map(() => localizeTrayUnknownValue("?", settingsStore.get().language))
-    .join(" ");
+const trayColumnsFor = (snapshot: CombinedSnapshot): TrayColumn[] => {
+  const nowMs = Date.now();
+  const lang = settingsStore.get().language;
+  return trayColumns(
+    enabledTrayServices(),
+    (service) => localizeTrayUnknownValue(trayValueFor(service, snapshot, nowMs), lang),
+    currentTrayWeekly(snapshot, nowMs)
+  );
+};
+
+const placeholderTrayColumns = (): TrayColumn[] =>
+  trayColumns(enabledTrayServices(), () => localizeTrayUnknownValue("?", settingsStore.get().language));
 
 // The Cursor and/or Claude slot counts down once its quota window is spent,
 // so re-render the tray from the cached snapshot on a timer. Purely local: it
@@ -284,26 +325,18 @@ const updateTrayText = async (snapshot: CombinedSnapshot): Promise<void> => {
   );
 
   if (isMac) {
-    await setTrayImage(trayTitleLine1(), trayTitleLine2(snapshot));
+    await setTrayImage(trayColumnsFor(snapshot));
   }
   trayApp.tray.setToolTip(toolTipLines.join("\n"));
   scheduleTrayCountdownTick(snapshot);
 };
 
-const currentTrayValueColor = (): string =>
-  resolveTrayValueColor(settingsStore.get().trayValueColorMode, nativeTheme.shouldUseDarkColors);
-
-const setTrayImage = async (line1: string, line2: string): Promise<void> => {
+const setTrayImage = async (columns: TrayColumn[]): Promise<void> => {
   if (!trayApp.tray) {
     return;
   }
   try {
-    const image = await renderTrayImage(
-      line1,
-      line2,
-      currentTrayValueColor(),
-      enabledTrayServices().map((service) => TRAY_LABEL_COLORS[service])
-    );
+    const image = await renderTrayImage(columns);
     trayApp.tray.setImage(image);
   } catch (error) {
     console.error("[Usage-Pulse] tray render failed", redact(error));
@@ -317,7 +350,7 @@ const refreshTrayFromLatest = async (): Promise<void> => {
     return;
   }
   if (isMac && trayApp.tray) {
-    await setTrayImage(trayTitleLine1(), placeholderTrayLine2());
+    await setTrayImage(placeholderTrayColumns());
   }
 };
 
@@ -759,14 +792,6 @@ app.whenReady().then(async () => {
     void monitor.checkIfDue();
   });
 
-  // Menu-bar value colour follows OS appearance when trayValueColorMode is "system".
-  nativeTheme.on("updated", () => {
-    if (settingsStore.get().trayValueColorMode !== "system") {
-      return;
-    }
-    void refreshTrayFromLatest();
-  });
-
   app.on("second-instance", (_event, argv) => {
     if (isAlarmLaunch(argv)) {
       alarmService.rearm("manual");
@@ -775,7 +800,7 @@ app.whenReady().then(async () => {
     trayApp.showWindow();
   });
 
-  trayApp.on("ready", async () => {
+  const onTrayReady = async (): Promise<void> => {
     applyPopoverSize();
     screen.on("display-metrics-changed", applyPopoverSize);
 
@@ -790,7 +815,7 @@ app.whenReady().then(async () => {
       const lang = settingsStore.get().language;
       trayApp.tray.setToolTip(t(lang, "tray.tooltip.noData"));
       if (isMac) {
-        await setTrayImage(trayTitleLine1(), placeholderTrayLine2());
+        await setTrayImage(placeholderTrayColumns());
       }
     }
 
@@ -816,7 +841,23 @@ app.whenReady().then(async () => {
       console.error("[Usage-Pulse] startup update check failed", redact(error));
     });
     updateChecker.start();
-  });
+  };
+
+  // menubar emits "ready" the moment the tray exists, and with preloadWindow off
+  // nothing delays it, so it has usually fired already (this callback sits behind
+  // an await). Run the startup once either way instead of relying on timing.
+  let trayReadyHandled = false;
+  const runTrayReadyOnce = (): void => {
+    if (trayReadyHandled) {
+      return;
+    }
+    trayReadyHandled = true;
+    void onTrayReady();
+  };
+  trayApp.on("ready", runTrayReadyOnce);
+  if (trayApp.tray) {
+    runTrayReadyOnce();
+  }
 });
 
 let quitStatusSent = false;

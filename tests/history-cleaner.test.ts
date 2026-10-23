@@ -212,7 +212,7 @@ const createState = (path: string, rolloutDir: string): void => {
       thread_section_id TEXT REFERENCES thread_sections(id) ON DELETE SET NULL,
       project_id TEXT REFERENCES projects(id) ON DELETE SET NULL
     );
-    CREATE TABLE thread_artifacts (id TEXT PRIMARY KEY, thread_id TEXT NOT NULL REFERENCES threads(id));
+    CREATE TABLE thread_attachments (id TEXT PRIMARY KEY, thread_id TEXT NOT NULL REFERENCES threads(id));
     CREATE TABLE thread_dynamic_tools (thread_id TEXT NOT NULL REFERENCES threads(id), position INTEGER);
     CREATE TABLE thread_spawn_edges (parent_thread_id TEXT, child_thread_id TEXT, status TEXT);
     INSERT INTO projects VALUES ('p1');
@@ -235,7 +235,7 @@ const createState = (path: string, rolloutDir: string): void => {
   thread("pinned", "sessions/pinned.jsonl", 40 * DAY, 1);
   thread("fresh", "sessions/fresh.jsonl", 2 * DAY, 0);
   db.exec(`
-    INSERT INTO thread_artifacts VALUES ('a1', 'old1'), ('a2', 'fresh');
+    INSERT INTO thread_attachments VALUES ('a1', 'old1'), ('a2', 'fresh');
     INSERT INTO thread_dynamic_tools VALUES ('old2', 0), ('pinned', 0);
     INSERT INTO thread_spawn_edges VALUES ('old1', 'fresh', 'open');
   `);
@@ -311,7 +311,7 @@ const snapshotCounts = (sandbox: Sandbox): Record<string, number> => {
   const logs = join(sandbox.codex, "logs_2.sqlite");
   return {
     threads: count(state, "threads"),
-    artifacts: count(state, "thread_artifacts"),
+    artifacts: count(state, "thread_attachments"),
     tools: count(state, "thread_dynamic_tools"),
     edges: count(state, "thread_spawn_edges"),
     projects: count(state, "projects"),

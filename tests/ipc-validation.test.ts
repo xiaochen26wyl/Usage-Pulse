@@ -29,8 +29,13 @@ test("asServiceType rejects values that would become a store write path", () => 
 });
 
 test("asSettingsPatch keeps known keys with the declared type", () => {
-  const patch = asSettingsPatch({ language: "en", enableClaudeLineNotification: false, notifyCooldownMinutes: 30 });
-  assert.deepEqual(patch, { language: "en", enableClaudeLineNotification: false, notifyCooldownMinutes: 30 });
+  const patch = asSettingsPatch({ language: "en", enableClaudeMonitoring: false, notifyCooldownMinutes: 30 });
+  assert.deepEqual(patch, { language: "en", enableClaudeMonitoring: false, notifyCooldownMinutes: 30 });
+});
+
+test("asSettingsPatch keeps the menu-bar weekly switch only as a boolean", () => {
+  assert.deepEqual(asSettingsPatch({ showWeeklyInTray: false }), { showWeeklyInTray: false });
+  assert.deepEqual(asSettingsPatch({ showWeeklyInTray: "no" }), {});
 });
 
 test("asSettingsPatch drops the removed global popup / LINE switches and the water settings", () => {
@@ -38,23 +43,24 @@ test("asSettingsPatch drops the removed global popup / LINE switches and the wat
   assert.deepEqual(patch, {});
 });
 
-test("asSettingsPatch keeps the per-service popup and LINE switches", () => {
-  const patch = asSettingsPatch({ enableCodexAlarmPopup: false, enableCursorLineNotification: false });
-  assert.deepEqual(patch, { enableCodexAlarmPopup: false, enableCursorLineNotification: false });
+test("asSettingsPatch keeps the per-reminder channels object but refuses null and arrays", () => {
+  const alertChannels = { "claude-session-low": { popup: false, line: true } };
+  assert.deepEqual(asSettingsPatch({ alertChannels }), { alertChannels });
+  assert.deepEqual(asSettingsPatch({ alertChannels: null }), {});
+  assert.deepEqual(asSettingsPatch({ alertChannels: [] }), {});
 });
 
-test("asSettingsPatch keeps Codex settings keys", () => {
-  const patch = asSettingsPatch({ enableCodexMonitoring: false, enableCodexResetAlarm: false });
-  assert.deepEqual(patch, { enableCodexMonitoring: false, enableCodexResetAlarm: false });
-});
-
-test("asSettingsPatch rejects the removed 5-hour cooldown switches", () => {
+test("asSettingsPatch rejects the removed per-reminder switches and per-service checkboxes", () => {
   const patch = asSettingsPatch({
     enableClaudeCooldownAlert: true,
     enableCodexCooldownAlert: true,
-    enableCodexSessionLowAlert: false
+    enableCodexSessionLowAlert: false,
+    enableCodexResetAlarm: false,
+    enableCodexAlarmPopup: false,
+    enableCursorLineNotification: false,
+    enableCodexMonitoring: false
   });
-  assert.deepEqual(patch, { enableCodexSessionLowAlert: false });
+  assert.deepEqual(patch, { enableCodexMonitoring: false });
 });
 
 test("asSettingsPatch drops unknown keys and mistyped values", () => {
@@ -62,7 +68,7 @@ test("asSettingsPatch drops unknown keys and mistyped values", () => {
     language: "en",
     somethingInvented: "yes",
     __proto__: { polluted: true },
-    enableClaudeLineNotification: "true",
+    enableClaudeMonitoring: "true",
     notifyCooldownMinutes: Number.NaN
   });
   assert.deepEqual(patch, { language: "en" });

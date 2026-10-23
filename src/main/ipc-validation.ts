@@ -93,6 +93,10 @@ export const asSettingsPatch = (value: unknown): Partial<AppSettings> => {
     if (typeof candidate !== typeof defaults[key]) {
       continue;
     }
+    // The only nested setting; its entries are checked by normalizeAlertChannels.
+    if (candidate === null || Array.isArray(candidate)) {
+      continue;
+    }
     if (typeof candidate === "number" && !Number.isFinite(candidate)) {
       continue;
     }
