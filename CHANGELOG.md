@@ -8,6 +8,23 @@ Language / 語言：[English](#english) | [繁體中文](#繁體中文)
 
 All notable changes to Usage-Pulse are documented in this file.
 
+### [2.3.0] - 2026-10-23
+
+#### Added
+- The macOS menu bar now shows two figures per service: 5-hour and weekly remaining for Claude Code and Codex, and Auto and advanced models for Cursor. The second figure is always yellow and turns red at 5% or less (a spent window shows its reset countdown in red).
+- The menu-bar image has its own dark grey background, the same as the panel, with lightly rounded corners.
+
+#### Changed
+- Codex's colour is a deeper blue (`#3F87F7`) across the app, LINE messages and the menu bar.
+- The panel window is preloaded at launch, so the first open is instant; after being hidden for 1 minute its window is closed to free memory, and it is recreated on the next open.
+- The menu-bar image is now drawn in the main process instead of a hidden window, which uses less memory.
+
+#### Fixed
+- Menu-bar numbers no longer stay missing after a restart: the startup sequence (first quota check, alarms, credential checks) no longer depends on the tray's ready event arriving after it was listened for.
+
+#### Removed
+- The "menu bar value color" setting: the main figure is always white on the new dark background.
+
 ### [2.2.0] - 2026-10-18
 
 #### Added
@@ -114,6 +131,23 @@ All notable changes to Usage-Pulse are documented in this file.
 ## 繁體中文
 
 本檔案記錄 Usage-Pulse 所有重要版本變更。
+
+### [2.3.0] - 2026-10-23
+
+#### 新增
+- macOS 選單列每個服務現在顯示兩個數值：Claude Code 與 Codex 為 5 小時與每週剩餘，Cursor 為 Auto 模式與進階模型。第二個數值固定黃色，剩 5% 以下變紅（視窗用完時以紅色顯示重置倒數）。
+- 選單列圖片加上與面板同色的深灰背景與小圓角。
+
+#### 變更
+- Codex 的顏色改為較深的藍色（`#3F87F7`），App、LINE 訊息與選單列一致。
+- 面板視窗啟動時預載，第一次開啟即時；收起 1 分鐘後關閉視窗以釋放記憶體，下次開啟再重建。
+- 選單列圖片改在主行程繪製，不再需要隱藏視窗，佔用記憶體更少。
+
+#### 修復
+- 重新啟動後選單列數字不再缺席：啟動流程（首次額度檢查、鬧鐘、憑證檢查）不再依賴 tray 就緒事件與監聽的先後順序。
+
+#### 移除
+- 「選單列數值顏色」設定：主數值在新的深色背景上固定為白色。
 
 ### [2.2.0] - 2026-10-18
 
