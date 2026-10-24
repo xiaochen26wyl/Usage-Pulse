@@ -12,6 +12,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $work = if ($env:RUNNER_TEMP) { $env:RUNNER_TEMP } else { $env:TEMP }
+$stdoutLog = Join-Path $work 'usage-pulse-stdout.log'
 $stderrLog = Join-Path $work 'usage-pulse-stderr.log'
 
 function Fail($message) { throw "install smoke: $message" }
@@ -41,12 +42,19 @@ if ($aumid -ne $Identifier) { Fail "shortcut AppUserModelID is '$aumid', expecte
 Write-Output "shortcut: $($lnk.FullName) (AUMID $aumid)"
 
 # 3. First launch: stays alive and runs its update check
-$first = Start-Process -FilePath $exe.FullName -RedirectStandardError $stderrLog -PassThru
+$first = Start-Process -FilePath $exe.FullName -RedirectStandardOutput $stdoutLog -RedirectStandardError $stderrLog -PassThru
 Start-Sleep -Seconds 25
 if ($first.HasExited) { Fail "app exited early with code $($first.ExitCode)" }
-$log = if (Test-Path $stderrLog) { Get-Content $stderrLog -Raw } else { '' }
-Write-Output "stderr:`n$log"
-if ($log -notmatch 'updater: startup check') { Fail 'the startup update check never ran' }
+$out = if (Test-Path $stdoutLog) { [string](Get-Content $stdoutLog -Raw) } else { '' }
+$err = if (Test-Path $stderrLog) { [string](Get-Content $stderrLog -Raw) } else { '' }
+Write-Output "----- app stdout -----"
+Write-Output $out
+Write-Output "----- app stderr -----"
+Write-Output $err
+Write-Output "----------------------"
+$combined = "$out`n$err"
+if ([string]::IsNullOrWhiteSpace($combined)) { Fail 'the app wrote nothing, so the update check cannot be confirmed' }
+if (-not $combined.Contains('updater: startup check')) { Fail 'the startup update check never ran' }
 
 # 4. Second launch: single instance
 $second = Start-Process -FilePath $exe.FullName -PassThru
