@@ -34,7 +34,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # bash, not PowerShell: PowerShell strips the quotes out of the JSON argument.
       - name: Build installer
+        shell: bash
         run: pnpm exec tauri build --bundles nsis --config '{"bundle":{"createUpdaterArtifacts":false}}'
 
       - name: Install, launch and uninstall
