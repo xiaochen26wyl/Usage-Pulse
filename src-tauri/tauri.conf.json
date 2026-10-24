@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Usage-Pulse",
-  "version": "2.3.0",
+  "version": "3.0.0",
   "identifier": "com.xiaochen26wyl.usagepulse",
   "build": {
     "frontendDist": "../dist/renderer-tauri",

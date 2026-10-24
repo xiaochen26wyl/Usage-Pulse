@@ -8,6 +8,16 @@ Language / 語言：[English](#english) | [繁體中文](#繁體中文)
 
 All notable changes to Usage-Pulse are documented in this file.
 
+### [3.0.0] - 2026-10-24
+
+#### Added
+- A Tauri build of the app (`src-tauri/`): menu-bar tray, popover, quota monitoring for Cursor, Claude Code and Codex, desktop notifications and LINE messages, all reusing the same React UI through a `window.usagePulse` bridge. It is not distributed yet: releases are still built on Electron, and the Tauri build does not have reminders, history cleanup or auto-update yet.
+- `scripts/bench/mem-bench.mjs`, a macOS memory sampler used to compare the two shells. Measured at idle: about 110 MB for Tauri against about 135 MB for Electron.
+
+#### Changed
+- The read-only check (`pnpm check:readonly`) now also scans the Rust credential and collector code.
+- The Tauri menu-bar image loads its fonts on demand instead of reading four system font files into memory at launch, which saved about 98 MB.
+
 ### [2.3.0] - 2026-10-23
 
 #### Added
@@ -131,6 +141,16 @@ All notable changes to Usage-Pulse are documented in this file.
 ## 繁體中文
 
 本檔案記錄 Usage-Pulse 所有重要版本變更。
+
+### [3.0.0] - 2026-10-24
+
+#### 新增
+- 以 Tauri 實作的版本原始碼（`src-tauri/`）：選單列、面板、Cursor／Claude Code／Codex 額度監控、桌面通知與 LINE 訊息，透過 `window.usagePulse` 橋接沿用同一套 React 介面。尚未提供下載：正式版仍以 Electron 打包，Tauri 版也還沒有提醒、對話紀錄清除與自動更新。
+- `scripts/bench/mem-bench.mjs`：macOS 記憶體取樣腳本，用來比較兩種外殼。閒置實測 Tauri 約 110 MB，Electron 約 135 MB。
+
+#### 變更
+- 唯讀檢查（`pnpm check:readonly`）擴及 Rust 的憑證與收集器程式碼。
+- Tauri 選單列圖片改為按需載入字型，不再於啟動時把四個系統字型檔讀進記憶體，約省下 98 MB。
 
 ### [2.3.0] - 2026-10-23
 

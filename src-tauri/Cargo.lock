@@ -4817,7 +4817,7 @@ dependencies = [
 
 [[package]]
 name = "usage-pulse"
-version = "2.3.0"
+version = "3.0.0"
 dependencies = [
  "ab_glyph",
  "keyring",

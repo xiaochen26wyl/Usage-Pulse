@@ -1,6 +1,6 @@
 [package]
 name = "usage-pulse"
-version = "2.3.0"
+version = "3.0.0"
 description = "Cross-platform tray app to monitor AI quota usage with desktop alerts."
 authors = ["xiaochen26wyl"]
 license = "SEE LICENSE IN LICENSE"

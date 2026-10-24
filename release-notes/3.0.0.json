@@ -1,0 +1,6 @@
+{
+  "zh": "- 此版本安裝包的功能與 2.3.0 相同，沒有使用者可見的變更\n- 內部：新增以 Tauri 實作的版本原始碼（尚未提供下載），與現有 Electron 版共用同一套介面；macOS 閒置時記憶體實測約 110 MB，Electron 版約 135 MB\n- 內部：唯讀檢查擴及 Rust 程式碼",
+  "en": "- The installers behave exactly like 2.3.0; there are no user-visible changes\n- Internal: adds the source of a Tauri build (not distributed yet) that shares the same UI as the Electron app; measured on macOS it idles at about 110 MB versus about 135 MB for Electron\n- Internal: the read-only check now also covers the Rust code",
+  "ja": "- このバージョンのインストーラーの動作は 2.3.0 と同じで、ユーザーから見える変更はありません\n- 内部：既存の Electron 版と同じ UI を共有する Tauri 版のソースを追加しました（まだ配布していません）。macOS での待機時メモリは実測で Tauri 版が約 110 MB、Electron 版が約 135 MB です\n- 内部：読み取り専用チェックを Rust コードにも拡張しました",
+  "ko": "- 이 버전의 설치 파일은 2.3.0과 동작이 같으며 사용자에게 보이는 변경은 없습니다\n- 내부: 기존 Electron 앱과 같은 UI를 공유하는 Tauri 버전의 소스를 추가했습니다(아직 배포하지 않음). macOS 유휴 시 메모리는 실측으로 Tauri 약 110 MB, Electron 약 135 MB입니다\n- 내부: 읽기 전용 검사가 Rust 코드까지 확장되었습니다"
+}
