@@ -1,0 +1,12 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Core permissions for the popover and the alarm window",
+  "windows": [
+    "main",
+    "alarm"
+  ],
+  "permissions": [
+    "core:default"
+  ]
+}

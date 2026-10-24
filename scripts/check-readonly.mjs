@@ -67,6 +67,40 @@ const allowedWrites = new Map([
   ["src/main/history-cleaner.ts", ["delete from", "trashitem(", "writefile(", "rename("]]
 ]);
 
+// The Tauri build keeps the same promise, and more bluntly: every Rust file under
+// these directories is read-only code, so there is no sensitive-hint gate and no
+// allow-list. Comments are stripped first so prose cannot trip a hint.
+const rustReadOnlyDirs = [join(root, "src-tauri", "src", "credentials"), join(root, "src-tauri", "src", "collectors")];
+const rustWriteHints = [
+  "fs::write(",
+  "fs::remove",
+  "fs::rename(",
+  "fs::copy(",
+  "fs::create_dir",
+  "fs::set_permissions(",
+  "file::create(",
+  "file::create_new(",
+  "openoptions",
+  "remove_file(",
+  "remove_dir",
+  "set_len(",
+  "write_all(",
+  "sqlite_open_read_write",
+  "sqlite_open_create",
+  ".execute(",
+  ".execute_batch(",
+  "insert into",
+  "update ",
+  "delete from",
+  "drop table",
+  "trash",
+  "add-generic-password",
+  "delete-generic-password",
+  "set-generic-password"
+];
+
+const stripRustComments = (source) => source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+
 const listFiles = async (dir) => {
   const entries = await readdir(dir, { withFileTypes: true });
   const nested = await Promise.all(
@@ -101,6 +135,22 @@ const main = async () => {
     for (const exception of allowed) {
       if (source.includes(exception)) {
         exercised.push(`${relativePath} -> ${exception}`);
+      }
+    }
+  }
+
+  for (const dir of rustReadOnlyDirs) {
+    let rustFiles = [];
+    try {
+      rustFiles = (await listFiles(dir)).filter((path) => path.endsWith(".rs"));
+    } catch {
+      continue;
+    }
+    for (const filePath of rustFiles) {
+      const source = stripRustComments(await readFile(filePath, "utf-8")).toLowerCase();
+      const writeMatch = rustWriteHints.find((hint) => source.includes(hint));
+      if (writeMatch) {
+        violations.push(`${filePath} (matched: ${writeMatch})`);
       }
     }
   }

@@ -1117,7 +1117,7 @@ const ko: Record<keyof typeof zh, string> = {
   "history.blocked.dbFailed": "Codex 데이터베이스 삭제에 실패했습니다({detail}). 대화 파일은 이동하지 않았습니다",
 };
 
-const dictionaries: Record<Language, Record<string, string>> = { zh, en, ja, ko };
+export const dictionaries: Record<Language, Record<string, string>> = { zh, en, ja, ko };
 
 export type TranslationKey = keyof typeof zh;
 

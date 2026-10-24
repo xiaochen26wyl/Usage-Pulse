@@ -1,0 +1,29 @@
+[package]
+name = "usage-pulse"
+version = "2.3.0"
+description = "Cross-platform tray app to monitor AI quota usage with desktop alerts."
+authors = ["xiaochen26wyl"]
+license = "SEE LICENSE IN LICENSE"
+repository = "https://github.com/xiaochen26wyl/Usage-Pulse"
+edition = "2024"
+rust-version = "1.90"
+
+[lib]
+name = "usage_pulse_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.7.4", features = [] }
+
+[dependencies]
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+tauri = { version = "2.12.5", features = ["tray-icon", "image-png"] }
+rusqlite = { version = "0.40.2", features = ["bundled"] }
+tokio = { version = "1.54.1", features = ["time"] }
+reqwest = { version = "0.13.5", default-features = false, features = ["rustls", "json"] }
+tiny-skia = "0.12.0"
+ab_glyph = "0.2.32"
+keyring = "4.2.0"
+notify-rust = "4.18.2"
+libc = "0.2.191"

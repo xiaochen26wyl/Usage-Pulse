@@ -13,6 +13,9 @@
     "postinstall": "node scripts/fix-electron-install.mjs",
     "fix:electron": "node scripts/fix-electron-install.mjs",
     "dev": "electron-vite dev --watch",
+    "tauri:dev": "node scripts/tauri-dev.mjs",
+    "gen:rust-i18n": "tsx scripts/gen-rust-i18n.ts",
+    "tauri:check": "cargo check --manifest-path src-tauri/Cargo.toml",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "test:unit": "tsx --test \"tests/**/*.test.ts\"",
@@ -35,6 +38,7 @@
   },
   "dependencies": {
     "@napi-rs/canvas": "^1.0.11",
+    "@tauri-apps/api": "^2",
     "axios": "^1.11.0",
     "electron-store": "^10.0.1",
     "electron-updater": "^6.3.9",
@@ -44,6 +48,7 @@
     "sql.js": "^1.14.2"
   },
   "devDependencies": {
+    "@tauri-apps/cli": "^2",
     "@types/node": "^22.10.2",
     "@types/react": "^18.3.21",
     "@types/react-dom": "^18.3.7",
@@ -104,8 +109,16 @@
   },
   "pnpm": {
     "supportedArchitectures": {
-      "os": ["current", "darwin", "win32"],
-      "cpu": ["current", "x64", "arm64"]
+      "os": [
+        "current",
+        "darwin",
+        "win32"
+      ],
+      "cpu": [
+        "current",
+        "x64",
+        "arm64"
+      ]
     }
   },
   "packageManager": "pnpm@9.15.9"
