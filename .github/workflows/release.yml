@@ -82,16 +82,12 @@ jobs:
             artifact: usage-pulse-mac-arm64
             files: |
               src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
-              src-tauri/target/aarch64-apple-darwin/release/bundle/macos/*.app.tar.gz
-              src-tauri/target/aarch64-apple-darwin/release/bundle/macos/*.app.tar.gz.sig
           - os: macos-latest
             target: x86_64-apple-darwin
             bundles: dmg,app
             artifact: usage-pulse-mac-x64
             files: |
               src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/*.dmg
-              src-tauri/target/x86_64-apple-darwin/release/bundle/macos/*.app.tar.gz
-              src-tauri/target/x86_64-apple-darwin/release/bundle/macos/*.app.tar.gz.sig
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             bundles: nsis
