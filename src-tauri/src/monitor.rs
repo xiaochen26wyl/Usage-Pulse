@@ -18,7 +18,7 @@ const NORMAL_POLL: Duration = Duration::from_secs(15 * 60);
 const CODEX_POLL: Duration = Duration::from_secs(60);
 // Mirrors EXPIRING_SOON_MS in src/shared/credential-utils.ts.
 const EXPIRING_SOON_MS: i64 = 30 * 60 * 1000;
-const SERVICES: [&str; 3] = ["cursor", "claude", "codex"];
+pub const SERVICES: [&str; 3] = ["cursor", "claude", "codex"];
 
 pub struct MonitorState {
     latest: Mutex<Option<Value>>,
@@ -178,7 +178,7 @@ pub async fn check_service(app: &AppHandle, service: &str) -> Value {
     snapshot
 }
 
-fn enabled_setting(service: &str) -> &'static str {
+pub fn enabled_setting(service: &str) -> &'static str {
     match service {
         "cursor" => "enableCursorMonitoring",
         "claude" => "enableClaudeMonitoring",
@@ -263,14 +263,27 @@ fn credential_status(service: &str, outcome: Result<RawCredential, CredentialErr
     })
 }
 
-pub async fn auth_status(app: &AppHandle) -> Value {
+/// One service's credential state, read fresh from its source.
+pub async fn credential_state(app: &AppHandle, service: &str) -> Value {
     let state = app.state::<MonitorState>();
-    let manual = app.state::<SettingsState>().string("claudeManualToken");
-    let codex = credentials::codex::resolve(&state.http).await.map(|auth| credentials::codex::as_raw(&auth));
+    match service {
+        "cursor" => credential_status("cursor", credentials::cursor::read()),
+        "claude" => {
+            let manual = app.state::<SettingsState>().string("claudeManualToken");
+            credential_status("claude", credentials::claude::read(&manual))
+        }
+        _ => {
+            let codex = credentials::codex::resolve(&state.http).await.map(|auth| credentials::codex::as_raw(&auth));
+            credential_status("codex", codex)
+        }
+    }
+}
+
+pub async fn auth_status(app: &AppHandle) -> Value {
     json!({
-        "cursor": credential_status("cursor", credentials::cursor::read()),
-        "claude": credential_status("claude", credentials::claude::read(&manual)),
-        "codex": credential_status("codex", codex)
+        "cursor": credential_state(app, "cursor").await,
+        "claude": credential_state(app, "claude").await,
+        "codex": credential_state(app, "codex").await
     })
 }
 

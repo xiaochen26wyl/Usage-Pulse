@@ -42,3 +42,51 @@ jobs:
 
       - name: Run build smoke test
         run: pnpm smoke:build
+
+  # The Tauri build's Rust code. Windows is here on purpose: its cfg(windows)
+  # code cannot be compiled on a Mac, so without this job the first time it is
+  # built would be a release.
+  rust:
+    name: Rust (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - windows-latest
+          - macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup PNPM
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run Rust tests
+        working-directory: src-tauri
+        run: cargo test
+
+      - name: Build the app (no installer)
+        run: pnpm exec tauri build --no-bundle
+
+      - name: Launch smoke test
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/ci/windows-smoke.ps1 -Exe "$PWD/src-tauri/target/release/usage-pulse.exe"

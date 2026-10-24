@@ -1,0 +1,44 @@
+name: Windows Installer Smoke
+
+# Builds the NSIS installer on a Windows runner and runs it through install,
+# launch, single instance and uninstall. Needs no secrets: the update-artifact
+# step (which wants the signing key) is switched off for this build.
+on:
+  workflow_dispatch:
+
+jobs:
+  installer:
+    name: Install, launch, uninstall
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup PNPM
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build installer
+        run: pnpm exec tauri build --bundles nsis --config '{"bundle":{"createUpdaterArtifacts":false}}'
+
+      - name: Install, launch and uninstall
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem src-tauri/target/release/bundle/nsis -Filter '*-setup.exe' | Select-Object -First 1
+          ./scripts/ci/windows-install-smoke.ps1 -Installer $installer.FullName

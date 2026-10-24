@@ -16,14 +16,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Verify tag matches package version
+      - name: Verify tag matches every version in the repo
         run: |
+          # v3.0.0-rc1 is a pre-release of 3.0.0: the files carry 3.0.0.
           TAG_VERSION="${GITHUB_REF_NAME#v}"
+          TAG_VERSION="${TAG_VERSION%%-*}"
           PACKAGE_VERSION="$(node -p "require('./package.json').version")"
-          if [ "$TAG_VERSION" != "$PACKAGE_VERSION" ]; then
-            echo "Tag version ($TAG_VERSION) does not match package.json version ($PACKAGE_VERSION)."
-            exit 1
-          fi
+          TAURI_VERSION="$(node -p "require('./src-tauri/tauri.conf.json').version")"
+          CARGO_VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' src-tauri/Cargo.toml | head -n 1)"
+          for found in "package.json=$PACKAGE_VERSION" "tauri.conf.json=$TAURI_VERSION" "Cargo.toml=$CARGO_VERSION"; do
+            if [ "${found#*=}" != "$TAG_VERSION" ]; then
+              echo "Tag version ($TAG_VERSION) does not match ${found%%=*} (${found#*=})."
+              exit 1
+            fi
+          done
 
       - name: Build release notes body
         run: node scripts/build-release-notes.mjs > release-notes-body.md
@@ -63,7 +69,7 @@ jobs:
         run: pnpm smoke:build
 
   build:
-    name: Build ${{ matrix.os }}
+    name: Build ${{ matrix.artifact }}
     runs-on: ${{ matrix.os }}
     needs: validate
     strategy:
@@ -71,18 +77,28 @@ jobs:
       matrix:
         include:
           - os: macos-latest
-            script: dist:mac
-            artifact: usage-pulse-mac
+            target: aarch64-apple-darwin
+            bundles: dmg,app
+            artifact: usage-pulse-mac-arm64
             files: |
-              release/*.dmg
-              release/*.dmg.blockmap
+              src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+              src-tauri/target/aarch64-apple-darwin/release/bundle/macos/*.app.tar.gz
+              src-tauri/target/aarch64-apple-darwin/release/bundle/macos/*.app.tar.gz.sig
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            bundles: dmg,app
+            artifact: usage-pulse-mac-x64
+            files: |
+              src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/*.dmg
+              src-tauri/target/x86_64-apple-darwin/release/bundle/macos/*.app.tar.gz
+              src-tauri/target/x86_64-apple-darwin/release/bundle/macos/*.app.tar.gz.sig
           - os: windows-latest
-            script: dist:win
+            target: x86_64-pc-windows-msvc
+            bundles: nsis
             artifact: usage-pulse-win
             files: |
-              release/*.exe
-              release/*.exe.blockmap
-              release/latest.yml
+              src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*-setup.exe
+              src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*-setup.exe.sig
 
     steps:
       - name: Checkout
@@ -97,11 +113,32 @@ jobs:
           node-version: 24
           cache: pnpm
 
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: ${{ matrix.target }}
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build distributable
-        run: pnpm ${{ matrix.script }}
+      - name: Run Rust tests
+        working-directory: src-tauri
+        run: cargo test --target ${{ matrix.target }}
+
+      # Not signed or notarized yet (no Apple / Authenticode certificate): on
+      # macOS the first launch is right-click -> Open. TAURI_SIGNING_PRIVATE_KEY
+      # is the *update* signing key, a different thing, and is required here.
+      - name: Build installer
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: pnpm exec tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
 
       - name: Upload release artifacts
         uses: actions/upload-artifact@v4
@@ -110,20 +147,67 @@ jobs:
           path: ${{ matrix.files }}
           if-no-files-found: error
 
+  # The Windows installer, installed for real: files, Start Menu shortcut,
+  # launch, single instance, uninstall. Publishing waits for it.
+  install-smoke:
+    name: Windows install smoke test
+    runs-on: windows-latest
+    needs: build
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download the Windows installer
+        uses: actions/download-artifact@v4
+        with:
+          name: usage-pulse-win
+          path: installer
+
+      - name: Install, launch and uninstall
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem installer -Filter '*-setup.exe' -Recurse | Select-Object -First 1
+          ./scripts/ci/windows-install-smoke.ps1 -Installer $installer.FullName
+
   publish:
     name: Publish GitHub Release
     runs-on: ubuntu-latest
-    needs: build
+    needs: [build, install-smoke]
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
           path: dist-artifacts
 
+      # latest.json for the Tauri updater, latest.yml so existing Electron
+      # installs (electron-updater) can step over to this build.
+      - name: Build update manifests
+        run: >
+          node scripts/build-update-manifests.mjs
+          --dir dist-artifacts
+          --version "${GITHUB_REF_NAME#v}"
+          --repo "${GITHUB_REPOSITORY}"
+          --notes dist-artifacts/release-notes-body/release-notes-body.md
+          --out dist-artifacts
+
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist-artifacts/usage-pulse-mac/**/*
+            dist-artifacts/usage-pulse-mac-arm64/**/*
+            dist-artifacts/usage-pulse-mac-x64/**/*
             dist-artifacts/usage-pulse-win/**/*
+            dist-artifacts/latest.json
+            dist-artifacts/latest.yml
           body_path: dist-artifacts/release-notes-body/release-notes-body.md
+          # A tag with a hyphen (v3.0.0-rc1) is a pre-release: the updater reads
+          # releases/latest, so nobody is offered it.
+          prerelease: ${{ contains(github.ref_name, '-') }}

@@ -10,6 +10,8 @@ use crate::{monitor::MonitorState, popover, settings::SettingsState, time::now_m
 const TRAY_ID: &str = "main";
 const MENU_OPEN: &str = "open";
 const MENU_QUIT: &str = "quit";
+#[cfg(windows)]
+const MENU_CHECK_UPDATES: &str = "check-updates";
 
 // Mirrors tray.menu.* in src/shared/i18n.ts.
 fn menu_labels(language: &str) -> (&'static str, &'static str) {
@@ -24,14 +26,18 @@ fn menu_labels(language: &str) -> (&'static str, &'static str) {
 pub fn create(app: &AppHandle) -> tauri::Result<()> {
     let language = app.state::<SettingsState>().language();
     let (open_label, quit_label) = menu_labels(&language);
-    let menu = Menu::with_items(
-        app,
-        &[
-            &MenuItem::with_id(app, MENU_OPEN, open_label, true, None::<&str>)?,
-            &PredefinedMenuItem::separator(app)?,
-            &MenuItem::with_id(app, MENU_QUIT, quit_label, true, None::<&str>)?,
-        ],
-    )?;
+    let open = MenuItem::with_id(app, MENU_OPEN, open_label, true, None::<&str>)?;
+    let separator = PredefinedMenuItem::separator(app)?;
+    let quit = MenuItem::with_id(app, MENU_QUIT, quit_label, true, None::<&str>)?;
+    // Updates are Windows-only (see updater.rs), so is the menu item.
+    #[cfg(windows)]
+    let menu = {
+        let label = crate::i18n::tr(&language, "tray.menu.checkForUpdates");
+        let check = MenuItem::with_id(app, MENU_CHECK_UPDATES, label, true, None::<&str>)?;
+        Menu::with_items(app, &[&open, &check, &separator, &quit])?
+    };
+    #[cfg(not(windows))]
+    let menu = Menu::with_items(app, &[&open, &separator, &quit])?;
 
     TrayIconBuilder::with_id(TRAY_ID)
         .icon(Image::from_bytes(include_bytes!("../../assets/tray/icon@2x.png"))?)
@@ -44,6 +50,16 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
                 if let Some(rect) = app.tray_by_id(TRAY_ID).and_then(|tray| tray.rect().ok().flatten()) {
                     popover::show_at(app, rect);
                 }
+            }
+            #[cfg(windows)]
+            MENU_CHECK_UPDATES => {
+                if let Some(rect) = rect(app) {
+                    popover::show_at(app, rect);
+                }
+                let app = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    let _ = crate::updater::check(&app).await;
+                });
             }
             MENU_QUIT => app.exit(0),
             _ => {}
@@ -61,6 +77,12 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
         })
         .build(app)?;
     Ok(())
+}
+
+// Where the tray icon sits, for placing the popover when something other than a
+// tray click (a second launch) asks for it.
+pub fn rect(app: &AppHandle) -> Option<tauri::Rect> {
+    app.tray_by_id(TRAY_ID).and_then(|tray| tray.rect().ok().flatten())
 }
 
 fn enabled_services(settings: &SettingsState) -> Vec<&'static str> {

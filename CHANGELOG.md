@@ -11,12 +11,19 @@ All notable changes to Usage-Pulse are documented in this file.
 ### [3.0.0] - 2026-10-24
 
 #### Added
-- A Tauri build of the app (`src-tauri/`): menu-bar tray, popover, quota monitoring for Cursor, Claude Code and Codex, desktop notifications and LINE messages, all reusing the same React UI through a `window.usagePulse` bridge. It is not distributed yet: releases are still built on Electron, and the Tauri build does not have reminders, history cleanup or auto-update yet.
-- `scripts/bench/mem-bench.mjs`, a macOS memory sampler used to compare the two shells. Measured at idle: about 110 MB for Tauri against about 135 MB for Electron.
+- Usage-Pulse is now built with Tauri (`src-tauri/`) instead of Electron, reusing the same React interface. Releases ship macOS (Apple Silicon and Intel `.dmg`) and Windows (per-user NSIS installer) builds.
+- Windows auto-update through a signed `latest.json` on the latest GitHub Release, with a "Check for Updates" item in the tray menu. A `latest.yml` is published as well so existing Electron installs can step over.
+- `scripts/bench/mem-bench.mjs`, a macOS memory sampler. Measured at idle: about 110 MB for Tauri against about 135 MB for Electron.
+- CI now builds and tests the Rust code on Windows and macOS, and a Windows job installs, launches and uninstalls the real installer.
 
 #### Changed
-- The read-only check (`pnpm check:readonly`) now also scans the Rust credential and collector code.
-- The Tauri menu-bar image loads its fonts on demand instead of reading four system font files into memory at launch, which saved about 98 MB.
+- Windows notifications are sent under the app's own identity instead of showing up as PowerShell.
+- Opening a support link no longer flashes a console window on Windows, and the alarm popup no longer appears in the taskbar.
+- The menu-bar image loads its fonts on demand instead of reading four system font files at launch, which saved about 98 MB.
+- The read-only check (`pnpm check:readonly`) now also covers the Rust code; `history.rs` is the single allowed writer.
+
+#### Removed
+- The Electron installers are no longer part of releases (the Electron source stays in the repository). The LINE token and the Claude manual token cannot be migrated from an Electron install and have to be entered again.
 
 ### [2.3.0] - 2026-10-23
 
@@ -145,12 +152,19 @@ All notable changes to Usage-Pulse are documented in this file.
 ### [3.0.0] - 2026-10-24
 
 #### 新增
-- 以 Tauri 實作的版本原始碼（`src-tauri/`）：選單列、面板、Cursor／Claude Code／Codex 額度監控、桌面通知與 LINE 訊息，透過 `window.usagePulse` 橋接沿用同一套 React 介面。尚未提供下載：正式版仍以 Electron 打包，Tauri 版也還沒有提醒、對話紀錄清除與自動更新。
-- `scripts/bench/mem-bench.mjs`：macOS 記憶體取樣腳本，用來比較兩種外殼。閒置實測 Tauri 約 110 MB，Electron 約 135 MB。
+- Usage-Pulse 改以 Tauri（`src-tauri/`）建置，取代 Electron，沿用同一套 React 介面。Release 提供 macOS（Apple Silicon 與 Intel 的 `.dmg`）與 Windows（每使用者安裝的 NSIS 安裝檔）。
+- Windows 自動更新：透過最新 GitHub Release 上帶簽章的 `latest.json`，選單列右鍵選單新增「檢查更新」。同時發佈 `latest.yml`，讓既有的 Electron 安裝版能換過來。
+- `scripts/bench/mem-bench.mjs`：macOS 記憶體取樣腳本。閒置實測 Tauri 約 110 MB，Electron 約 135 MB。
+- CI 現在會在 Windows 與 macOS 上建置並測試 Rust 程式，另有 Windows 任務實際安裝、啟動並解除安裝真正的安裝檔。
 
 #### 變更
-- 唯讀檢查（`pnpm check:readonly`）擴及 Rust 的憑證與收集器程式碼。
-- Tauri 選單列圖片改為按需載入字型，不再於啟動時把四個系統字型檔讀進記憶體，約省下 98 MB。
+- Windows 通知改以應用程式自己的身分送出，不再顯示成 PowerShell。
+- 在 Windows 開啟支援連結時不再閃出主控台視窗，鬧鐘彈窗也不再出現在工作列。
+- 選單列圖片改為按需載入字型，不再於啟動時把四個系統字型檔讀進記憶體，約省下 98 MB。
+- 唯讀檢查（`pnpm check:readonly`）擴及 Rust 程式；`history.rs` 是唯一允許寫入的檔案。
+
+#### 移除
+- Release 不再提供 Electron 安裝檔（Electron 原始碼仍保留在 repo）。從 Electron 版升級時，LINE token 與 Claude 手動 token 無法帶過來，需要重新輸入。
 
 ### [2.3.0] - 2026-10-23
 

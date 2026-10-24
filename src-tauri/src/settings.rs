@@ -77,7 +77,12 @@ fn electron_settings_path() -> Option<PathBuf> {
     let base = PathBuf::from(std::env::var_os("APPDATA")?);
     #[cfg(all(unix, not(target_os = "macos")))]
     let base = crate::credentials::home_dir()?.join(".config");
-    Some(base.join("usage-pulse").join("usage-pulse.json"))
+    Some(electron_settings_file(&base))
+}
+
+// electron-store, name "usage-pulse", under the app's user-data directory.
+fn electron_settings_file(base: &std::path::Path) -> PathBuf {
+    base.join("usage-pulse").join("usage-pulse.json")
 }
 
 fn read_object(path: &PathBuf) -> Option<Map<String, Value>> {
@@ -91,10 +96,16 @@ impl SettingsState {
     /// Defaults overlaid with the stored file (or, on first launch, the Electron
     /// build's settings); unknown keys are dropped. Secrets come from the OS store.
     pub fn load(path: PathBuf) -> Self {
-        let mut state = Self::build(path, true);
+        Self::load_from(path, electron_settings_path(), true)
+    }
+
+    // `electron` is where the previous (Electron) build kept its settings. Its
+    // secrets are encrypted with safeStorage and are never imported.
+    fn load_from(path: PathBuf, electron: Option<PathBuf>, use_secret_store: bool) -> Self {
+        let mut state = Self::build(path, use_secret_store);
         let first_launch = state.path.as_ref().is_some_and(|path| !path.exists());
         if first_launch {
-            if let Some(imported) = electron_settings_path().and_then(|path| read_object(&path)).and_then(|root| match root.get("settings") {
+            if let Some(imported) = electron.and_then(|path| read_object(&path)).and_then(|root| match root.get("settings") {
                 Some(Value::Object(settings)) => Some(settings.clone()),
                 _ => None,
             }) {
@@ -232,6 +243,46 @@ impl SettingsState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn electron_settings_live_under_the_usage_pulse_folder() {
+        // The Windows layout: %APPDATA%\usage-pulse\usage-pulse.json
+        let file = electron_settings_file(std::path::Path::new("C:\\Users\\a\\AppData\\Roaming"));
+        assert!(file.to_string_lossy().ends_with("usage-pulse.json"));
+        assert!(file.to_string_lossy().contains("usage-pulse"));
+    }
+
+    #[test]
+    fn first_launch_imports_electron_settings_but_not_its_secrets() {
+        let dir = std::env::temp_dir().join(format!("usage-pulse-import-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let electron = dir.join("usage-pulse.json");
+        std::fs::write(
+            &electron,
+            json!({ "settings": {
+                "language": "ja",
+                "claudeManualToken": "ZW5jcnlwdGVkLWJ5LXNhZmVzdG9yYWdl",
+                "lineChannelAccessToken": "ZW5jcnlwdGVkLWJ5LXNhZmVzdG9yYWdl",
+                "somethingRetired": true
+            } })
+            .to_string(),
+        )
+        .unwrap();
+        let own = dir.join("settings.json");
+
+        let state = SettingsState::load_from(own.clone(), Some(electron.clone()), false);
+        assert_eq!(state.language(), "ja");
+        assert_eq!(state.string("claudeManualToken"), "");
+        assert_eq!(state.string("lineChannelAccessToken"), "");
+        let written = std::fs::read_to_string(&own).unwrap();
+        assert!(!written.contains("somethingRetired") && !written.contains("ZW5jcnlwdGVk"));
+
+        // Once the Tauri build has its own file, Electron's is no longer read.
+        std::fs::write(&electron, json!({ "settings": { "language": "ko" } }).to_string()).unwrap();
+        assert_eq!(SettingsState::load_from(own, Some(electron), false).language(), "ja");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn persists_plain_settings_and_never_the_secrets() {

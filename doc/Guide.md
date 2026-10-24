@@ -313,24 +313,39 @@ Two failure modes of the old reset alert are fixed here:
 4. `pnpm test:unit`
 5. `pnpm build`
 6. `pnpm smoke:build`
-7. `pnpm dist:mac` and `pnpm dist:win`
-8. Actually open the installer and confirm the app launches
+7. `cd src-tauri && cargo test` (the Tauri build's own tests)
+8. `pnpm exec tauri build` (macOS) to produce the installer locally; on Windows the same command builds the NSIS installer
+9. Actually open the installer and confirm the app launches
 
 #### Releasing (tag)
-1. Confirm `package.json`'s `version` matches the intended tag (e.g. `1.0.0` for `v1.0.0`)
+1. Confirm the version in `package.json`, `src-tauri/tauri.conf.json` and `src-tauri/Cargo.toml` (and the `usage-pulse` entry in `src-tauri/Cargo.lock`) all match the intended tag (e.g. `1.0.0` for `v1.0.0`). CI fails the release if any of the first three differ.
 2. Write `release-notes/<version>.json` (all four languages — `zh`/`en`/`ja`/`ko`; see `release-notes/README.md`). This is what the in-app update prompt shows (Windows only for now) and what the GitHub Release body becomes — CI fails the build if it's missing or incomplete.
 3. Add the version's entry to `CHANGELOG.md` in both the English and the Traditional Chinese sections (heading `### [<version>] - <release date>`, above the previous version; grouped as Added / Changed / Fixed / Removed). CI does not check this, so it has to be done before tagging.
 4. Create and push the tag:
    - `git tag v1.0.0`
    - `git push origin v1.0.0`
-5. GitHub Actions will automatically build and publish the Release artifacts
+5. GitHub Actions will automatically build and publish the Release artifacts: macOS arm64 and x64 `.dmg`, the Windows NSIS installer, `latest.json` (Tauri updater) and `latest.yml` (existing Electron installs)
+6. Repository secrets the build needs: `TAURI_SIGNING_PRIVATE_KEY` (and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` if the key has a password). This is the *update* signing key (`pnpm exec tauri signer generate`); its public half is `plugins.updater.pubkey` in `tauri.conf.json`. Losing it means installed copies can no longer be updated. The installers themselves are **not** code-signed or notarized yet (no certificate), so macOS needs right-click -> Open on first launch and Windows shows SmartScreen.
+
+#### Pre-release before the official tag
+- Tag `v3.0.0-rc1` first. A tag with a hyphen is published as a GitHub pre-release; the updater reads `releases/latest`, so nobody is offered it. The version check compares the files' `3.0.0` with the tag without its `-rc1`.
+- Publishing waits for the Windows install smoke test (`scripts/ci/windows-install-smoke.ps1`: silent install, Start Menu shortcut with the app's AppUserModelID, launch, update check ran, second launch hands over, uninstall leaves nothing). `Windows Installer Smoke` can also be run by hand from the Actions tab, with no secrets.
+- Tag the official `v3.0.0` only after the pre-release's jobs are green. What a pre-release cannot prove is the "old version updates itself to the new one" step, because the feed is always the latest official release; that is first exercised by the first patch release after the switch.
+- Not covered by any automation, so not verified on a real Windows machine: tray icon look in light and dark themes, Windows 11 hiding new tray icons by default, popover placement with the taskbar on the top, left or right, high-DPI scaling, how a toast looks, and whether the console flash is gone.
+
+#### Upgrading from the Electron build
+- Settings are imported on the first launch of the Tauri build; unknown and retired keys are dropped.
+- The LINE token and the Claude manual token are not imported (Electron encrypted them with its own key store): enter them again. The fields show the usual "not set" state until you do.
+- The Tauri installer is a different product from the Electron one and installs per user, so an old Electron copy can stay behind. Uninstall it from Windows "Installed apps" or by deleting the app on macOS.
 
 #### Auto-update
 
-- Windows only (`src/main/updater.ts`, wraps `electron-updater`). macOS builds are unsigned (`build.mac.identity: null`, no notarization) and Squirrel.Mac's silent install cannot be relied on without a signature, so macOS never runs any update-check logic today.
-- Checked on startup, every 6 hours while `autoCheckForUpdates` is on, and any time via the tray menu's "Check for Updates" item. Everything (download, install) is user-triggered — nothing installs itself in the background.
+- Windows only (`src-tauri/src/updater.rs`, `tauri-plugin-updater`). macOS builds are unsigned and not notarized, so macOS never runs any update-check logic today. The feed is the latest GitHub Release's `latest.json`, verified against `plugins.updater.pubkey`.
+- Checked 10 seconds after startup, every 6 hours while `autoCheckForUpdates` is on. Everything (download, install) is user-triggered — nothing installs itself in the background.
 - Release notes shown in the update prompt are read straight from that tag's `release-notes/<version>.json` on GitHub (not the GitHub Release body, which is auto-generated English only) — see "Releasing (tag)" above.
-- `package.json`'s `build.publish` (provider `github`) is required for two things: electron-builder writes `app-update.yml` into the packaged app (electron-updater's default feed) and `latest.yml` into `release/` at build time. `dist:win`/`dist:mac` still run with `--publish never` — the GitHub Release itself is published by `action-gh-release`, not electron-builder.
+- Installs from before the switch (Electron, `electron-updater`) look for `latest.yml`. `scripts/build-update-manifests.mjs` writes one that points at the Windows installer of the release, so they can step over to the Tauri build. That hand-over has not been tried on a real 2.x install: the Tauri installer is a different product from the Electron one and installs per user, so check for a leftover Electron copy after upgrading.
+- Electron-era notes (kept for the Electron build still in the repo):
+  - `package.json`'s `build.publish` (provider `github`) is required for two things: electron-builder writes `app-update.yml` into the packaged app (electron-updater's default feed) and `latest.yml` into `release/` at build time. `dist:win`/`dist:mac` still run with `--publish never` — the GitHub Release itself is published by `action-gh-release`, not electron-builder.
 
 ---
 
@@ -583,21 +598,36 @@ Cursor 是「到期提醒」（本期 `billingCycleEnd`，用量重設與計費�
 4. `pnpm test:unit`
 5. `pnpm build`
 6. `pnpm smoke:build`
-7. `pnpm dist:mac` 與 `pnpm dist:win`
-8. 實際打開安裝檔，確認應用程式可啟動
+7. `cd src-tauri && cargo test`（Tauri 版自己的測試）
+8. `pnpm exec tauri build`：在 macOS 本機產生安裝檔；在 Windows 同一個指令會建置 NSIS 安裝檔
+9. 實際打開安裝檔，確認應用程式可啟動
 
 #### 發版（tag）
-1. 確認 `package.json` 的 `version` 與預計 tag 一致（例如 `1.0.0` 對 `v1.0.0`）
+1. 確認 `package.json`、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml` 的 `version`（以及 `src-tauri/Cargo.lock` 裡 `usage-pulse` 那一筆）都與預計 tag 一致（例如 `1.0.0` 對 `v1.0.0`）。前三處只要有一處不同，CI 會讓發版直接失敗。
 2. 撰寫 `release-notes/<version>.json`（四語言 `zh`/`en`/`ja`/`ko` 都要，格式見 `release-notes/README.md`）。這份內容會用在 app 內的更新提示（目前僅 Windows）以及 GitHub Release 說明——缺漏任一語言會讓 CI 直接失敗。
 3. 在 `CHANGELOG.md` 補上該版本條目，English 與繁體中文兩個段落各一份（標題 `### [<version>] - <發版日期>`，放在上一版之前；依新增／變更／修復／移除分類）。CI 不會檢查這一項，所以要在打 tag 之前完成。
 4. 建立並推送 tag：
    - `git tag v1.0.0`
    - `git push origin v1.0.0`
-5. GitHub Actions 會自動建置並發佈 Release 檔案
+5. GitHub Actions 會自動建置並發佈 Release 檔案：macOS arm64 與 x64 的 `.dmg`、Windows NSIS 安裝檔、`latest.json`（Tauri 更新器）與 `latest.yml`（既有的 Electron 安裝版）
+6. 建置需要的 repository secrets：`TAURI_SIGNING_PRIVATE_KEY`（金鑰有密碼時再加 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`）。這是「更新簽章」金鑰（`pnpm exec tauri signer generate` 產生），公鑰放在 `tauri.conf.json` 的 `plugins.updater.pubkey`；金鑰遺失，已安裝的版本就再也無法更新。安裝檔本身目前**沒有**程式碼簽章或公證（還沒有憑證），所以 macOS 第一次要右鍵「打開」，Windows 會跳 SmartScreen。
+
+#### 先發預發行版再發正式版
+- 先打 `v3.0.0-rc1`。tag 帶連字號會以 GitHub 預發行版發佈；更新器讀的是 `releases/latest`，所以沒有人會被提示更新。版本檢查會把 tag 去掉 `-rc1` 後與檔案裡的 `3.0.0` 比對。
+- 發佈會等 Windows 安裝冒煙測試（`scripts/ci/windows-install-smoke.ps1`：靜默安裝、開始功能表捷徑帶有應用程式識別碼、啟動、更新檢查有執行、第二次啟動會交棒、解除安裝不留殘檔）通過。也可以在 Actions 頁手動執行 `Windows Installer Smoke`，不需要任何 secret。
+- 預發行版的任務都通過後，才打正式的 `v3.0.0`。預發行版證明不了「舊版自己更新成新版」這一步，因為更新來源永遠是最新的正式版；這一步要到改框架之後的第一個 patch 版才會真正走一次。
+- 以下項目沒有任何自動化覆蓋，也尚未在 Windows 實機驗證：託盤圖示在淺色與深色主題下的外觀、Windows 11 預設把新託盤圖示收進隱藏區、工作列在上／左／右時 popover 的位置、高 DPI 縮放、Toast 通知的實際外觀、主控台閃窗是否消失。
+
+#### 從 Electron 版升級
+- 設定會在 Tauri 版第一次啟動時匯入；未知與已淘汰的欄位會被丟棄。
+- LINE token 與 Claude 手動 token 不會匯入（Electron 用自己的金鑰庫加密）：請重新輸入，在輸入之前欄位會顯示一般的「尚未設定」狀態。
+- Tauri 安裝檔與 Electron 版是不同的產品、而且安裝在使用者目錄，舊的 Electron 版可能殘留。請從 Windows「已安裝的應用程式」解除安裝，或在 macOS 刪除該 App。
 
 #### 自動更新
 
-- 僅支援 Windows（`src/main/updater.ts`，封裝 `electron-updater`）。macOS 版目前完全未簽章（`build.mac.identity: null`，也沒有 notarize），electron-updater 在 macOS 上的靜默安裝（Squirrel.Mac）沒有簽章不可靠，所以 macOS 目前完全不會執行任何檢查更新的邏輯。
-- 檢查時機：開機啟動時、`autoCheckForUpdates` 開啟時每 6 小時一次、以及隨時透過選單列右鍵選單的「檢查更新」手動觸發。下載與安裝都需要使用者主動按下按鈕才會發生，不會背景偷跑。
+- 僅支援 Windows（`src-tauri/src/updater.rs`，使用 `tauri-plugin-updater`）。macOS 版未簽章也沒有公證，所以 macOS 目前完全不會執行任何檢查更新的邏輯。更新來源是最新 GitHub Release 的 `latest.json`，並以 `plugins.updater.pubkey` 驗證簽章。
+- 檢查時機：啟動後 10 秒、`autoCheckForUpdates` 開啟時每 6 小時一次。下載與安裝都需要使用者主動按下按鈕才會發生，不會背景偷跑。
 - 更新提示顯示的版更說明，是直接讀取該 tag 的 `release-notes/<version>.json`（而不是 GitHub Release 本文——那是純英文自動產生的），見上方「發版（tag）」。
-- `package.json` 的 `build.publish`（provider 設為 `github`）是必要設定，用途有兩個：讓 electron-builder 把 `app-update.yml`（electron-updater 預設會讀的 feed）打包進 app 本體，以及在打包時把 `latest.yml` 寫進 `release/` 目錄。`dist:win`／`dist:mac` 仍然是 `--publish never`——真正發佈 GitHub Release 的仍是 `action-gh-release`，不是 electron-builder 自己。
+- 改框架之前安裝的版本（Electron、`electron-updater`）會去找 `latest.yml`。`scripts/build-update-manifests.mjs` 會寫一份指向該版 Windows 安裝檔的 `latest.yml`，讓它們能換到 Tauri 版。這個接手流程還沒有在真正的 2.x 安裝上試過：Tauri 安裝檔和 Electron 版是不同的產品、而且安裝在使用者目錄，升級後要確認有沒有殘留的 Electron 舊版。
+- 以下是 Electron 時期的說明（repo 裡仍保留 Electron 版）：
+  - `package.json` 的 `build.publish`（provider 設為 `github`）是必要設定，用途有兩個：讓 electron-builder 把 `app-update.yml`（electron-updater 預設會讀的 feed）打包進 app 本體，以及在打包時把 `latest.yml` 寫進 `release/` 目錄。`dist:win`／`dist:mac` 仍然是 `--publish never`——真正發佈 GitHub Release 的仍是 `action-gh-release`，不是 electron-builder 自己。

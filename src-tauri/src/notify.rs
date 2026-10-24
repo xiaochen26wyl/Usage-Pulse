@@ -154,6 +154,15 @@ fn quota_line(snapshot: &Value) -> String {
     format!("{} / {}", format_value(&snapshot["remaining"], unit), format_value(&snapshot["total"], unit))
 }
 
+// Windows toasts only carry the app's name and icon when they are sent under its
+// AppUserModelID. The installer's Start Menu shortcut is created with the bundle
+// identifier, so that is the id to use; a build that is not installed (a debug
+// run) falls back to the library default instead of claiming an id it lacks.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn toast_app_id(debug_build: bool, windows: bool) -> Option<&'static str> {
+    (windows && !debug_build).then_some(APP_ID)
+}
+
 /// The single exit for desktop notifications.
 pub fn send_desktop(title: &str, body: &str) {
     let (title, body) = (title.to_string(), body.to_string());
@@ -162,15 +171,20 @@ pub fn send_desktop(title: &str, body: &str) {
         #[cfg(all(target_os = "macos", not(debug_assertions)))]
         let _ = notify_rust::set_application(APP_ID);
         let _ = APP_ID;
-        let _ = notify_rust::Notification::new()
+        let mut notification = notify_rust::Notification::new();
+        notification
             .summary(&title)
             .body(&body)
-            .timeout(notify_rust::Timeout::Milliseconds(30_000))
-            .show();
+            .timeout(notify_rust::Timeout::Milliseconds(30_000));
+        #[cfg(windows)]
+        if let Some(id) = toast_app_id(cfg!(debug_assertions), true) {
+            notification.app_id(id);
+        }
+        let _ = notification.show();
     });
 }
 
-fn send_quota_notification(language: &str, combined: &Value, reason: &str) {
+pub fn send_quota_notification(language: &str, combined: &Value, reason: &str) {
     send_desktop(
         tr(language, "notification.title"),
         &format!("{reason}\nCursor: {} | Claude Code: {}", quota_line(&combined["cursor"]), quota_line(&combined["claude"])),
@@ -204,6 +218,15 @@ fn fire_low_quota_alert(ctx: &Ctx, id: &str, alert: &WindowAlert, exhausted: boo
         language: ctx.language,
     };
     send_line(ctx, alert.low_id, if exhausted { crate::line::exhausted(&options) } else { crate::line::low_quota(&options) });
+    if ctx.settings.alert_channel(alert.low_id, "popup") {
+        crate::alarm_window::show(
+            ctx.app,
+            json!({
+                "id": id, "service": alert.service, "label": alert.label, "fireAt": now_iso(),
+                "language": ctx.language, "countdownTarget": reset_at
+            }),
+        );
+    }
     true
 }
 
@@ -448,6 +471,13 @@ pub fn notify_changed(app: &AppHandle, service: &str, combined: &Value) -> bool 
 mod tests {
     use super::*;
 
+    #[test]
+    fn toast_id_is_only_claimed_by_an_installed_windows_build() {
+        assert_eq!(toast_app_id(false, true), Some(APP_ID));
+        assert_eq!(toast_app_id(true, true), None);
+        assert_eq!(toast_app_id(false, false), None);
+    }
+
     fn store() -> NotifyState {
         NotifyState::load(std::env::temp_dir().join(format!("usage-pulse-notify-{}-{}.json", std::process::id(), now_ms())))
     }
@@ -487,4 +517,29 @@ mod tests {
         assert!(vanished_latch_cleared("20|2000-01-01T00:00:00.000Z"));
         assert!(!vanished_latch_cleared("20|2999-01-01T00:00:00.000Z"));
     }
+}
+
+// ---- credential problems -------------------------------------------------
+
+/// Tells the user a login has lapsed, once per distinct problem (state + expiry).
+pub fn credential_unusable(app: &AppHandle, service: &str, state: &str, expires_at: Option<&str>) {
+    let notify = app.state::<NotifyState>();
+    let key = format!("{state}|{}", expires_at.unwrap_or(""));
+    if !notify.should_fire_once(&format!("credential:{service}"), &key) {
+        return;
+    }
+    let language = app.state::<SettingsState>().language();
+    let body = fill(tr(&language, "notification.credentialExpired"), &[("service", service_label(service))]);
+    let title = tr(&language, "notification.title");
+    send_desktop(title, &body);
+    crate::line::broadcast_in_background(
+        app,
+        crate::line::plain_alert(service, title, &body, &language),
+        crate::line::OwnedTarget::Service(service.to_string()),
+    );
+}
+
+/// A later, genuinely new failure must be able to notify again.
+pub fn credential_usable(app: &AppHandle, service: &str) {
+    app.state::<NotifyState>().clear(&format!("credential:{service}"));
 }
