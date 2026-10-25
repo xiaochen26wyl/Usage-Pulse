@@ -8,7 +8,7 @@ Language / 語言：[English](#english) | [繁體中文](#繁體中文)
 
 All notable changes to Usage-Pulse are documented in this file.
 
-### [3.0.0] - 2026-10-24
+### [3.0.0] - 2026-10-25
 
 #### Added
 - Usage-Pulse is now built with Tauri (`src-tauri/`) instead of Electron, reusing the same React interface. Releases ship macOS (Apple Silicon and Intel `.dmg`) and Windows (per-user NSIS installer) builds.
@@ -151,7 +151,7 @@ All notable changes to Usage-Pulse are documented in this file.
 
 本檔案記錄 Usage-Pulse 所有重要版本變更。
 
-### [3.0.0] - 2026-10-24
+### [3.0.0] - 2026-10-25
 
 #### 新增
 - Usage-Pulse 改以 Tauri（`src-tauri/`）建置，取代 Electron，沿用同一套 React 介面。Release 提供 macOS（Apple Silicon 與 Intel 的 `.dmg`）與 Windows（每使用者安裝的 NSIS 安裝檔）。
