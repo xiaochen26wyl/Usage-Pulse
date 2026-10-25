@@ -212,3 +212,77 @@ pub fn columns(combined: Option<&Value>, enabled: &[&str], show_weekly: bool, la
         })
         .collect()
 }
+
+/// The tray tooltip, the only display on Windows: one line per service, the
+/// Claude / Codex reset times, and when the data was fetched. `clock` turns an
+/// ISO timestamp into the user's local HH:MM.
+pub fn tooltip(
+    combined: Option<&Value>,
+    columns: &[Column],
+    enabled: &[&str],
+    language: &str,
+    clock: impl Fn(&str) -> Option<String>,
+) -> String {
+    let Some(combined) = combined else { return crate::i18n::tr(language, "tray.tooltip.noData").to_string() };
+    let mut lines = vec!["Usage-Pulse".to_string()];
+    lines.extend(columns.iter().map(|column| format!("{}: {}", column.label, column.value)));
+    for (service, key) in [("claude", "tray.tooltip.claudeReset"), ("codex", "tray.tooltip.codexReset")] {
+        let time = enabled.contains(&service).then(|| combined[service]["resetsAt"].as_str().and_then(&clock)).flatten();
+        if let Some(time) = time {
+            lines.push(crate::i18n::fill(crate::i18n::tr(language, key), &[("time", &time)]));
+        }
+    }
+    if let Some(time) = combined["fetchedAt"].as_str().and_then(&clock) {
+        lines.push(crate::i18n::fill(crate::i18n::tr(language, "tray.tooltip.updated"), &[("time", &time)]));
+    }
+    lines.join("\n")
+}
+
+#[cfg(test)]
+mod tooltip_tests {
+    use serde_json::json;
+
+    use super::*;
+
+    // The test clock keeps the HH:MM of the ISO string, so no time zone is involved.
+    fn clock(iso: &str) -> Option<String> {
+        iso.get(11..16).map(str::to_string)
+    }
+
+    fn combined() -> Value {
+        json!({
+            "cursor": { "service": "cursor", "resetsAt": null, "windows": [] },
+            "claude": { "service": "claude", "resetsAt": "2026-01-01T15:30:00.000Z", "windows": [] },
+            "codex": { "service": "codex", "resetsAt": null, "windows": [] },
+            "fetchedAt": "2026-01-01T10:05:00.000Z"
+        })
+    }
+
+    fn column(label: &'static str, value: &str) -> Column {
+        Column { label, label_color: (0, 0, 0), value: value.into(), weekly: None }
+    }
+
+    #[test]
+    fn no_data_uses_the_placeholder_text() {
+        assert_eq!(tooltip(None, &[], &[], "en", clock), "Usage-Pulse\nNo quota data fetched yet");
+    }
+
+    #[test]
+    fn shows_services_reset_times_and_fetch_time() {
+        let columns = [column("Cursor", "45%"), column("Claude", "80%")];
+        let text = tooltip(Some(&combined()), &columns, &["cursor", "claude"], "en", clock);
+        assert_eq!(text, "Usage-Pulse\nCursor: 45%\nClaude: 80%\nClaude reset: 15:30\nUpdated: 10:05");
+    }
+
+    #[test]
+    fn a_disabled_service_has_no_reset_line() {
+        let text = tooltip(Some(&combined()), &[column("Cursor", "45%")], &["cursor"], "en", clock);
+        assert!(!text.contains("reset"));
+    }
+
+    #[test]
+    fn follows_the_ui_language() {
+        let text = tooltip(Some(&combined()), &[column("Claude", "80%")], &["claude"], "zh", clock);
+        assert!(text.ends_with("Claude 重置: 15:30\n更新: 10:05"));
+    }
+}

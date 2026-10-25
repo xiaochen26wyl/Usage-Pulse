@@ -86,6 +86,7 @@ async fn run_check(app: &AppHandle) -> Value {
             *state.pending.lock().expect("updater lock poisoned") = Some(update);
             *state.downloaded.lock().expect("updater lock poisoned") = None;
             let _ = app.emit("update:available", info.clone());
+            crate::notify::update_available(app, &version, info["releaseNotes"].as_str().unwrap_or_default());
             json!({ "status": "available", "info": info })
         }
         Ok(None) => json!({ "status": "not-available" }),
@@ -155,7 +156,7 @@ pub fn start(app: &AppHandle) {
         // One line per launch, so an install smoke test can see the check ran.
         println!("[Usage-Pulse] updater: startup check -> {}", first["status"].as_str().unwrap_or("unknown"));
         loop {
-            tokio::time::sleep(PERIODIC_CHECK_INTERVAL).await;
+            crate::schedule::sleep_for(PERIODIC_CHECK_INTERVAL).await;
             if app.state::<SettingsState>().flag("autoCheckForUpdates") {
                 let _ = check(&app).await;
             }

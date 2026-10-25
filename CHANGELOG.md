@@ -15,6 +15,8 @@ All notable changes to Usage-Pulse are documented in this file.
 - Windows auto-update through a signed `latest.json` on the latest GitHub Release, with a "Check for Updates" item in the tray menu. A `latest.yml` is published as well so existing Electron installs can step over.
 - `scripts/bench/mem-bench.mjs`, a macOS memory sampler. Measured at idle: about 110 MB for Tauri against about 135 MB for Electron.
 - CI now builds and tests the Rust code on Windows and macOS, and a Windows job installs, launches and uninstalls the real installer.
+- Behavior carried over from Electron: quota, credential and update checks run as soon as the machine wakes from sleep instead of waiting out the rest of their interval; the last quota reading is saved and reused after a restart (so the first check after launch can report what changed); a desktop notification appears once per new version; and the tray tooltip again shows the Claude / Codex reset times and when the data was fetched.
+- The credential sweep now refreshes an open panel when a login's state changes.
 
 #### Changed
 - Windows notifications are sent under the app's own identity instead of showing up as PowerShell.
@@ -156,6 +158,8 @@ All notable changes to Usage-Pulse are documented in this file.
 - Windows 自動更新：透過最新 GitHub Release 上帶簽章的 `latest.json`，選單列右鍵選單新增「檢查更新」。同時發佈 `latest.yml`，讓既有的 Electron 安裝版能換過來。
 - `scripts/bench/mem-bench.mjs`：macOS 記憶體取樣腳本。閒置實測 Tauri 約 110 MB，Electron 約 135 MB。
 - CI 現在會在 Windows 與 macOS 上建置並測試 Rust 程式，另有 Windows 任務實際安裝、啟動並解除安裝真正的安裝檔。
+- 補回 Electron 版的行為：睡眠喚醒後額度、憑證與更新檢查會立刻補跑，不必等完剩餘的週期；最新額度讀數會存檔，重啟後沿用（啟動後第一次檢查就能回報變化）；發現新版時每個版本送一次桌面通知；選單列提示文字恢復顯示 Claude／Codex 重置時間與資料更新時間。
+- 憑證定期檢查發現登入狀態改變時，會即時刷新已開啟的面板。
 
 #### 變更
 - Windows 通知改以應用程式自己的身分送出，不再顯示成 PowerShell。

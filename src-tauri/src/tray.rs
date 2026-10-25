@@ -114,10 +114,14 @@ pub fn refresh(app: &AppHandle) {
             let _ = tray.set_icon_as_template(false);
         }
     }
-    let lines: Vec<String> = std::iter::once("Usage-Pulse".to_string())
-        .chain(columns.iter().map(|column| format!("{}: {}", column.label, column.value)))
-        .collect();
-    let _ = tray.set_tooltip(Some(lines.join("\n")));
+    let tooltip = tray_display::tooltip(
+        (!latest.is_null()).then_some(&latest),
+        &columns,
+        &enabled,
+        &settings.language(),
+        crate::time::local_clock_from_iso,
+    );
+    let _ = tray.set_tooltip(Some(tooltip));
 }
 
 /// True while a countdown (a spent window) is on screen and needs a per-minute redraw.

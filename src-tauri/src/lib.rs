@@ -14,6 +14,7 @@ mod monitor;
 mod notify;
 mod secrets;
 mod popover;
+mod schedule;
 mod settings;
 mod time;
 mod tray_display;
@@ -52,6 +53,7 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
             app.manage(alarm::AlarmState::load(data_dir.join("alarms.json")));
+            app.state::<monitor::MonitorState>().load_persisted(data_dir.join("snapshot.json"));
             tray::create(app.handle())?;
             popover::init(app.handle());
             monitor::start(app.handle());

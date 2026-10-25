@@ -1,4 +1,4 @@
-use std::{sync::Mutex, time::Duration};
+use std::{path::PathBuf, sync::Mutex, time::Duration};
 
 use serde_json::{Value, json};
 use tauri::{AppHandle, Emitter, Manager};
@@ -7,7 +7,7 @@ use crate::{
     collectors::{self, Scrape},
     credentials::{self, CredentialError, RawCredential},
     settings::SettingsState,
-    time::{iso_from_ms, now_iso, now_ms},
+    time::{iso_from_ms, now_iso, now_ms, parse_iso_ms},
 };
 
 // Polling cadence, mirrors monitor-engine.ts: 15 minutes, 10 once a window runs
@@ -20,14 +20,20 @@ const CODEX_POLL: Duration = Duration::from_secs(60);
 const EXPIRING_SOON_MS: i64 = 30 * 60 * 1000;
 pub const SERVICES: [&str; 3] = ["cursor", "claude", "codex"];
 
+// A saved reading older than this is not a basis for "what changed": the
+// shortest quota window is 5 hours, so it has almost certainly reset since.
+const SNAPSHOT_MAX_AGE_MS: i64 = 6 * 60 * 60 * 1000;
+const SNAPSHOT_VERSION: i64 = 1;
+
 pub struct MonitorState {
     latest: Mutex<Option<Value>>,
+    path: Mutex<Option<PathBuf>>,
     pub http: reqwest::Client,
 }
 
 impl Default for MonitorState {
     fn default() -> Self {
-        Self { latest: Mutex::new(None), http: collectors::cursor::http_client() }
+        Self { latest: Mutex::new(None), path: Mutex::new(None), http: collectors::cursor::http_client() }
     }
 }
 
@@ -35,6 +41,44 @@ impl MonitorState {
     pub fn latest(&self) -> Value {
         self.latest.lock().expect("monitor lock poisoned").clone().unwrap_or(Value::Null)
     }
+
+    /// Points the state at its save file and picks up the last reading, if it is still usable.
+    pub fn load_persisted(&self, path: PathBuf) {
+        let saved = std::fs::read_to_string(&path).ok().and_then(|text| serde_json::from_str::<Value>(&text).ok());
+        *self.path.lock().expect("monitor lock poisoned") = Some(path);
+        if let Some(snapshot) = saved.and_then(|saved| usable_saved_snapshot(&saved, now_ms())) {
+            *self.latest.lock().expect("monitor lock poisoned") = Some(snapshot);
+        }
+    }
+
+    fn persist(&self, snapshot: &Value) {
+        let Some(path) = self.path.lock().expect("monitor lock poisoned").clone() else { return };
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let saved = json!({ "version": SNAPSHOT_VERSION, "snapshot": snapshot });
+        if let Ok(text) = serde_json::to_string(&saved) {
+            // Temp file + rename so a crash mid-write cannot leave half a file.
+            let temp = path.with_extension("json.tmp");
+            if std::fs::write(&temp, text).is_ok() {
+                let _ = std::fs::rename(&temp, &path);
+            }
+        }
+    }
+}
+
+/// The snapshot inside a saved file, or `None` when the file is the wrong
+/// version, malformed, or its reading is too old to compare against.
+fn usable_saved_snapshot(saved: &Value, now: i64) -> Option<Value> {
+    if saved["version"].as_i64() != Some(SNAPSHOT_VERSION) {
+        return None;
+    }
+    let snapshot = saved.get("snapshot")?;
+    let fetched_at = parse_iso_ms(snapshot["fetchedAt"].as_str()?)?;
+    if now - fetched_at > SNAPSHOT_MAX_AGE_MS || fetched_at > now {
+        return None;
+    }
+    SERVICES.iter().all(|service| snapshot[*service].is_object()).then(|| snapshot.clone())
 }
 
 fn unknown_snapshot(service: &str) -> Value {
@@ -173,6 +217,7 @@ pub async fn check_service(app: &AppHandle, service: &str) -> Value {
     }
 
     *state.latest.lock().expect("monitor lock poisoned") = Some(combined.clone());
+    state.persist(&combined);
     let _ = app.emit("snapshot:updated", combined);
     crate::tray::refresh(app);
     snapshot
@@ -218,7 +263,7 @@ pub fn start(app: &AppHandle) {
                 } else {
                     NORMAL_POLL
                 };
-                tokio::time::sleep(delay).await;
+                crate::schedule::sleep_for(delay).await;
             }
         });
     }
@@ -329,4 +374,45 @@ pub async fn clear_claude_token(app: &AppHandle) -> Value {
     settings.set_secret("claudeManualToken", "");
     check_service(app, "claude").await;
     token_result(true, None, &settings.language(), "claudeToken.cleared")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn saved(version: i64, fetched_at: &str) -> Value {
+        let service = |name: &str| json!({ "service": name, "status": "ok", "windows": [{ "key": "session", "percent": 50 }] });
+        json!({
+            "version": version,
+            "snapshot": { "cursor": service("cursor"), "claude": service("claude"), "codex": service("codex"), "fetchedAt": fetched_at }
+        })
+    }
+
+    #[test]
+    fn a_recent_saved_snapshot_is_reused() {
+        let now = parse_iso_ms("2026-01-01T10:00:00.000Z").unwrap();
+        let file = saved(SNAPSHOT_VERSION, "2026-01-01T08:00:00.000Z");
+        assert!(usable_saved_snapshot(&file, now).is_some());
+    }
+
+    #[test]
+    fn a_stale_or_future_snapshot_is_dropped() {
+        let now = parse_iso_ms("2026-01-01T10:00:00.000Z").unwrap();
+        assert!(usable_saved_snapshot(&saved(SNAPSHOT_VERSION, "2026-01-01T03:00:00.000Z"), now).is_none());
+        assert!(usable_saved_snapshot(&saved(SNAPSHOT_VERSION, "2026-01-01T11:00:00.000Z"), now).is_none());
+    }
+
+    #[test]
+    fn a_wrong_version_or_malformed_file_falls_back_to_a_cold_start() {
+        let now = parse_iso_ms("2026-01-01T10:00:00.000Z").unwrap();
+        assert!(usable_saved_snapshot(&saved(SNAPSHOT_VERSION + 1, "2026-01-01T09:00:00.000Z"), now).is_none());
+        assert!(usable_saved_snapshot(&json!({ "version": SNAPSHOT_VERSION, "snapshot": { "fetchedAt": "2026-01-01T09:00:00.000Z" } }), now).is_none());
+        assert!(usable_saved_snapshot(&json!("garbage"), now).is_none());
+    }
+
+    #[test]
+    fn the_saved_file_carries_no_credential_fields() {
+        let file = saved(SNAPSHOT_VERSION, "2026-01-01T09:00:00.000Z").to_string().to_lowercase();
+        assert!(!file.contains("token") && !file.contains("secret") && !file.contains("password"));
+    }
 }

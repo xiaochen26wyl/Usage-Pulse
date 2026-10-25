@@ -79,6 +79,11 @@ mod tests {
     }
 }
 
+/// `HH:MM` in the machine's local time zone, from an ISO timestamp.
+pub fn local_clock_from_iso(iso: &str) -> Option<String> {
+    local_text_from_iso(iso).map(|text| text[11..].to_string())
+}
+
 /// `YYYY-MM-DD HH:MM` in the machine's local time zone (UTC where it cannot be read).
 pub fn local_text_from_iso(iso: &str) -> Option<String> {
     let ms = parse_iso_ms(iso)?;

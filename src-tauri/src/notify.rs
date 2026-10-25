@@ -494,6 +494,27 @@ mod tests {
     }
 
     #[test]
+    fn an_update_notifies_once_per_version() {
+        let notify = store();
+        assert!(notify.should_fire_once("update:available", "3.0.1"));
+        assert!(!notify.should_fire_once("update:available", "3.0.1"));
+        assert!(notify.should_fire_once("update:available", "3.1.0"));
+    }
+
+    #[test]
+    fn an_update_notification_falls_back_to_the_version_without_notes() {
+        assert_eq!(update_body("", "3.0.1"), "3.0.1");
+        assert_eq!(update_body("Fixes", "3.0.1"), "Fixes");
+    }
+
+    #[test]
+    fn the_update_title_exists_in_every_language() {
+        for language in ["zh", "en", "ja", "ko"] {
+            assert!(tr(language, "update.available.title").contains("{version}"), "{language}");
+        }
+    }
+
+    #[test]
     fn cursor_windows_count_used_percent_as_remaining() {
         let window = json!({ "key": "cursor_models", "percent": 85.0 });
         let state = window_state(Some(&window), true, 20.0);
@@ -537,6 +558,22 @@ pub fn credential_unusable(app: &AppHandle, service: &str, state: &str, expires_
         crate::line::plain_alert(service, title, &body, &language),
         crate::line::OwnedTarget::Service(service.to_string()),
     );
+}
+
+// ---- app updates ---------------------------------------------------------
+
+fn update_body<'a>(notes: &'a str, version: &'a str) -> &'a str {
+    if notes.is_empty() { version } else { notes }
+}
+
+/// Tells the user a new version exists even when the panel is closed, once per version.
+pub fn update_available(app: &AppHandle, version: &str, notes: &str) {
+    if !app.state::<NotifyState>().should_fire_once("update:available", version) {
+        return;
+    }
+    let language = app.state::<SettingsState>().language();
+    let title = fill(tr(&language, "update.available.title"), &[("version", version)]);
+    send_desktop(&title, update_body(notes, version));
 }
 
 /// A later, genuinely new failure must be able to notify again.
