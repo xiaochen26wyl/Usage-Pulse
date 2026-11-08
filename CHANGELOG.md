@@ -8,6 +8,11 @@ Language / 語言：[English](#english) | [繁體中文](#繁體中文)
 
 All notable changes to Usage-Pulse are documented in this file.
 
+### [4.0.1] - 2026-11-08
+
+#### Changed
+- The README now states that Cursor and Codex quota reading has not been tested on the Rust build yet, while Claude Code monitoring has. The app itself is unchanged from 4.0.0.
+
 ### [4.0.0] - 2026-11-08
 
 #### Added
@@ -166,6 +171,11 @@ All notable changes to Usage-Pulse are documented in this file.
 ## 繁體中文
 
 本檔案記錄 Usage-Pulse 所有重要版本變更。
+
+### [4.0.1] - 2026-11-08
+
+#### 變更
+- README 補上提醒：Rust 版的 Cursor 與 Codex 額度讀取尚未實際測試，Claude Code 監控已測試。程式本身與 4.0.0 相同。
 
 ### [4.0.0] - 2026-11-08
 

@@ -1,0 +1,6 @@
+{
+  "zh": "- 補上提醒：4.0.0 改以 Rust 重寫後，Cursor 與 Codex 的額度讀取尚未實際測試，這兩張卡片可能顯示錯誤或讀不到資料\n- Claude Code 監控已測試；程式功能與 4.0.0 相同，遇到問題歡迎回報",
+  "en": "- Added a notice: after the 4.0.0 rewrite in Rust, Cursor and Codex quota reading has not been tested yet, so those two cards may show wrong numbers or fail to load\n- Claude Code monitoring has been tested; the app itself is unchanged from 4.0.0, and reports are welcome",
+  "ja": "- お知らせを追加：4.0.0 の Rust への書き直し後、Cursor と Codex のクォータ取得はまだテストしておらず、この 2 つのカードは誤った数値を表示したり読み込めなかったりする可能性があります\n- Claude Code の監視はテスト済みです。アプリ自体は 4.0.0 と同じで、問題があればお知らせください",
+  "ko": "- 안내 추가: 4.0.0의 Rust 재작성 이후 Cursor와 Codex 한도 읽기는 아직 테스트하지 않았으므로 이 두 카드는 잘못된 수치를 표시하거나 불러오지 못할 수 있습니다\n- Claude Code 모니터링은 테스트를 마쳤습니다. 앱 자체는 4.0.0과 동일하며 문제가 있으면 알려 주세요"
+}

@@ -1,6 +1,6 @@
 {
   "name": "usage-pulse",
-  "version": "4.0.0",
+  "version": "4.0.1",
   "description": "Cross-platform tray app to monitor AI quota usage with desktop alerts.",
   "author": "xiaochen26wyl",
   "license": "SEE LICENSE IN LICENSE",
