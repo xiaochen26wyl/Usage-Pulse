@@ -1,6 +1,6 @@
 // Draws the menu-bar image: a dark rounded rectangle with, per service, its
-// name over its value and an optional second figure beside it. A port of
-// src/main/tray-icon-renderer.ts, using the system's own fonts.
+// name over its value and an optional second figure beside it. Drawn with
+// the system's own fonts.
 use std::sync::OnceLock;
 
 use ab_glyph::{Font, FontRef, PxScale, ScaleFont, point};

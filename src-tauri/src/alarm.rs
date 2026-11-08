@@ -1,6 +1,6 @@
 // Reset-time alarms. A port of src/main/alarm-service.ts and src/shared/alarm-utils.ts.
 //
-// The Electron build arms one setTimeout per target. Here a 5-second tick
+// A 5-second tick
 // re-evaluates every target against the wall clock instead: monotonic timers do
 // not advance while the machine sleeps, and the evaluation is idempotent
 // (every decision is recorded per fireAt), so a late wake-up still rings

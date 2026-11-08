@@ -94,8 +94,8 @@ fn enabled_services(settings: &SettingsState) -> Vec<&'static str> {
     if services.is_empty() { vec!["cursor", "claude", "codex"] } else { services }
 }
 
-/// Redraws the menu-bar image from the latest snapshot (macOS only, like the
-/// Electron build: elsewhere the tooltip is the display).
+/// Redraws the menu-bar image from the latest snapshot (macOS only: elsewhere
+/// the tooltip is the display).
 pub fn refresh(app: &AppHandle) {
     let Some(tray) = app.tray_by_id(TRAY_ID) else { return };
     let settings = app.state::<SettingsState>();

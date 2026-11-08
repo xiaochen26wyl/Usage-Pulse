@@ -41,7 +41,7 @@ fn open_external(url: &str) -> Result<(), String> {
 
 const MAX_CLIPBOARD_LENGTH: usize = 256;
 
-// Mirrors asClipboardText in src/main/ipc-validation.ts: whatever lands on the
+// Whatever lands on the
 // clipboard is pasted into a shell, so no control characters and a short cap.
 fn clipboard_text(value: &Value) -> Option<&str> {
     let text = value.as_str()?;
@@ -52,7 +52,7 @@ fn clipboard_text(value: &Value) -> Option<&str> {
 }
 
 // Every request from the renderer arrives here, keyed by the same
-// `domain:action` channel names the Electron build uses. Channels still waiting
+// `domain:action` channel names. Channels still waiting
 // for their phase answer with the neutral value the UI already copes with.
 #[tauri::command]
 pub async fn ipc_invoke(

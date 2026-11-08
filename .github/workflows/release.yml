@@ -62,7 +62,7 @@ jobs:
       - name: Run unit tests
         run: pnpm test:unit
 
-      - name: Build app
+      - name: Build renderer
         run: pnpm build
 
       - name: Run build smoke test

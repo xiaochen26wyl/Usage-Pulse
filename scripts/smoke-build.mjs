@@ -2,12 +2,9 @@ import { access } from "node:fs/promises";
 import { join } from "node:path";
 
 const root = process.cwd();
-const requiredFiles = [
-  "dist/main/index.js",
-  "dist/preload/index.js",
-  "dist/renderer/index.html",
-  "dist/renderer/alarm.html"
-];
+// The renderer bundle `tauri build` embeds (see vite.tauri.config.ts). The Rust half
+// is compiled and tested by the `rust` CI job, so this only guards the web half.
+const requiredFiles = ["dist/renderer-tauri/index.html", "dist/renderer-tauri/alarm.html"];
 
 const assertExists = async (relativePath) => {
   const absolutePath = join(root, relativePath);

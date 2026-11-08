@@ -1,4 +1,4 @@
-// Is Cursor / Claude Code / Codex running? A port of src/main/ide-presence.ts.
+// Is Cursor / Claude Code / Codex running?
 // Two users: the "quit when the IDE has been gone for an hour" prompt below,
 // and the history cleaner, which refuses to touch Codex's databases while Codex
 // is up. Only process names and command lines are read.

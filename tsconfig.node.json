@@ -10,21 +10,16 @@
     "esModuleInterop": true,
     "resolveJsonModule": true,
     "types": [
-      "node",
-      "electron"
+      "node"
     ],
     "paths": {
       "@shared/*": [
         "./src/shared/*"
-      ],
-      "@main/*": [
-        "./src/main/*"
       ]
     }
   },
   "include": [
-    "electron.vite.config.ts",
-    "src/main/**/*.ts",
+    "vite.tauri.config.ts",
     "src/shared/**/*.ts"
   ]
 }

@@ -2,7 +2,6 @@
   "name": "usage-pulse",
   "version": "3.0.0",
   "description": "Cross-platform tray app to monitor AI quota usage with desktop alerts.",
-  "main": "dist/main/index.js",
   "author": "xiaochen26wyl",
   "license": "SEE LICENSE IN LICENSE",
   "repository": {
@@ -10,21 +9,14 @@
     "url": "https://github.com/xiaochen26wyl/Usage-Pulse.git"
   },
   "scripts": {
-    "postinstall": "node scripts/fix-electron-install.mjs",
-    "fix:electron": "node scripts/fix-electron-install.mjs",
-    "dev": "electron-vite dev --watch",
     "tauri:dev": "node scripts/tauri-dev.mjs",
     "gen:rust-i18n": "tsx scripts/gen-rust-i18n.ts",
     "tauri:check": "cargo check --manifest-path src-tauri/Cargo.toml",
-    "build": "electron-vite build",
-    "preview": "electron-vite preview",
+    "build": "vite build --config vite.tauri.config.ts",
     "test:unit": "tsx --test \"tests/**/*.test.ts\"",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "check:readonly": "node scripts/check-readonly.mjs",
     "smoke:build": "node scripts/smoke-build.mjs",
-    "dist": "pnpm build && electron-builder --publish never",
-    "dist:mac": "pnpm build && electron-builder --mac dmg --x64 --arm64 --publish never",
-    "dist:win": "pnpm build && electron-builder --win nsis --x64 --publish never",
     "git:start-work": "node scripts/git-workflow.mjs start-work",
     "git:start-branch": "node scripts/git-workflow.mjs start-branch",
     "git:sync-main": "node scripts/git-workflow.mjs sync-main",
@@ -37,75 +29,19 @@
     "git:end-day": "node scripts/git-workflow.mjs end-day"
   },
   "dependencies": {
-    "@napi-rs/canvas": "^1.0.11",
     "@tauri-apps/api": "^2",
-    "axios": "^1.11.0",
-    "electron-store": "^10.0.1",
-    "electron-updater": "^6.3.9",
-    "menubar": "^9.5.3",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "sql.js": "^1.14.2"
+    "react-dom": "^18.3.1"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",
     "@types/node": "^22.10.2",
     "@types/react": "^18.3.21",
     "@types/react-dom": "^18.3.7",
-    "@types/sql.js": "^1.4.11",
     "@vitejs/plugin-react": "^4.4.1",
-    "electron": "^43.4.1",
-    "electron-builder": "^25.1.8",
-    "electron-vite": "^3.0.0",
     "tsx": "^4.23.12",
     "typescript": "^5.9.3",
     "vite": "^5.4.19"
-  },
-  "build": {
-    "appId": "com.xiaochen26wyl.usagepulse",
-    "productName": "Usage-Pulse",
-    "asar": true,
-    "npmRebuild": false,
-    "directories": {
-      "output": "release"
-    },
-    "files": [
-      "dist/**",
-      "assets/**",
-      "node_modules/sql.js/**/*",
-      "node_modules/@napi-rs/**/*",
-      "package.json"
-    ],
-    "mac": {
-      "category": "public.app-category.utilities",
-      "identity": null,
-      "icon": "build/icon.png",
-      "target": [
-        {
-          "target": "dmg",
-          "arch": [
-            "x64",
-            "arm64"
-          ]
-        }
-      ]
-    },
-    "win": {
-      "icon": "build/icon.png",
-      "target": [
-        {
-          "target": "nsis",
-          "arch": [
-            "x64"
-          ]
-        }
-      ]
-    },
-    "publish": {
-      "provider": "github",
-      "owner": "xiaochen26wyl",
-      "repo": "Usage-Pulse"
-    }
   },
   "pnpm": {
     "supportedArchitectures": {

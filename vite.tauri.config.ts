@@ -2,7 +2,7 @@ import { resolve } from "node:path";
 import react from "@vitejs/plugin-react";
 import { defineConfig, type Plugin } from "vite";
 
-// The HTML entry points ship a CSP that suits Electron's file:// pages
+// The HTML entry points ship a CSP that suits a plain file:// page
 // (`connect-src 'none'`). Tauri's IPC runs over ipc: / http://ipc.localhost, so
 // the policy is rewritten for this build; the dev server also needs inline
 // script and a websocket for HMR / React Refresh. Never removed, only swapped,

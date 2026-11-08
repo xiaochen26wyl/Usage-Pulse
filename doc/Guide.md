@@ -28,7 +28,7 @@
 #### Cursor
 - Local source: `state.vscdb` (read-only query of `cursorAuth/accessToken`)
 - Remote source: `https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage` (falls back to `GetPlanInfo` when the included-usage limit is missing)
-- Windows (`src/main/collectors/cursor.ts`):
+- Windows (`src-tauri/src/collectors/cursor.rs`):
   - `billing_cycle`: remaining included-usage amount (USD) and `billingCycleEnd`
   - `cursor_models`: `autoPercentUsed` (**used %**)
   - `other_models`: `apiPercentUsed` (**used %**)
@@ -46,7 +46,6 @@
 - Local source: `~/.codex/auth.json`, or the macOS Keychain item named in `~/.codex/config.toml`'s credentials-store pref (`Codex Auth` / `com.openai.codex` / `Codex Auth Credentials`). Both are read-only — Usage-Pulse never writes them. There is no in-app Codex login UI; the user logs in with the Codex CLI or Codex Desktop first.
 - Remote source: `https://chatgpt.com/backend-api/wham/usage`, falling back to `https://chatgpt.com/backend-api/codex/usage`
 - Windows (`src/shared/codex-usage.ts`): classified by duration (5 hours / 7 days), not by backend slot names like `primary_window` / `secondary_window`. Those labels carry no identity of their own. A window whose only name is a slot label and that cannot claim the 5-hour or weekly slot is dropped (`parseWindowObject` returns `null`; the renderer also filters with `isCodexBackendSlotKey`) rather than shown as its own card. Extra windows the API reports (for example code-review) are displayed but not independently alerted. Remaining credits are shown when the payload includes them.
-- Cached snapshots are re-normalized on read and write (`normalizeCodexSnapshot` in `src/main/store.ts`), so an older mislabeled window is repaired the next time the app loads it.
 - Token refresh: if the access token is near expiry, Usage-Pulse refreshes it in process memory using the official Codex CLI's public OAuth client id. The new token is never written back to `~/.codex/auth.json`.
 
 #### Re-detecting a Claude Code credential
@@ -78,8 +77,8 @@ The block offers two routes:
    button's work is already covered by **Update Values**.
 2. **Pasting a token into the card** — a fallback for when no terminal is at
    hand. `claude:save-token` verifies it by calling
-   `collectClaudeCodeQuotaFromToken` with it *before* storing anything;
-   `classifyClaudeTokenProbe` (`src/main/claude-manual-token.ts`) turns that
+   `collectors::claude::collect_with_token` with it *before* storing anything;
+   `save_claude_token` (`src-tauri/src/monitor.rs`) turns that
    attempt into store-or-refuse. A token that cannot read usage is never
    stored, and the refusal names the reason that actually occurred. A 200 with
    no quota windows counts as success — the token answered the API, which is
@@ -139,7 +138,7 @@ Usage-Pulse deliberately keeps its request volume to Anthropic low.
   it, and once tripped it can keep returning 429 for hours even after backing
   off to 5-minute retries. The community's rough safe floor is ~180 seconds,
   and only with the `User-Agent: claude-code/` header set — which
-  [claude-code.ts:18](../src/main/collectors/claude-code.ts) already sends.
+  [claude.rs](../src-tauri/src/collectors/claude.rs) already sends.
   Anthropic closed both issues "not planned" with no official guidance. Given
   that, the current 15/10-minute schedule plus the 5-minute
   `MIN_CLAUDE_FETCH_GAP_MS` floor is already more conservative than the
@@ -160,7 +159,7 @@ separate minimum-gap floor, since the fixed interval already is the floor.
 There is no CLI-activity gate for Codex: every tick makes a request.
 
 ### Completed features
-- Electron + React + TypeScript project skeleton (Electron `^43.4.1`)
+- Tauri 2 (Rust) + React + TypeScript project skeleton
 - Sidecar Observer refactor (removed web session login flow)
 - Local credential detection + API quota fetching (Cursor, Claude Code, Codex)
 - Background scheduled monitoring (15 minutes normally, 10 minutes when a window is low; Codex is a fixed 1-minute cadence)
@@ -168,7 +167,7 @@ There is no CLI-activity gate for Codex: every tick makes a request.
 - Timed alarm: an always-on-top popup in the top-right corner when due (Cursor period end / Claude and Codex window reset / Claude subscription renewal)
 - Four-language UI (Traditional Chinese / English / Japanese / Korean), switchable in Settings
 - GitHub Actions Release (tag-triggered `.dmg` / `.exe`; Windows also ships `latest.yml`)
-- Windows auto-update via `electron-updater` (user-confirmed download and install; macOS excluded — see "Auto-update")
+- Windows auto-update via `tauri-plugin-updater` (user-confirmed download and install; macOS excluded — see "Auto-update")
 - Per-release, four-language release notes (`release-notes/<version>.json`) reused for the GitHub Release body and the in-app update prompt
 - CI quality gates (typecheck, readonly guard, unit tests, build, smoke build)
 - LINE quit status: a real quit (UI or tray) calls `app.quit()`; if LINE is on, `before-quit` broadcasts one Flex message — a swipeable carousel with a card per window — from the cached snapshot, covering every enabled service that has a known reading (Cursor overall, Claude 5-hour / weekly, Codex 5-hour / weekly). Unknown / never-polled windows are skipped. It is a single LINE notification per quit, however many windows are monitored.
@@ -284,26 +283,26 @@ Two failure modes of the old reset alert are fixed here:
 ### Security constraints
 - OAuth tokens are only held briefly in memory.
 - Writing to `state.vscdb`, `.credentials.json`, or `~/.codex/auth.json` is forbidden.
-- Clear older than 2 weeks (`history:get-stats` / `history:clean`, `src/main/history-cleaner.ts`) is the only module allowed to delete IDE/CLI files, and `scripts/check-readonly.mjs` lists it as the deliberate exception. It runs only after the user clicks the button on the Claude Code or Codex card and confirms a native dialog shown by main (Cancel is the default; the renderer cannot skip it). Cursor has no such button: its conversations share `state.vscdb` with its credential. Scope: conversation history older than two weeks (`HISTORY_RETENTION_DAYS`, by modification time, strictly older) — never credentials, settings, `memory` folders, `projects`/`thread_sections`, or `external_agent_session_imports.json`. The card shows the total and the part older than two weeks; the button is disabled when nothing is.
+- Clear older than 2 weeks (`history:get-stats` / `history:clean`, `src-tauri/src/history.rs`) is the only module allowed to delete IDE/CLI files, and `scripts/check-readonly.mjs` lists it as the deliberate exception. It runs only after the user clicks the button on the Claude Code or Codex card and confirms a native dialog shown by main (Cancel is the default; the renderer cannot skip it). Cursor has no such button: its conversations share `state.vscdb` with its credential. Scope: conversation history older than two weeks (`HISTORY_RETENTION_DAYS`, by modification time, strictly older) — never credentials, settings, `memory` folders, `projects`/`thread_sections`, or `external_agent_session_imports.json`. The card shows the total and the part older than two weeks; the button is disabled when nothing is.
   - Claude Code: `.jsonl` files under `~/.claude/projects` older than two weeks go to the OS trash.
-  - Codex: refused if Codex (desktop app or CLI) cannot be probed; if it is running, a second warning dialog (cancel is the default) must be confirmed before the clean proceeds, otherwise nothing is done (the leftover `crashpad_handler` helper is not counted as Codex running), when a `state_N`/`thread_history_N`/`logs_N` file has a version other than the verified `5`/`1`/`2`, when a table or a matched column is unknown or missing, when an unlisted table references a cleared one, when `quick_check` fails, or when no SQLite engine (`node:sqlite`) is available. A refusal changes nothing. Otherwise the threads in `state_5` whose `updated_at` is older than two weeks and that are not pinned are removed together with their rows in `thread_attachments`, `thread_dynamic_tools`, `thread_spawn_edges`, and the thread tables of `thread_history_1`; `logs` rows older than two weeks are removed from `logs_2` (one transaction per database, `state_5` first, then `wal_checkpoint(TRUNCATE)` + `VACUUM`). Only after every database succeeds are those threads' rollout files, plus old `.jsonl` files no thread points at, trashed (a file a surviving thread uses is never touched) and their lines dropped from `session_index.jsonl` (temp file + rename). Database rows cannot be trashed and cannot be restored; the confirmation dialog says so. Cross-database atomicity is not guaranteed: if a later database fails, orphaned history rows may remain but no file is touched.
+  - Codex: refused if Codex (desktop app or CLI) cannot be probed; if it is running, a second warning dialog (cancel is the default) must be confirmed before the clean proceeds, otherwise nothing is done (the leftover `crashpad_handler` helper is not counted as Codex running), when a `state_N`/`thread_history_N`/`logs_N` file has a version other than the verified `5`/`1`/`2`, when a table or a matched column is unknown or missing, when an unlisted table references a cleared one, when `quick_check` fails. A refusal changes nothing. Otherwise the threads in `state_5` whose `updated_at` is older than two weeks and that are not pinned are removed together with their rows in `thread_attachments`, `thread_dynamic_tools`, `thread_spawn_edges`, and the thread tables of `thread_history_1`; `logs` rows older than two weeks are removed from `logs_2` (one transaction per database, `state_5` first, then `wal_checkpoint(TRUNCATE)` + `VACUUM`). Only after every database succeeds are those threads' rollout files, plus old `.jsonl` files no thread points at, trashed (a file a surviving thread uses is never touched) and their lines dropped from `session_index.jsonl` (temp file + rename). Database rows cannot be trashed and cannot be restored; the confirmation dialog says so. Cross-database atomicity is not guaranteed: if a later database fails, orphaned history rows may remain but no file is touched.
   - Windows: the Codex process probe and the clean itself are untested there.
-- Claude Code credentials are entirely read-only: Usage-Pulse never spawns the `claude` CLI, never implements OAuth itself, and never writes to the official `Claude Code-credentials` Keychain item. The only Keychain write it ever performs is a one-time, best-effort deletion of the retired `Usage-Pulse-Claude-setup-token` item left over from the old setup-token flow.
-- Re-reading a credential (`auth:check`) only reads the Keychain item, never writes to it; the user completes `claude auth login` entirely in their own terminal, outside the app. A token pasted into the card is verified against the usage API before it is stored, and lives in `electron-store` under `safeStorage` encryption — never in a Keychain item.
+- Claude Code credentials are entirely read-only: Usage-Pulse never spawns the `claude` CLI, never implements OAuth itself, and never writes to the official `Claude Code-credentials` Keychain item. It performs no Keychain write at all; the retired `Usage-Pulse-Claude-setup-token` item the old setup-token flow left behind is no longer cleaned up (the Electron builds deleted it on every launch), so the credential and collector code contains no delete call.
+- Re-reading a credential (`auth:check`) only reads the Keychain item, never writes to it; the user completes `claude auth login` entirely in their own terminal, outside the app. A token pasted into the card is verified against the usage API before it is stored, and is kept in the system keyring (`secrets.rs`), never in the plain settings file.
 - Codex credentials are also read-only on disk. Near-expiry access tokens may be refreshed in process memory via the official Codex CLI's public OAuth client; the new token is never written back to `~/.codex/auth.json` or Keychain.
 - On a 401 or missing quota data, return an actionable error message. Claude Code and Cursor never auto-refresh; Codex's in-memory refresh (above) is the only exception.
 
 ### Development and packaging
 
 #### Common commands
-- `pnpm dev`: start Electron in development mode
+- `pnpm tauri:dev`: start the app in development mode
 - `pnpm typecheck`: TypeScript type checking
 - `pnpm check:readonly`: readonly-boundary guard check
 - `pnpm test:unit`: unit tests
-- `pnpm build`: build the application
-- `pnpm smoke:build`: smoke test on the build output
-- `pnpm dist:mac`: produce a macOS `.dmg`
-- `pnpm dist:win`: produce a Windows `.exe`
+- `pnpm build`: build the renderer bundle
+- `pnpm smoke:build`: smoke test on the renderer bundle
+- `cargo test` (in `src-tauri/`): Rust unit tests
+- `pnpm exec tauri build --no-bundle`: compile the app without an installer (installers are built by the Release workflow)
 - Git daily workflow (`start-work` / `push-wip` / `finish-work`) → [`doc/Git_Workflow.md`](Git_Workflow.md)
 
 #### Before every release (local)
@@ -344,8 +343,6 @@ Two failure modes of the old reset alert are fixed here:
 - Checked 10 seconds after startup, every 6 hours while `autoCheckForUpdates` is on. Everything (download, install) is user-triggered — nothing installs itself in the background.
 - Release notes shown in the update prompt are read straight from that tag's `release-notes/<version>.json` on GitHub (not the GitHub Release body, which is auto-generated English only) — see "Releasing (tag)" above.
 - Installs from before the switch (Electron, `electron-updater`) look for `latest.yml`. `scripts/build-update-manifests.mjs` writes one that points at the Windows installer of the release, so they can step over to the Tauri build. That hand-over has not been tried on a real 2.x install: the Tauri installer is a different product from the Electron one and installs per user, so check for a leftover Electron copy after upgrading.
-- Electron-era notes (kept for the Electron build still in the repo):
-  - `package.json`'s `build.publish` (provider `github`) is required for two things: electron-builder writes `app-update.yml` into the packaged app (electron-updater's default feed) and `latest.yml` into `release/` at build time. `dist:win`/`dist:mac` still run with `--publish never` — the GitHub Release itself is published by `action-gh-release`, not electron-builder.
 
 ---
 
@@ -373,7 +370,7 @@ Two failure modes of the old reset alert are fixed here:
 #### Cursor
 - 本機來源：`state.vscdb`（唯讀查詢 `cursorAuth/accessToken`）
 - 遠端來源：`https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage`（included-usage 上限缺失時再打 `GetPlanInfo`）
-- 視窗（`src/main/collectors/cursor.ts`）：
+- 視窗（`src-tauri/src/collectors/cursor.rs`）：
   - `billing_cycle`：included usage 剩餘金額（USD）與 `billingCycleEnd`
   - `cursor_models`：`autoPercentUsed`（**已使用 %**）
   - `other_models`：`apiPercentUsed`（**已使用 %**）
@@ -391,7 +388,6 @@ Two failure modes of the old reset alert are fixed here:
 - 本機來源：`~/.codex/auth.json`，或 `~/.codex/config.toml` 憑證存放偏好所指定的 macOS Keychain 項目（`Codex Auth`／`com.openai.codex`／`Codex Auth Credentials`）。兩者皆唯讀——Usage-Pulse 從不寫入。沒有 App 內 Codex 登入介面；使用者需先用 Codex CLI 或 Codex Desktop 登入。
 - 遠端來源：`https://chatgpt.com/backend-api/wham/usage`，失敗再打 `https://chatgpt.com/backend-api/codex/usage`
 - 視窗（`src/shared/codex-usage.ts`）：依時長分類（5 小時／7 天），不用 `primary_window`／`secondary_window` 這類後端槽位名稱。那些標籤本身沒有身分。若一個視窗的名字只是槽位標籤、又佔不到 5 小時或每週槽位，就直接丟棄（`parseWindowObject` 回傳 `null`；renderer 也用 `isCodexBackendSlotKey` 再濾一次），不會當成獨立卡片。API 回報的額外視窗（例如 code-review）會顯示，但不獨立告警。payload 有剩餘 credits 時一併顯示。
-- 讀取與寫入快取時會再正規化（`src/main/store.ts` 的 `normalizeCodexSnapshot`），下次載入即可修正舊的錯誤標籤。
 - Token 刷新：access token 接近過期時，Usage-Pulse 會用官方 Codex CLI 的公開 OAuth client id 在行程記憶體中刷新。新 token **不會**寫回 `~/.codex/auth.json`。
 
 #### 重新偵測 Claude Code 憑證
@@ -416,8 +412,8 @@ Two failure modes of the old reset alert are fixed here:
    `credentialMonitor.check`）。Claude 卡片刻意不再另外給一顆「獲取憑證」——
    它做的事已被「更新數值」完整涵蓋。
 2. **直接在卡片貼上 token**——手邊沒有終端機時的備援。`claude:save-token` 會先用這個 token
-   呼叫 `collectClaudeCodeQuotaFromToken` 實際驗證，**驗證通過才儲存**；
-   `classifyClaudeTokenProbe`（`src/main/claude-manual-token.ts`）負責把這次嘗試轉成
+   呼叫 `collectors::claude::collect_with_token` 實際驗證，**驗證通過才儲存**；
+   `save_claude_token`（`src-tauri/src/monitor.rs`）負責把這次嘗試轉成
    「存」或「拒絕並說明原因」。查不到用量的 token 一律不存，拒絕訊息會指出真正發生的原因。
    200 但沒有配額視窗算成功——token 有回應 usage API，這正是要測的東西。值存在
    `AppSettings.claudeManualToken`，經 `SECRET_SETTINGS_KEYS` 由 `safeStorage` 加密落地，
@@ -462,7 +458,7 @@ Usage-Pulse 刻意把送往 Anthropic 的請求次數壓到最低。
   很激進地回 429，社群回報連 30-60 秒的輪詢都會觸發，一旦卡住即使退避到 5 分鐘
   間隔仍可能持續 429 好幾個小時不會自己恢復；社群測出來「較安全」的下限大約是
   180 秒，且前提是要帶對 `User-Agent: claude-code/`——
-  [claude-code.ts:18](../src/main/collectors/claude-code.ts) 已經在送這個
+  [claude.rs](../src-tauri/src/collectors/claude.rs) 已經在送這個
   header。這兩個 issue 都被 Anthropic 標記「not planned」關閉，官方沒有給出正式
   的輪詢頻率建議。既然如此，目前 15/10 分鐘排程加上 5 分鐘的
   `MIN_CLAUDE_FETCH_GAP_MS` floor 本來就比社群回報的下限更保守，這次維持原樣，
@@ -481,7 +477,7 @@ Codex 不套用 Claude/Cursor 的正常/低額度雙檔排程，而是走單一�
 就是 floor。Codex 沒有 CLI 活動閘門，每次 tick 都會發出請求。
 
 ### 已完成功能
-- Electron + React + TypeScript 專案骨架（Electron `^43.4.1`）
+- Tauri 2（Rust）+ React + TypeScript 專案骨架
 - Sidecar Observer 改造（移除網頁 Session 登入流程）
 - 本機憑證偵測 + API 配額抓取（Cursor、Claude Code、Codex）
 - 背景抓取與排程監控（一般 15 分鐘；視窗偏低時 10 分鐘；Codex 為固定 1 分鐘）
@@ -489,7 +485,7 @@ Codex 不套用 Claude/Cursor 的正常/低額度雙檔排程，而是走單一�
 - 到點／到期提醒：時間到點在螢幕右上角彈出置頂視窗（Cursor 為本期到期，Claude／Codex 為視窗重置，Claude 另有訂閱到期）
 - 四語介面（繁體中文／英文／日文／韓文），可在設定內切換
 - GitHub Actions Release（tag 觸發 `.dmg` / `.exe`；Windows 另附 `latest.yml`）
-- Windows 自動更新（`electron-updater`，下載與安裝都由使用者確認；macOS 不支援，見「自動更新」）
+- Windows 自動更新（`tauri-plugin-updater`，下載與安裝都由使用者確認；macOS 不支援，見「自動更新」）
 - 每個版本的四語言版更說明（`release-notes/<version>.json`），同時用於 GitHub Release 說明與 App 內更新提示
 - CI 品質檢查（typecheck、readonly guard、unit test、build、smoke build）
 - LINE 結束現況：真正關閉（UI 或 tray）都是 `app.quit()`；若 LINE 開啟，`before-quit` 用快取 snapshot，把每個已啟用且有已知讀數的服務（Cursor 整體、Claude 5 小時／每週、Codex 5 小時／每週）組成一則 Flex（可左右滑動的 carousel，每個視窗一張卡片）送出。未知／從未抓取的視窗會跳過。不論監控幾個視窗，每次關閉都只有一則 LINE 通知。不會跳出結束統計視窗。
@@ -569,26 +565,26 @@ Cursor 是「到期提醒」（本期 `billingCycleEnd`，用量重設與計費�
 ### 安全約束
 - OAuth token 僅在記憶體中短暫使用。
 - 禁止寫入 `state.vscdb`、`.credentials.json`、`~/.codex/auth.json`。
-- 清除 2 週前的紀錄（`history:get-stats`／`history:clean`，`src/main/history-cleaner.ts`）是唯一被允許刪除 IDE／CLI 檔案的模組，並在 `scripts/check-readonly.mjs` 明列為刻意例外。只有使用者在 Claude Code 或 Codex 卡片按下按鈕、並在 main 彈出的原生對話框確認後才會執行（預設按鈕為取消，renderer 無法略過）。Cursor 沒有此按鈕：它的對話與憑證同在 `state.vscdb`。範圍僅限超過 2 週（`HISTORY_RETENTION_DAYS`，以修改時間判斷、嚴格大於）的對話紀錄——不碰憑證、設定、`memory` 資料夾、`projects`／`thread_sections`、`external_agent_session_imports.json`。卡片顯示總數與超過 2 週的部分，沒有可清的內容時按鈕停用。
+- 清除 2 週前的紀錄（`history:get-stats`／`history:clean`，`src-tauri/src/history.rs`）是唯一被允許刪除 IDE／CLI 檔案的模組，並在 `scripts/check-readonly.mjs` 明列為刻意例外。只有使用者在 Claude Code 或 Codex 卡片按下按鈕、並在 main 彈出的原生對話框確認後才會執行（預設按鈕為取消，renderer 無法略過）。Cursor 沒有此按鈕：它的對話與憑證同在 `state.vscdb`。範圍僅限超過 2 週（`HISTORY_RETENTION_DAYS`，以修改時間判斷、嚴格大於）的對話紀錄——不碰憑證、設定、`memory` 資料夾、`projects`／`thread_sections`、`external_agent_session_imports.json`。卡片顯示總數與超過 2 週的部分，沒有可清的內容時按鈕停用。
   - Claude Code：`~/.claude/projects` 下超過 2 週的 `.jsonl` 移到系統垃圾桶。
-  - Codex：Codex（桌面 App 或 CLI）無法確認時拒絕；執行中則需再通過第二道警告對話框（預設為取消）才會繼續，否則不做任何事（殘留的 `crashpad_handler` 輔助程序不算 Codex 執行中）；另外 `state_N`／`thread_history_N`／`logs_N` 的版本不是已驗證的 `5`／`1`／`2`、資料表或比對用欄位未知或缺少、未列入的表格指向被清除的表格、`quick_check` 失敗、或沒有 SQLite 引擎（`node:sqlite`）時一律拒絕，拒絕不會改動任何東西。否則把 `state_5` 中 `updated_at` 超過 2 週且未置頂的對話串，連同它在 `thread_attachments`、`thread_dynamic_tools`、`thread_spawn_edges` 與 `thread_history_1` 對話表中的列一併刪除，並刪除 `logs_2` 中超過 2 週的 `logs`（每個資料庫一個交易，`state_5` 先做，之後 `wal_checkpoint(TRUNCATE)` 與 `VACUUM`）。全部資料庫成功後，才把這些對話串的 rollout 檔案與沒有任何對話串引用的舊 `.jsonl` 移到垃圾桶（仍被未過期對話串使用的檔案絕不動），並從 `session_index.jsonl` 移除它們的行（暫存檔加 rename）。資料庫的列無法進垃圾桶、也無法還原，確認對話框已明說。跨資料庫不保證原子性：後面的資料庫失敗時，可能留下孤兒的對話內容列，但不會動任何檔案。
+  - Codex：Codex（桌面 App 或 CLI）無法確認時拒絕；執行中則需再通過第二道警告對話框（預設為取消）才會繼續，否則不做任何事（殘留的 `crashpad_handler` 輔助程序不算 Codex 執行中）；另外 `state_N`／`thread_history_N`／`logs_N` 的版本不是已驗證的 `5`／`1`／`2`、資料表或比對用欄位未知或缺少、未列入的表格指向被清除的表格、`quick_check` 失敗時一律拒絕，拒絕不會改動任何東西。否則把 `state_5` 中 `updated_at` 超過 2 週且未置頂的對話串，連同它在 `thread_attachments`、`thread_dynamic_tools`、`thread_spawn_edges` 與 `thread_history_1` 對話表中的列一併刪除，並刪除 `logs_2` 中超過 2 週的 `logs`（每個資料庫一個交易，`state_5` 先做，之後 `wal_checkpoint(TRUNCATE)` 與 `VACUUM`）。全部資料庫成功後，才把這些對話串的 rollout 檔案與沒有任何對話串引用的舊 `.jsonl` 移到垃圾桶（仍被未過期對話串使用的檔案絕不動），並從 `session_index.jsonl` 移除它們的行（暫存檔加 rename）。資料庫的列無法進垃圾桶、也無法還原，確認對話框已明說。跨資料庫不保證原子性：後面的資料庫失敗時，可能留下孤兒的對話內容列，但不會動任何檔案。
   - Windows：Codex 行程偵測與清理本身都尚未在該平台測試。
-- Claude Code 憑證完全唯讀：Usage-Pulse 不 spawn `claude` CLI、不自己實作 OAuth，也不寫入官方的 `Claude Code-credentials` Keychain 項目。唯一會做的 Keychain 寫入，是啟動時一次性、盡力刪除舊 setup-token 流程留下的 `Usage-Pulse-Claude-setup-token` 項目。
-- 憑證重讀（`auth:check`）只讀取 Keychain 項目，不寫入；使用者完全在自己的終端機執行 `claude auth login` 完成登入，App 不參與。貼進卡片的 token 會先對 usage API 驗證通過才儲存，並存在 `electron-store` 內由 `safeStorage` 加密，不會寫成 Keychain 項目。
+- Claude Code 憑證完全唯讀：Usage-Pulse 不 spawn `claude` CLI、不自己實作 OAuth，也不寫入官方的 `Claude Code-credentials` Keychain 項目。完全沒有 Keychain 寫入；舊 setup-token 流程留下的 `Usage-Pulse-Claude-setup-token` 項目不再清理（Electron 版每次啟動都已刪除），所以憑證與 collector 程式碼中沒有任何刪除呼叫。
+- 憑證重讀（`auth:check`）只讀取 Keychain 項目，不寫入；使用者完全在自己的終端機執行 `claude auth login` 完成登入，App 不參與。貼進卡片的 token 會先對 usage API 驗證通過才儲存，並存在系統金鑰庫（`secrets.rs`），不會寫進一般設定檔。
 - Codex 憑證在磁碟上同樣唯讀。access token 接近過期時，可用官方 Codex CLI 的公開 OAuth client 在行程記憶體中刷新；新 token 不會寫回 `~/.codex/auth.json` 或 Keychain。
 - 發生 401 / 配額資料缺失時，回傳可行動的錯誤訊息。Claude Code 與 Cursor 不做自動 token refresh；唯一例外是上述 Codex 的記憶體刷新。
 
 ### 開發與打包
 
 #### 常用指令
-- `pnpm dev`：啟動 Electron 開發模式
+- `pnpm tauri:dev`：啟動開發模式
 - `pnpm typecheck`：TypeScript 型別檢查
 - `pnpm check:readonly`：唯讀防護檢查
 - `pnpm test:unit`：單元測試
-- `pnpm build`：建置應用程式
-- `pnpm smoke:build`：建置產物煙測
-- `pnpm dist:mac`：輸出 macOS `.dmg`
-- `pnpm dist:win`：輸出 Windows `.exe`
+- `pnpm build`：建置 renderer
+- `pnpm smoke:build`：renderer 產物煙測
+- `cargo test`（在 `src-tauri/` 內）：Rust 單元測試
+- `pnpm exec tauri build --no-bundle`：只編譯、不產生安裝檔（安裝檔由 Release workflow 建置）
 - Git 日常流程（開工／推送／收工）→ [`doc/Git_Workflow.md`](Git_Workflow.md)
 
 #### 發版前必做（本機）
@@ -629,5 +625,3 @@ Cursor 是「到期提醒」（本期 `billingCycleEnd`，用量重設與計費�
 - 檢查時機：啟動後 10 秒、`autoCheckForUpdates` 開啟時每 6 小時一次。下載與安裝都需要使用者主動按下按鈕才會發生，不會背景偷跑。
 - 更新提示顯示的版更說明，是直接讀取該 tag 的 `release-notes/<version>.json`（而不是 GitHub Release 本文——那是純英文自動產生的），見上方「發版（tag）」。
 - 改框架之前安裝的版本（Electron、`electron-updater`）會去找 `latest.yml`。`scripts/build-update-manifests.mjs` 會寫一份指向該版 Windows 安裝檔的 `latest.yml`，讓它們能換到 Tauri 版。這個接手流程還沒有在真正的 2.x 安裝上試過：Tauri 安裝檔和 Electron 版是不同的產品、而且安裝在使用者目錄，升級後要確認有沒有殘留的 Electron 舊版。
-- 以下是 Electron 時期的說明（repo 裡仍保留 Electron 版）：
-  - `package.json` 的 `build.publish`（provider 設為 `github`）是必要設定，用途有兩個：讓 electron-builder 把 `app-update.yml`（electron-updater 預設會讀的 feed）打包進 app 本體，以及在打包時把 `latest.yml` 寫進 `release/` 目錄。`dist:win`／`dist:mac` 仍然是 `--publish never`——真正發佈 GitHub Release 的仍是 `action-gh-release`，不是 electron-builder 自己。

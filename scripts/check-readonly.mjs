@@ -2,74 +2,27 @@ import { readdir, readFile } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
 
 const root = process.cwd();
-const targetDir = join(root, "src", "main");
 
+// Usage-Pulse is a sidecar observer: it reads the IDE / CLI's own files and never writes to
+// them. Every Rust file under the credentials/ and collectors/ directories is read-only
+// code, so there is no allow-list there. Outside them, any file that mentions an IDE's files
+// must not write either, with the single deliberate exception of history.rs (below).
 const sensitiveHints = [
   "state.vscdb",
   ".credentials.json",
   "claude code-credentials",
   "cursorauth/accesstoken",
-  // The Claude Code CLI session logs. Not a credential, but the same rule
-  // applies: Usage-Pulse reads the IDE's own files and never writes to them.
+  // The Claude Code CLI session logs. Not a credential, but the same rule applies.
   "claude_config_dir",
   ".jsonl",
   "auth.json",
-  // Directory / env forms only — the bare `.codex` substring also matches
+  // Directory / env forms only: the bare `.codex` substring also matches
   // `snapshot.codex` and would pull every third-service file into the scan.
   "~/.codex",
   "codex_home"
 ];
-const writeHints = [
-  "writefile(",
-  "writefilesync(",
-  "appendfile(",
-  "appendfilesync(",
-  "unlink(",
-  "rm(",
-  "rename(",
-  "copyfile(",
-  "insert into",
-  "update ",
-  "delete from",
-  // Moving a file to the OS trash and emptying one in place are writes too, and
-  // neither would have been noticed by the hints above.
-  "trashitem(",
-  "truncate(",
-  // A write does not have to go through fs. The Keychain is reached by
-  // subprocess, so the guard has to know what a write looks like there too —
-  // otherwise the one place that legitimately writes a credential is also the
-  // one place the guard cannot see.
-  "add-generic-password",
-  "delete-generic-password",
-  "set-generic-password"
-];
 
-// The deliberate exceptions, recorded rather than hidden. Anything NOT listed
-// here that trips a write hint is a genuine violation.
-//
-//  - credential-provider.ts: a one-time, best-effort deletion of the
-//    Usage-Pulse-owned Keychain item the retired `claude setup-token` flow used
-//    to write (never the official CLI's own item).
-//  - history-cleaner.ts: the user-triggered "clear history older than 2 weeks"
-//    button. It runs only after the user clicks and confirms a dialog shown by
-//    main, moves Claude Code / Codex conversation files older than two weeks to
-//    the OS trash, deletes those (unpinned) threads' rows from Codex's
-//    thread/history/log tables (refusing while Codex runs or when the database
-//    layout is not the one it verified), and rewrites Codex's session_index.jsonl
-//    without the removed threads (temp file + rename). It never touches a
-//    credential, a setting, or a `memory` folder. It is the only module allowed
-//    to do this; collectors and credential code stay read-only.
-//
-// Each entry names the file and the exact writes it is allowed to perform. Adding
-// to this list is a deliberate act that shows up in review.
-const allowedWrites = new Map([
-  ["src/main/credential-provider.ts", ["delete-generic-password"]],
-  ["src/main/history-cleaner.ts", ["delete from", "trashitem(", "writefile(", "rename("]]
-]);
-
-// The Tauri build keeps the same promise, and more bluntly: every Rust file under
-// these directories is read-only code, so there is no sensitive-hint gate and no
-// allow-list. Comments are stripped first so prose cannot trip a hint.
+// Comments are stripped before scanning so prose cannot trip a hint.
 const rustReadOnlyDirs = [join(root, "src-tauri", "src", "credentials"), join(root, "src-tauri", "src", "collectors")];
 const rustWriteHints = [
   "fs::write(",
@@ -125,28 +78,8 @@ const listFiles = async (dir) => {
 };
 
 const main = async () => {
-  const files = (await listFiles(targetDir)).filter((path) => path.endsWith(".ts"));
   const violations = [];
   const exercised = [];
-
-  for (const filePath of files) {
-    const source = (await readFile(filePath, "utf-8")).toLowerCase();
-    const hasSensitiveAccess = sensitiveHints.some((hint) => source.includes(hint));
-    if (!hasSensitiveAccess) {
-      continue;
-    }
-    const relativePath = relative(root, filePath).split(sep).join("/");
-    const allowed = allowedWrites.get(relativePath) ?? [];
-    const writeMatch = writeHints.find((hint) => source.includes(hint) && !allowed.includes(hint));
-    if (writeMatch) {
-      violations.push(`${filePath} (matched: ${writeMatch})`);
-    }
-    for (const exception of allowed) {
-      if (source.includes(exception)) {
-        exercised.push(`${relativePath} -> ${exception}`);
-      }
-    }
-  }
 
   for (const dir of rustReadOnlyDirs) {
     let rustFiles = [];

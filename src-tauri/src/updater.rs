@@ -1,5 +1,5 @@
-// Auto-update, a port of src/main/updater.ts on top of tauri-plugin-updater.
-// Windows only, like the Electron build: updates are read from the latest
+// Auto-update on top of tauri-plugin-updater.
+// Windows only: updates are read from the latest
 // GitHub Release's latest.json and verified against the key in tauri.conf.json.
 // Everything below is a no-op elsewhere, so nothing touches the updater plugin
 // on other platforms.

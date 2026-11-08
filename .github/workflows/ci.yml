@@ -37,13 +37,13 @@ jobs:
       - name: Run unit tests
         run: pnpm test:unit
 
-      - name: Build app
+      - name: Build renderer
         run: pnpm build
 
       - name: Run build smoke test
         run: pnpm smoke:build
 
-  # The Tauri build's Rust code. Windows is here on purpose: its cfg(windows)
+  # The app's Rust code. Windows is here on purpose: its cfg(windows)
   # code cannot be compiled on a Mac, so without this job the first time it is
   # built would be a release.
   rust:

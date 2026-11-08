@@ -25,7 +25,7 @@ const ALERT_KEYS: [&str; 13] = [
 ];
 const LINE_OFF_BY_DEFAULT: [&str; 2] = ["claude-session", "codex-session"];
 
-// Mirrors DEFAULT_SETTINGS in src/main/config.ts.
+// Defaults for every setting.
 fn default_settings() -> Map<String, Value> {
     let mut channels = Map::new();
     for key in ALERT_KEYS {

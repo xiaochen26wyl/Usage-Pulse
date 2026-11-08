@@ -352,9 +352,9 @@ export interface UpdateInfo {
 }
 
 // Auto-update is Windows-only today (see doc/Guide.md): macOS builds are
-// unsigned and Squirrel.Mac's silent install cannot be relied on without a
+// unsigned and the updater's silent install cannot be relied on without a
 // signature, so every other platform's check resolves to "unsupported"
-// without ever touching electron-updater.
+// without ever contacting the update server.
 export type UpdateCheckStatus = "checking" | "available" | "not-available" | "error" | "unsupported";
 
 export interface UpdateCheckResult {

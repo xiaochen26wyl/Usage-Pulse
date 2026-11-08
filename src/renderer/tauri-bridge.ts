@@ -1,10 +1,7 @@
-// Gives the renderer the same `window.usagePulse` the Electron preload builds,
-// on top of Tauri's invoke / listen. Under Electron the preload has already
-// defined it, so this file does nothing there.
+// Gives the renderer its `window.usagePulse` on top of Tauri's invoke / listen.
 //
-// Every request goes through one Rust command, `ipc_invoke`, keyed by the same
-// `domain:action` channel names Electron uses, so the two shells stay
-// comparable channel for channel (see doc/Tauri_Migration_Inventory.md §6).
+// Every request goes through one Rust command, `ipc_invoke` (src-tauri/src/ipc.rs),
+// keyed by `domain:action` channel names (e.g. `settings:get`, `monitor:run-manual`).
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 

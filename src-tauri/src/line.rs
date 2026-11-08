@@ -25,7 +25,7 @@ const TEXT_COLOR: &str = "#1F2328";
 const TEXT_MUTED: &str = "#6E7681";
 pub const EXHAUSTED_RED: &str = "#E5484D";
 
-// Mirrors SERVICE_ACCENT in line-templates.ts (a white bubble cannot read the app's CSS).
+// Per-service accents (a white bubble cannot read the app's CSS).
 fn accent(service: &str) -> &'static str {
     match service {
         "cursor" => "#1F2328",

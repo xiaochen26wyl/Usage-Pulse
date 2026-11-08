@@ -16,6 +16,7 @@ mod secrets;
 mod popover;
 mod schedule;
 mod settings;
+mod stabilize;
 mod time;
 mod tray_display;
 mod tray_image;

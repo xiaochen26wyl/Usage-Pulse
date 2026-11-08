@@ -1,5 +1,5 @@
 // The alarm popup: a small always-on-top window in the primary display's
-// top-right corner. A port of src/main/alarm-window.ts. Each alert shows its own
+// top-right corner. Each alert shows its own
 // popup; anything arriving while one is on screen waits in a queue.
 use std::{collections::VecDeque, sync::Mutex, time::Duration};
 

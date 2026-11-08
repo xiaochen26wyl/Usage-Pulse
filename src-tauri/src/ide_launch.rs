@@ -1,6 +1,6 @@
 // "Launch with the IDE": the menu-bar app is never a login item itself. A tiny
 // helper starts at login and opens this binary only once Cursor or Claude Code
-// is running. A port of src/main/ide-launch-helper.ts; the files it writes are
+// is running. The files it writes are
 // Usage-Pulse's own (a script, a LaunchAgent / Run key), never an IDE's.
 use std::{
     fs,

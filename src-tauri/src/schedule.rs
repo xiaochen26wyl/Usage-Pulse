@@ -1,8 +1,7 @@
 // Wall-clock waiting for the polling loops. tokio's timers are monotonic and
 // stop counting while the machine sleeps, so a plain sleep(15 min) can overshoot
 // by the whole length of a sleep. Waiting in short slices against the wall clock
-// makes a loop notice a wake-up within one slice, the way Electron's powerMonitor
-// "resume" did, without any OS hook.
+// makes a loop notice a wake-up within one slice, without any OS wake-up hook.
 use std::time::Duration;
 
 use crate::time::now_ms;

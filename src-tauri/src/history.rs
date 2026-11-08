@@ -1,5 +1,4 @@
-// The one place Usage-Pulse deletes anything of an IDE's or CLI's. A port of
-// src/main/history-cleaner.ts and the confirmation flow in src/main/index.ts.
+// The one place Usage-Pulse deletes anything of an IDE's or CLI's.
 //
 // Everything else in this crate treats those files as read-only; this module
 // exists for the "clear old conversation history" button, and is walled off:
@@ -60,10 +59,7 @@ fn now_ms() -> i64 {
 }
 
 fn claude_projects_dir() -> Option<PathBuf> {
-    match std::env::var("CLAUDE_CONFIG_DIR") {
-        Ok(custom) if !custom.trim().is_empty() => Some(PathBuf::from(custom.trim()).join("projects")),
-        _ => crate::credentials::home_dir().map(|home| home.join(".claude").join("projects")),
-    }
+    crate::collectors::claude_cli_log::projects_dir()
 }
 
 fn codex_home() -> Option<PathBuf> {

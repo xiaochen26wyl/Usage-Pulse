@@ -1,6 +1,6 @@
 // Slow sweep over every credential, so a lapsed login is noticed within hours
 // rather than whenever a quota call happens to come back 401. A port of the
-// notifying half of src/main/credential-monitor.ts. It only reads, through
+// notifying sweep. It only reads, through
 // crate::credentials, which is read-only by construction.
 use std::time::Duration;
 
@@ -39,7 +39,7 @@ async fn sweep(app: &AppHandle, last: &Value) -> Value {
         if unusable(status["state"].as_str().unwrap_or("ok")) {
             // Hitting the quota API is what normally prompts the IDE to renew a
             // lapsed token; only if it still looks dead afterwards has it failed.
-            monitor::check_service(app, service).await;
+            monitor::check_service(app, service, monitor::Trigger::Scheduled).await;
             status = monitor::credential_state(app, service).await;
         }
         let state = status["state"].as_str().unwrap_or("ok");

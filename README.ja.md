@@ -42,16 +42,16 @@ Usage-Pulse はオープンソースです。リポジトリを clone してコ�
 
 ![GitHub の Watch ボタンの位置](.github/readme-assets/github-watch.png)
 
-[Node.js](https://nodejs.org/) 24 と pnpm 9.15.9 が必要です（`corepack enable` を一度実行すれば、pnpm が自動的に正しいバージョンを使用します）。
+[Node.js](https://nodejs.org/) 24、pnpm 9.15.9（`corepack enable` を一度実行すれば、pnpm が自動的に正しいバージョンを使用します）、および [Rust ツールチェーン](https://rustup.rs/) が必要です。
 
 ```bash
 git clone https://github.com/xiaochen26wyl/Usage-Pulse.git
 cd Usage-Pulse
 pnpm install
-pnpm dev
+pnpm tauri:dev
 ```
 
-`pnpm dev` は開発モードでアプリを起動します。メニューバーアイコンはインストール版と同じ動作をし、**初回利用前の準備**に記載したログインも同様に必要です。
+`pnpm tauri:dev` は開発モードでアプリを起動します。メニューバーアイコンはインストール版と同じ動作をし、**初回利用前の準備**に記載したログインも同様に必要です。
 
 clone した時点で `main` ブランチを追跡する状態になっています。各リリースは `main` からタグを切って公開されるため、再ビルド・再実行する前に `git pull` して新しいリリースの変更を取り込んでください。
 

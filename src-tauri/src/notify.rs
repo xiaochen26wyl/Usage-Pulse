@@ -1,5 +1,4 @@
-// Low-quota, exhausted and recovered alerts. A port of the alert half of
-// src/main/monitor-engine.ts: one-shot latches per alert, a hysteresis band
+// Low-quota, exhausted and recovered alerts: one-shot latches per alert, a hysteresis band
 // before a latch is cleared, and no alert from a reading we cannot trust.
 use std::{collections::HashMap, path::PathBuf, sync::Mutex};
 
@@ -18,7 +17,7 @@ const APP_ID: &str = "com.xiaochen26wyl.usagepulse";
 
 // ---- trust ---------------------------------------------------------------
 
-/// A reading with real windows and no error. Mirrors snapshot-trust.ts.
+/// A reading with real windows and no error. 
 pub fn is_trusted(snapshot: &Value) -> bool {
     !snapshot.is_null()
         && !matches!(snapshot["status"].as_str(), Some("error" | "unknown"))

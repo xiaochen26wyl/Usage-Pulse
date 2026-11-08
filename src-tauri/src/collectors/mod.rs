@@ -1,6 +1,7 @@
 // Usage collectors. READ-ONLY toward the IDE / CLI sources, like credentials/:
 // they read a credential and call the vendor's usage API, nothing else.
 pub mod claude;
+pub mod claude_cli_log;
 pub mod codex;
 pub mod cursor;
 

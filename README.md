@@ -42,16 +42,16 @@ Click **Watch** (not just Star) at the top of this repository so GitHub notifies
 
 ![Where to click Watch on GitHub](.github/readme-assets/github-watch.png)
 
-Requires [Node.js](https://nodejs.org/) 24 and pnpm 9.15.9 (run `corepack enable` once and pnpm picks the right version automatically).
+Requires [Node.js](https://nodejs.org/) 24, pnpm 9.15.9 (run `corepack enable` once and pnpm picks the right version automatically) and the [Rust toolchain](https://rustup.rs/).
 
 ```bash
 git clone https://github.com/xiaochen26wyl/Usage-Pulse.git
 cd Usage-Pulse
 pnpm install
-pnpm dev
+pnpm tauri:dev
 ```
 
-`pnpm dev` starts the app in development mode; the menu bar icon works the same as the installed version, and the logins listed in **Before first use** are still required.
+`pnpm tauri:dev` starts the app in development mode; the menu bar icon works the same as the installed version, and the logins listed in **Before first use** are still required.
 
 A fresh clone already checks out and tracks the `main` branch. Since every release is published as a tag off `main`, run `git pull` before rebuilding to pick up the changes behind each new release.
 

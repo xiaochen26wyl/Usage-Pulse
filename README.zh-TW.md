@@ -42,16 +42,16 @@ Usage-Pulse 是開源專案——你可以把 repo clone 下來，自己讀過�
 
 ![GitHub 上 Watch 按鈕的位置](.github/readme-assets/github-watch.png)
 
-需要 [Node.js](https://nodejs.org/) 24 與 pnpm 9.15.9（先執行一次 `corepack enable`，pnpm 就會自動使用正確版本）。
+需要 [Node.js](https://nodejs.org/) 24、pnpm 9.15.9（先執行一次 `corepack enable`，pnpm 就會自動使用正確版本），以及 [Rust 工具鏈](https://rustup.rs/)。
 
 ```bash
 git clone https://github.com/xiaochen26wyl/Usage-Pulse.git
 cd Usage-Pulse
 pnpm install
-pnpm dev
+pnpm tauri:dev
 ```
 
-`pnpm dev` 會以開發模式啟動，選單列圖示與安裝版相同；下方**首次使用前**列出的登入前置條件同樣適用。
+`pnpm tauri:dev` 會以開發模式啟動，選單列圖示與安裝版相同；下方**首次使用前**列出的登入前置條件同樣適用。
 
 Clone 下來後預設就會追蹤 `main` 分支。由於每次 release 都是從 `main` 打 tag 發佈，之後想更新到新版時，記得先 `git pull` 再重新建置執行。
 
