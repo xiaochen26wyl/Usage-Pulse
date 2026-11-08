@@ -77,6 +77,8 @@ Provider logins are read from your existing local logins; optional notification 
 
 > Usage-Pulse does not read the Claude Desktop app's internal (encrypted) session. Even if you only use Claude through the Claude Desktop app day to day, you still need a Claude Code login saved via the official CLI.
 
+> **Version 4.0.0 notice:** this release is a full rewrite in Rust. Cursor and Codex quota reading has not been tested on the new build yet, so those two cards may show wrong numbers or fail to load. Claude Code monitoring has been tested. If something is off, please open an issue.
+
 ### Claude Code credential setup
 
 Click **Update Values** in Usage-Pulse to detect the credential and fetch usage. Whenever the Claude card has no numbers to show, it opens a panel on the spot with the exact login command to run and a box you can paste a token into instead.

@@ -69,6 +69,8 @@ Clone 下來後預設就會追蹤 `main` 分支。由於每次 release 都是從
 
 > Usage-Pulse 不會讀取 Claude Desktop App 內部（加密）的登入狀態。就算你平常只用 Claude Desktop，仍然需要一組透過官方 CLI 完成的 Claude Code 登入。
 
+> **4.0.0 版提醒：** 這個版本整個改以 Rust 重寫。新版的 Cursor 與 Codex 額度讀取尚未實際測試，這兩張卡片可能顯示錯誤數字或讀不到資料；Claude Code 監控已測試過。若有異常，歡迎開 issue 回報。
+
 ### Claude Code 憑證設定
 
 在 Usage-Pulse 按「更新數值」偵測憑證並抓取用量。只要 Claude 卡片沒有數值可顯示，就會當場展開一個區塊，裡面有要執行的登入指令，以及一個可以直接貼上 token 的欄位。
