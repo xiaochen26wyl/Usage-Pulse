@@ -8,6 +8,22 @@ Language / 語言：[English](#english) | [繁體中文](#繁體中文)
 
 All notable changes to Usage-Pulse are documented in this file.
 
+### [4.0.0] - 2026-11-08
+
+#### Added
+- Claude request restraint: automatic requests are at least 5 minutes apart, skipped while the Claude Code CLI has written nothing since the last check, and saving a token triggers a single request instead of several.
+- A read-only reader for the Claude Code CLI's local session logs (`~/.claude/projects`). It only looks at file times and the tail of changed files, keeps just the quota fields, and is used to confirm that a quota is really used up and to fill in a missing reset time.
+- Reset-time stabilization: a reset time that only moves by seconds of server jitter is kept as it was, so the countdown and the reset alarm no longer jump.
+- Build guard tests that run the read-only check and the build smoke test against deliberately broken trees.
+
+#### Changed
+- The 90-second confirmation of a low or exhausted quota now consults the CLI log first and only asks the API when the log cannot settle it.
+- The build, CI and smoke test cover the Tauri build only. Measured on macOS: about 83 MB idle and about 100-130 MB with the panel open.
+- README, guide and contributor rules describe the Rust architecture.
+
+#### Removed
+- All Electron code, dependencies and build configuration. The one-time cleanup of the legacy Usage-Pulse Keychain item is no longer run, which keeps the read-only directories free of delete code.
+
 ### [3.0.0] - 2026-10-25
 
 #### Added
@@ -150,6 +166,22 @@ All notable changes to Usage-Pulse are documented in this file.
 ## 繁體中文
 
 本檔案記錄 Usage-Pulse 所有重要版本變更。
+
+### [4.0.0] - 2026-11-08
+
+#### 新增
+- Claude 請求節制：自動請求至少間隔 5 分鐘；Claude Code CLI 自上次檢查後沒有任何輸出時直接跳過；儲存 token 只觸發一次請求，不再連發。
+- 唯讀的 Claude Code CLI 對話紀錄讀取（`~/.claude/projects`）：只看檔案時間與有變動檔案的尾端，只保留額度欄位，用來佐證額度真的用完，並補上缺少的重置時間。
+- 重置時間穩定化：只差幾秒伺服器誤差的重置時間維持原值，倒數與重置鬧鐘不再跳動。
+- 新增建置守門測試：對刻意違規的目錄樹執行唯讀檢查與建置冒煙測試。
+
+#### 變更
+- 低額度或用完的 90 秒確認改為先查 CLI 紀錄，紀錄無法判定時才詢問 API。
+- 建置、CI 與冒煙測試只涵蓋 Tauri。macOS 實測閒置約 83 MB，打開面板約 100–130 MB。
+- README、使用指南與協作規則改為描述 Rust 架構。
+
+#### 移除
+- 全部 Electron 程式、依賴與建置設定。不再執行舊 Usage-Pulse Keychain 項目的一次性清理，讓唯讀目錄不含任何刪除字樣。
 
 ### [3.0.0] - 2026-10-25
 
