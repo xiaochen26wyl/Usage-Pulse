@@ -46,33 +46,36 @@ const vite = spawn(
   ["exec", "vite", "--config", "vite.tauri.config.ts", "--host", "127.0.0.1", "--port", String(port), "--strictPort"],
   { stdio: "inherit" }
 );
-vite.once("exit", (code) => {
-  if (code) {
-    process.exit(code);
-  }
-});
+// Set once the Tauri shell is spawned; the shell must never outlive the dev server,
+// otherwise it keeps a window pointed at a dead URL and single-instance blocks the next run.
+let tauri = null;
+let shuttingDown = false;
 
-const stopVite = () => {
+const shutdown = (code) => {
+  if (shuttingDown) {
+    return;
+  }
+  shuttingDown = true;
   if (!vite.killed) {
     vite.kill();
   }
+  if (tauri && !tauri.killed) {
+    tauri.kill();
+  }
+  process.exit(code);
 };
-process.on("SIGINT", () => {
-  stopVite();
-  process.exit(130);
-});
+
+vite.once("exit", (code) => shutdown(code ?? 1));
+process.on("SIGINT", () => shutdown(130));
+process.on("SIGTERM", () => shutdown(143));
 
 try {
   await waitForPort(port, 30_000);
 } catch (error) {
   console.error(String(error));
-  stopVite();
-  process.exit(1);
+  shutdown(1);
 }
 
 const override = JSON.stringify({ build: { devUrl: `http://127.0.0.1:${port}` } });
-const tauri = spawn("pnpm", ["exec", "tauri", "dev", "--config", override], { stdio: "inherit" });
-tauri.once("exit", (code) => {
-  stopVite();
-  process.exit(code ?? 0);
-});
+tauri = spawn("pnpm", ["exec", "tauri", "dev", "--config", override], { stdio: "inherit" });
+tauri.once("exit", (code) => shutdown(code ?? 0));

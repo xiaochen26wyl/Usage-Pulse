@@ -18,12 +18,15 @@ use crate::{
     time::{iso_from_ms, now_iso, now_ms, parse_iso_ms},
 };
 
-// Polling cadence: 15 minutes, 10 once a window runs
-// low; Codex has one fixed cadence.
+// Polling cadence: Cursor 15 minutes, 10 once a window runs low; Claude and Codex
+// each have one fixed cadence.
 const FAST_POLL_THRESHOLD_PERCENT: f64 = 20.0;
 const FAST_POLL: Duration = Duration::from_secs(10 * 60);
 const NORMAL_POLL: Duration = Duration::from_secs(15 * 60);
+const CLAUDE_POLL: Duration = Duration::from_secs(5 * 60);
 const CODEX_POLL: Duration = Duration::from_secs(60);
+// Slack after the 5-hour window's reset time, so the wake-up read lands on the new window.
+const RESET_WAKE_MARGIN_MS: i64 = 5_000;
 // Mirrors EXPIRING_SOON_MS in src/shared/credential-utils.ts.
 const EXPIRING_SOON_MS: i64 = 30 * 60 * 1000;
 pub const SERVICES: [&str; 3] = ["cursor", "claude", "codex"];
@@ -378,9 +381,44 @@ fn next_delay(service: &str, snapshot: &Value, settings: &SettingsState) -> Dura
     if service == "codex" {
         return CODEX_POLL;
     }
+    if service == "claude" {
+        return CLAUDE_POLL;
+    }
     let windows: Vec<Value> = snapshot["windows"].as_array().cloned().unwrap_or_default();
     let low = watched(service, &windows, settings).iter().any(|(remaining, _)| *remaining <= FAST_POLL_THRESHOLD_PERCENT);
     if low { FAST_POLL } else { NORMAL_POLL }
+}
+
+/// How long to sit out when a trusted Claude reading says the 5-hour window is used up
+/// and its reset is still ahead: nothing can change before then, so no request is made.
+/// Anything else (quota left, reset missing or already past, untrusted reading) is `None`.
+fn session_hold_delay(snapshot: &Value, now: i64) -> Option<Duration> {
+    if !crate::notify::is_trusted(snapshot) {
+        return None;
+    }
+    let windows: Vec<Value> = snapshot["windows"].as_array().cloned().unwrap_or_default();
+    if !session_exhausted(&windows) {
+        return None;
+    }
+    let reset = parse_iso_ms(snapshot["resetsAt"].as_str()?)?;
+    let wait = reset + RESET_WAKE_MARGIN_MS - now;
+    (wait > 0).then(|| Duration::from_millis(wait as u64))
+}
+
+/// True when the last reading shows an exhausted 5-hour window whose reset time has passed:
+/// the saved numbers are stale by construction, so the idle-CLI shortcut must not reuse them.
+fn exhausted_session_has_reset(snapshot: &Value, now: i64) -> bool {
+    let windows: Vec<Value> = snapshot["windows"].as_array().cloned().unwrap_or_default();
+    session_exhausted(&windows) && snapshot["resetsAt"].as_str().and_then(parse_iso_ms).is_some_and(|reset| reset <= now)
+}
+
+/// Delay after a Claude reading: held until the 5-hour reset when the lockout is real
+/// (the CLI's own log confirms it), the regular cadence otherwise.
+async fn claude_next_delay(snapshot: &Value, settings: &SettingsState) -> Duration {
+    match session_hold_delay(snapshot, now_ms()) {
+        Some(hold) if corroborated_by_cli_log(snapshot).await => hold,
+        _ => next_delay("claude", snapshot, settings),
+    }
 }
 
 /// Starts one background polling loop per service, plus the menu-bar countdown tick.
@@ -403,12 +441,17 @@ pub fn start(app: &AppHandle) {
                 let delay = if settings.flag(enabled_setting(service)) {
                     let state = app.state::<MonitorState>();
                     // An idle CLI means the quota cannot have moved: skip the request, keep the cadence.
-                    let snapshot = if service == "claude" && !claude_has_activity_since_last_fetch(&state).await {
+                    let stale_lockout = service == "claude" && exhausted_session_has_reset(&state.latest()[service], now_ms());
+                    let snapshot = if service == "claude" && !stale_lockout && !claude_has_activity_since_last_fetch(&state).await {
                         state.latest()[service].clone()
                     } else {
                         check_service(&app, service, Trigger::Scheduled).await
                     };
-                    next_delay(service, &snapshot, &settings)
+                    if service == "claude" {
+                        claude_next_delay(&snapshot, &settings).await
+                    } else {
+                        next_delay(service, &snapshot, &settings)
+                    }
                 } else {
                     NORMAL_POLL
                 };
@@ -583,6 +626,50 @@ mod tests {
         assert!(session_exhausted(&windows));
         assert!(!weekly_exhausted(&windows));
         assert!(!session_exhausted(&[]));
+    }
+
+    fn claude_reading(status: &str, session_percent: i64, resets_at: Option<&str>) -> Value {
+        json!({
+            "service": "claude", "status": status, "resetsAt": resets_at,
+            "windows": [{ "key": "session", "percent": session_percent }, { "key": "weekly_all", "percent": 40 }]
+        })
+    }
+
+    #[test]
+    fn an_exhausted_session_is_held_until_its_reset() {
+        let now = parse_iso_ms("2026-01-01T10:00:00.000Z").unwrap();
+        let reading = claude_reading("ok", 0, Some("2026-01-01T12:00:00.000Z"));
+        assert_eq!(session_hold_delay(&reading, now), Some(Duration::from_millis(2 * 60 * 60_000 + RESET_WAKE_MARGIN_MS as u64)));
+    }
+
+    #[test]
+    fn no_hold_without_a_trustworthy_exhausted_session_and_a_future_reset() {
+        let now = parse_iso_ms("2026-01-01T10:00:00.000Z").unwrap();
+        assert_eq!(session_hold_delay(&claude_reading("ok", 30, Some("2026-01-01T12:00:00.000Z")), now), None);
+        assert_eq!(session_hold_delay(&claude_reading("ok", 0, Some("2026-01-01T09:00:00.000Z")), now), None);
+        assert_eq!(session_hold_delay(&claude_reading("ok", 0, None), now), None);
+        assert_eq!(session_hold_delay(&claude_reading("error", 0, Some("2026-01-01T12:00:00.000Z")), now), None);
+    }
+
+    #[test]
+    fn a_used_up_weekly_window_alone_does_not_hold_the_session_poll() {
+        let now = parse_iso_ms("2026-01-01T10:00:00.000Z").unwrap();
+        let mut reading = claude_reading("ok", 50, Some("2026-01-01T12:00:00.000Z"));
+        reading["windows"][1]["percent"] = json!(0);
+        assert_eq!(session_hold_delay(&reading, now), None);
+    }
+
+    #[test]
+    fn an_exhausted_session_past_its_reset_is_stale() {
+        let now = parse_iso_ms("2026-01-01T10:00:00.000Z").unwrap();
+        assert!(exhausted_session_has_reset(&claude_reading("ok", 0, Some("2026-01-01T09:59:00.000Z")), now));
+        assert!(!exhausted_session_has_reset(&claude_reading("ok", 0, Some("2026-01-01T12:00:00.000Z")), now));
+        assert!(!exhausted_session_has_reset(&claude_reading("ok", 30, Some("2026-01-01T09:59:00.000Z")), now));
+    }
+
+    #[test]
+    fn the_scheduled_claude_cadence_is_not_throttled_by_the_request_floor() {
+        assert_eq!(CLAUDE_POLL.as_millis() as i64, MIN_CLAUDE_FETCH_GAP_MS);
     }
 
     #[test]

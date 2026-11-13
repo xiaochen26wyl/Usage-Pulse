@@ -6,7 +6,7 @@
       "role": "desktop",
       "command": [
         "pnpm",
-        "dev"
+        "tauri:dev"
       ],
       "port": true,
       "env": {
