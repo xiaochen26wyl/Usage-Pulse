@@ -8,6 +8,14 @@ Language / 語言：[English](#english) | [繁體中文](#繁體中文)
 
 All notable changes to Usage-Pulse are documented in this file.
 
+### [4.0.2] - 2026-11-13
+
+#### Changed
+- Claude Code quota is read on a fixed 5-minute cadence. When the 5-hour window is used up and the CLI log confirms it, no request is made until the reset time; a reading that shows an exhausted window already past its reset is never reused from the idle-CLI shortcut.
+
+#### Fixed
+- `pnpm tauri:dev` now stops the app together with the dev server (and on SIGINT/SIGTERM). Before, a dead dev server left an orphaned app with a blank window, and single-instance made the next launch exit immediately.
+
 ### [4.0.1] - 2026-11-08
 
 #### Changed
@@ -171,6 +179,14 @@ All notable changes to Usage-Pulse are documented in this file.
 ## 繁體中文
 
 本檔案記錄 Usage-Pulse 所有重要版本變更。
+
+### [4.0.2] - 2026-11-13
+
+#### 變更
+- Claude Code 額度以固定 5 分鐘間隔讀取。5 小時額度用完且 CLI 紀錄佐證時，到重置時間前不發出請求；若上次讀數顯示額度用盡但重置時間已過，閒置 CLI 的略過捷徑不會再沿用該舊讀數。
+
+#### 修復
+- `pnpm tauri:dev` 在開發伺服器結束（或收到 SIGINT／SIGTERM）時一併結束 App。先前開發伺服器消失後會殘留視窗空白的 App，且 single-instance 讓下一次啟動立即退出。
 
 ### [4.0.1] - 2026-11-08
 

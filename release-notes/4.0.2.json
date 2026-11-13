@@ -1,0 +1,6 @@
+{
+  "zh": "- Claude Code 改為每 5 分鐘讀取一次；5 小時額度用完且 CLI 紀錄佐證時，會暫停到重置時間才再讀取，並在重置後立即刷新\n- 修正開發啟動腳本：開發伺服器結束時一併結束 App，避免殘留空白視窗",
+  "en": "- Claude Code is now read every 5 minutes; when the 5-hour quota is used up and the CLI log confirms it, reading pauses until the reset time and refreshes right after it\n- Fixed the development launcher: the app now exits together with the dev server, so no blank window is left behind",
+  "ja": "- Claude Code を 5 分ごとに取得するようになりました。5 時間枠を使い切り CLI ログでも確認できた場合は、リセット時刻まで取得を停止し、リセット直後に更新します\n- 開発用起動スクリプトを修正：開発サーバー終了時にアプリも終了し、空白ウィンドウが残らなくなりました",
+  "ko": "- Claude Code를 5분마다 읽도록 변경했습니다. 5시간 한도를 모두 사용했고 CLI 로그로도 확인되면 초기화 시각까지 읽기를 멈추고 초기화 직후 갱신합니다\n- 개발용 실행 스크립트 수정: 개발 서버가 종료되면 앱도 함께 종료되어 빈 창이 남지 않습니다"
+}
